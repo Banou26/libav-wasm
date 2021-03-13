@@ -38,35 +38,30 @@ extern "C" {
       &av_free
     );
 
-    const std::shared_ptr<AVIOContext> avioContext(
-      avio_alloc_context(
-        buffer.get(),
-        5000000,
-        0,
-        reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
-        &readFunction,
-        nullptr,
-        nullptr
-      ),
-      &av_free
+    AVIOContext* ioContext = avio_alloc_context(
+      buffer.get(),
+      5000000,
+      0,
+      reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
+      &readFunction,
+      nullptr,
+      nullptr
     );
 
-    const auto avFormat = std::shared_ptr<AVFormatContext>(avformat_alloc_context(), &avformat_free_context);
-    auto avFormatPtr = avFormat.get();
-    avFormat->pb = avioContext.get();
-    av_free(avioContext->buffer);
+    AVFormatContext *formatContext = avformat_alloc_context();
+    formatContext->pb = ioContext;
 
-    if (avformat_find_stream_info(avFormatPtr, NULL) < 0) {
+    if (avformat_find_stream_info(formatContext, NULL) < 0) {
       printf("ERROR: could not get stream info \n");
     }
 
     printf("BEFORE \n");
     int res;
-    if ((res = avformat_open_input(&avFormatPtr, "", nullptr, nullptr)) < 0) {
+    if ((res = avformat_open_input(&formatContext, "", nullptr, nullptr)) < 0) {
       printf("ERROR: %s \n", av_err2str(res));
     }
 
-    std::string name = avFormat->iformat->name;
+    std::string name = formatContext->iformat->name;
     printf("AFTER %s \n", name.c_str());
     
     return &stream;
