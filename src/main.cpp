@@ -10,7 +10,9 @@
 extern "C" {
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
-  #include <libavutil/avutil.h>
+
+  #include <libavutil/timestamp.h>
+  #include <libavutil/mathematics.h>
   #include <libavutil/imgutils.h>
 };
 
@@ -30,11 +32,14 @@ extern "C" {
   std::stringstream* initTransmux(char *buf, int length) {
     printf("initTransmux %d | %lu | %d | %d | %s \n", length, sizeof(buf), &buf, buf, buf);
 
+    AVPacket packet;
+    int fragmented_mp4_options = 0;
+
     std::stringstream stream;
     stream.write(buf, length);
 
     unsigned char* buffer = (unsigned char*)av_malloc(5000000);
-    AVIOContext* ioContext = avio_alloc_context(
+    AVIOContext* input_format_context = avio_alloc_context(
       buffer,
       5000000,
       0,
@@ -43,9 +48,10 @@ extern "C" {
       nullptr,
       nullptr
     );
+    AVFormatContext*output_format_context = NULL;
 
     AVFormatContext *formatContext = avformat_alloc_context();
-    formatContext->pb = ioContext;
+    formatContext->pb = input_format_context;
 
     if (avformat_find_stream_info(formatContext, NULL) < 0) {
       printf("ERROR: could not get stream info \n");
@@ -59,9 +65,103 @@ extern "C" {
 
     std::string name = formatContext->iformat->name;
     printf("AFTER %s \n", name.c_str());
-    
+
+    avformat_alloc_output_context2(&output_format_context, NULL, NULL, "");
+    if(!output_format_context){
+      fprintf(stderr,"Could not create output context\n");
+    }
+
+    int ret, i;
+    int stream_index = 0;
+    int *streams_list = NULL;
+    int number_of_streams = 0;
+
+    number_of_streams = formatContext->nb_streams;
+    streams_list = (int*)av_mallocz_array(number_of_streams, sizeof(*streams_list));
+
+    printf("number_of_streams %d %d \n", number_of_streams, streams_list);
+
+    for (i = 0; i < formatContext->nb_streams; i++) {
+      AVStream *out_stream;
+      AVStream *in_stream = formatContext->streams[i];
+      AVCodecParameters *in_codecpar = in_stream->codecpar;
+      printf("in_codecpar->codec_type %d \n", in_codecpar->codec_type);
+      if (
+        in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
+        in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
+        in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
+      ) {
+        streams_list[i] = -1;
+        continue;
+      }
+      streams_list[i] = stream_index++;
+      out_stream = avformat_new_stream(output_format_context, NULL);
+      if (!out_stream) {
+        fprintf(stderr, "Failed allocating output stream\n");
+        ret = AVERROR_UNKNOWN;
+      }
+      ret = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+      if (ret < 0) {
+        fprintf(stderr, "Failed to copy codec parameters\n");
+      }
+    }
+
+    AVDictionary* opts = NULL;
+
+    if (fragmented_mp4_options) {
+      // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
+      av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+    }
+
+    // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
+    ret = avformat_write_header(output_format_context, &opts);
+    if (ret < 0) {
+      fprintf(stderr, "Error occurred when opening output file\n");
+    }
+
+    while (1) {
+      AVStream *in_stream, *out_stream;
+      ret = av_read_frame(formatContext, &packet);
+      if (ret < 0)
+        break;
+      in_stream  = formatContext->streams[packet.stream_index];
+      if (packet.stream_index >= number_of_streams || streams_list[packet.stream_index] < 0) {
+        av_packet_unref(&packet);
+        continue;
+      }
+      printf("PACKET %d | %d \n", packet.pts, packet.dts);
+      packet.stream_index = streams_list[packet.stream_index];
+      out_stream = output_format_context->streams[packet.stream_index];
+      printf("PACKET 2 \n");
+      /* copy packet */
+      if (packet.pts != 0) packet.pts = av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      printf("PACKET 3 \n");
+      if (packet.dts != 0) packet.dts = av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      printf("PACKET 4 \n");
+      packet.duration = av_rescale_q(packet.duration, in_stream->time_base, out_stream->time_base);
+      printf("PACKET 5 \n");
+      // https://ffmpeg.org/doxygen/trunk/structAVPacket.html#ab5793d8195cf4789dfb3913b7a693903
+      packet.pos = -1;
+      printf("PACKET 6 \n");
+      //https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga37352ed2c63493c38219d935e71db6c1
+      ret = av_interleaved_write_frame(output_format_context, &packet);
+      printf("PACKET 7 \n");
+      if (ret < 0) {
+        fprintf(stderr, "Error muxing packet\n");
+        break;
+      }
+      av_packet_unref(&packet);
+      printf("PACKET 8 \n");
+    }
+
+    printf("END \n");
     return &stream;
   }
+
+  // int cleanup () {
+  //   avformat_close_input(&formatContext);
+  //   av_free(input_format_context );
+  // }
 
   int demux(std::stringstream *streamPtr, char *buf, int length) {
     auto stream = streamPtr;
