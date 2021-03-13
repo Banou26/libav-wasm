@@ -33,13 +33,9 @@ extern "C" {
     std::stringstream stream;
     stream.write(buf, length);
 
-    const std::shared_ptr<unsigned char> buffer(
-      reinterpret_cast<unsigned char*>(av_malloc(5000000)),
-      &av_free
-    );
-
+    unsigned char* buffer = (unsigned char*)av_malloc(5000000);
     AVIOContext* ioContext = avio_alloc_context(
-      buffer.get(),
+      buffer,
       5000000,
       0,
       reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
