@@ -36,7 +36,13 @@ extern "C" {
     int fragmented_mp4_options = 0;
 
     std::stringstream stream;
+    printf("debug1 %d \n", length);
+    // try {
     stream.write(buf, length);
+    // } catch (const std::exception& e) {
+    //   printf("debug %s \n", &e);
+    // }
+    // printf("debug2 \n");
 
     unsigned char* buffer = (unsigned char*)av_malloc(5000000);
     AVIOContext* input_format_context = avio_alloc_context(
@@ -48,10 +54,12 @@ extern "C" {
       nullptr,
       nullptr
     );
+    printf("debug3 \n");
     AVFormatContext*output_format_context = NULL;
 
     AVFormatContext *formatContext = avformat_alloc_context();
     formatContext->pb = input_format_context;
+    printf("debug4 \n");
 
     if (avformat_find_stream_info(formatContext, NULL) < 0) {
       printf("ERROR: could not get stream info \n");
@@ -134,9 +142,9 @@ extern "C" {
       out_stream = output_format_context->streams[packet.stream_index];
       printf("PACKET 2 \n");
       /* copy packet */
-      if (packet.pts != 0) packet.pts = av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      packet.pts = av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
       printf("PACKET 3 \n");
-      if (packet.dts != 0) packet.dts = av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      packet.dts = av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
       printf("PACKET 4 \n");
       packet.duration = av_rescale_q(packet.duration, in_stream->time_base, out_stream->time_base);
       printf("PACKET 5 \n");
