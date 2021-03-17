@@ -29,7 +29,7 @@ static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
 }
 
 extern "C" {
-  std::stringstream* initTransmux(char *buf, int length) {
+  std::stringstream* _initTransmux(char *buf, int length) {
     printf("initTransmux %d | %lu | %d | %d | %s \n", length, sizeof(buf), &buf, buf, buf);
 
     AVPacket packet;
@@ -171,35 +171,101 @@ extern "C" {
   //   av_free(input_format_context );
   // }
 
-  typedef struct Test {
-    int foo;
-    std::string bar;
-  } Test;
+  typedef struct RemuxObject {
+    int pointer;
+    int streamPointer;
+    int formatContextPointer;
+  } RemuxObject;
 
-  // Test demux(std::stringstream *streamPtr, char *buf, int length) {
+  // RemuxObject demux(std::stringstream *streamPtr, char *buf, int length) {
   //   auto stream = streamPtr;
   //   stream->write(buf, length);
   //   printf("demux %s \n", buf);
-  Test demux(std::string buf) {
-    printf("demux %s  %d \n", buf.c_str(), buf.length());
+  RemuxObject initTransmux(std::string buf) {
+    printf("initTransmux %s  %d \n", buf.c_str(), buf.length());
 
     std::stringstream stream;
     stream.write(buf.c_str(), 5000000);
 
-    Test test = {
-      .foo = reinterpret_cast<int>(&stream),
-      .bar = "bar"
-    };
+    unsigned char* buffer = (unsigned char*)av_malloc(10000000);
+    AVIOContext* input_format_context = avio_alloc_context(
+      buffer,
+      1000000,
+      0,
+      reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
+      &readFunction,
+      nullptr,
+      nullptr
+    );
+    AVFormatContext*output_format_context = NULL;
+    AVFormatContext *formatContext = avformat_alloc_context();
+    formatContext->pb = input_format_context;
 
-    return test;
+    int res;
+    if ((res = avformat_find_stream_info(formatContext, NULL)) < 0) {
+      printf("ERROR: could not get stream info | %s \n", av_err2str(res));
+    }
+    if ((res = avformat_open_input(&formatContext, "", nullptr, nullptr)) < 0) {
+      printf("ERROR: %s \n", av_err2str(res));
+    }
+
+    std::string name = formatContext->iformat->name;
+    printf("video formats %s \n", name.c_str());
+
+    RemuxObject response = {
+      .streamPointer = reinterpret_cast<int>(&stream),
+      .formatContextPointer = reinterpret_cast<int>(&formatContext)
+    };
+    response.pointer = reinterpret_cast<int>(&response);
+
+    struct RemuxObject *resPtr;
+    // auto myIntPtr = reinterpret_cast<int>(&response);
+    auto myIntPtr = *reinterpret_cast<long long int*>(&response);
+    resPtr = reinterpret_cast<RemuxObject*>(myIntPtr);
+    printf("stream ptr test %d %d %#x \n", (*resPtr).streamPointer, &stream, myIntPtr);
+    printf("after test %#x \n", (reinterpret_cast<RemuxObject*>(resPtr))->streamPointer);
+
+    return response;
   }
 }
 
-EMSCRIPTEN_BINDINGS(structs) {
-  emscripten::value_object<Test>("Test")
-    .field("foo", &Test::foo)
-    .field("bar", &Test::bar);
+extern "C" {
+  long long int test() {
+    // printf("test %d \n", ptr);
+    // struct RemuxObject *resPtr;
+    // resPtr = &ptr;
+    // printf("bar %d \n", (*resPtr).streamPointer);
 
-  emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
-  emscripten::function("demux", &demux);
+
+    // printf("test %d \n", ptr.c_str());
+    // auto foo = reinterpret_cast<int>(ptr.c_str());
+    // printf("foo %d \n", foo);
+    // struct RemuxObject *resPtr;
+    // resPtr = reinterpret_cast<RemuxObject*>(&foo);
+    // // auto bar = reinterpret_cast<RemuxObject*>(foo);
+    // printf("bar %d \n", (*resPtr).streamPointer);
+
+
+
+
+    // ptr->pointer;
+
+    // printf("test %d \n", foo);
+
+
+    return 1;
+  }
+};
+
+
+
+EMSCRIPTEN_BINDINGS(structs) {
+  emscripten::value_object<RemuxObject>("RemuxObject")
+    .field("pointer", &RemuxObject::pointer)
+    .field("streamPointer", &RemuxObject::streamPointer)
+    .field("formatContextPointer", &RemuxObject::formatContextPointer);
+
+  // emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
+  emscripten::function("initTransmux", &initTransmux);
+  // emscripten::function("test", &test);
 }

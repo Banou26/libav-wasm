@@ -7,12 +7,14 @@ dist/ffprobe-wasm.js:
 	-O3 \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
+	-s EXPORTED_FUNCTIONS="['_main', '_test']" \
 	-s EXTRA_EXPORTED_RUNTIME_METHODS="[cwrap, ccall, getValue, setValue, writeAsciiToMemory]" \
 	-s INITIAL_MEMORY=2GB \
 	-s TOTAL_MEMORY=1500mb \
 	-s TOTAL_STACK=1200mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
+	-s WASM_BIGINT \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
 	src/main.cpp
