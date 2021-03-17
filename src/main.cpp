@@ -187,7 +187,7 @@ extern "C" {
     stream.write(buf.c_str(), 5000000);
 
     Test test = {
-      .foo = 42,
+      .foo = reinterpret_cast<int>(&stream),
       .bar = "bar"
     };
 
@@ -201,5 +201,5 @@ EMSCRIPTEN_BINDINGS(structs) {
     .field("bar", &Test::bar);
 
   emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
-  emscripten::function("demux", &demux, emscripten::allow_raw_pointers());
+  emscripten::function("demux", &demux);
 }
