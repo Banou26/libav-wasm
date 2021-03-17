@@ -171,10 +171,35 @@ extern "C" {
   //   av_free(input_format_context );
   // }
 
-  int demux(std::stringstream *streamPtr, char *buf, int length) {
-    auto stream = streamPtr;
-    stream->write(buf, length);
-    printf("demux %s \n", buf);
-    return 1;
+  typedef struct Test {
+    int foo;
+    std::string bar;
+  } Test;
+
+  // Test demux(std::stringstream *streamPtr, char *buf, int length) {
+  //   auto stream = streamPtr;
+  //   stream->write(buf, length);
+  //   printf("demux %s \n", buf);
+  Test demux(std::string buf) {
+    printf("demux %s  %d \n", buf.c_str(), buf.length());
+
+    std::stringstream stream;
+    stream.write(buf.c_str(), 5000000);
+
+    Test test = {
+      .foo = 42,
+      .bar = "bar"
+    };
+
+    return test;
   }
+}
+
+EMSCRIPTEN_BINDINGS(structs) {
+  emscripten::value_object<Test>("Test")
+    .field("foo", &Test::foo)
+    .field("bar", &Test::bar);
+
+  emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
+  emscripten::function("demux", &demux, emscripten::allow_raw_pointers());
 }

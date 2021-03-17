@@ -9,7 +9,7 @@ import('../dist/libav.js').then(async v => {
 
   // const typedArrayBuffer2 = typedArrayBuffer
   // const typedArrayBuffer2 = typedArrayBuffer.slice(0, 6_000_000)
-  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 230_000)
+  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 100_000_000)
   const typedArrayBuffer3 = typedArrayBuffer.slice(230_000, 6_000_000)
   // const typedArrayBuffer2 = typedArrayBuffer.slice(0, 6_000_000)
   // const typedArrayBuffer3 = typedArrayBuffer.slice(1_000_000, 6_000_000)
@@ -18,28 +18,30 @@ import('../dist/libav.js').then(async v => {
   // // console.log(module.ccall('initTransmux', 'number', ['number'], [buf]));
   // console.log(module._initTransmux(buf, typedArrayBuffer.byteLength))
   // module._free(buf);
-  console.log('call 1')
-  const result = module.ccall(
-    'initTransmux',
-    'number',
-    ['array', 'number'],
-    [
-      typedArrayBuffer2,
-      typedArrayBuffer2.byteLength
-    ]
-  )
-  console.log('res 1', await result)
+  // console.log('call 1')
+  // const result = module.initTransmux(typedArrayBuffer2, typedArrayBuffer2.byteLength)
+  // // const result = module.ccall(
+  // //   'initTransmux',
+  // //   'number',
+  // //   ['array', 'number'],
+  // //   [
+  // //     typedArrayBuffer2,
+  // //     typedArrayBuffer2.byteLength
+  // //   ]
+  // // )
+  // console.log('res 1', await result)
   console.log('call 2')
-  const result2 = module.ccall(
-    'demux',
-    'number',
-    ['number', 'array', 'number'],
-    [
-      await result,
-      typedArrayBuffer3,
-      typedArrayBuffer3.byteLength
-    ]
-  )
+  const result2 = module.demux(typedArrayBuffer2)
+  // const result2 = module.ccall(
+  //   'demux',
+  //   'struct',
+  //   ['number', 'array', 'number'],
+  //   [
+  //     await result,
+  //     typedArrayBuffer3,
+  //     typedArrayBuffer3.byteLength
+  //   ]
+  // )
   console.log('res 2', await result2)
   // module.ccall('demux', 'number', ['number'], [buf]);
 })
