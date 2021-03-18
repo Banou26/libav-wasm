@@ -22,7 +22,7 @@ import('../dist/libav.js').then(async v => {
   const result = module.initTransmux(typedArrayBuffer2)
   console.log('res 1', await result)
   console.log('call 2')
-  const result2 = module._test()
+  const result2 = module.test(result.pointer)
   console.log('res 2', await result2)
   // // const result = module.ccall(
   // //   'initTransmux',

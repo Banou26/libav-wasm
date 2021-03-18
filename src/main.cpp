@@ -172,9 +172,9 @@ extern "C" {
   // }
 
   typedef struct RemuxObject {
-    int pointer;
-    int streamPointer;
-    int formatContextPointer;
+    unsigned int pointer;
+    unsigned int streamPointer;
+    unsigned int formatContextPointer;
   } RemuxObject;
 
   // RemuxObject demux(std::stringstream *streamPtr, char *buf, int length) {
@@ -212,51 +212,52 @@ extern "C" {
     std::string name = formatContext->iformat->name;
     printf("video formats %s \n", name.c_str());
 
-    RemuxObject response = {
-      .streamPointer = reinterpret_cast<int>(&stream),
-      .formatContextPointer = reinterpret_cast<int>(&formatContext)
-    };
-    response.pointer = reinterpret_cast<int>(&response);
+    RemuxObject *responseBuffer = (RemuxObject*)av_malloc(sizeof(RemuxObject));
 
-    struct RemuxObject *resPtr;
-    // auto myIntPtr = reinterpret_cast<int>(&response);
-    auto myIntPtr = *reinterpret_cast<long long int*>(&response);
-    resPtr = reinterpret_cast<RemuxObject*>(myIntPtr);
-    printf("stream ptr test %d %d %#x \n", (*resPtr).streamPointer, &stream, myIntPtr);
-    printf("after test %#x \n", (reinterpret_cast<RemuxObject*>(resPtr))->streamPointer);
+    (*responseBuffer).streamPointer = reinterpret_cast<unsigned int>(&stream);
+    (*responseBuffer).formatContextPointer = reinterpret_cast<unsigned int>(&formatContext);
+    (*responseBuffer).pointer = *reinterpret_cast<unsigned int*>(&responseBuffer);
 
-    return response;
+    // (*responseBuffer).streamPointer = &stream;
+    // (*responseBuffer).formatContextPointer = &formatContext;
+    // (*responseBuffer).pointer = responseBuffer;
+
+    printf("response ptr test %#x %#x %#x %#x %#x \n", responseBuffer, (*responseBuffer).pointer, &responseBuffer, responseBuffer->pointer);
+    printf("stream ptr test %#x %#x %#x \n", &stream, (*responseBuffer).streamPointer, responseBuffer->streamPointer);
+
+    return *responseBuffer;
   }
 }
 
-extern "C" {
-  long long int test() {
-    // printf("test %d \n", ptr);
-    // struct RemuxObject *resPtr;
-    // resPtr = &ptr;
-    // printf("bar %d \n", (*resPtr).streamPointer);
+int test(unsigned int responsePointer) {
+  printf("test %d %#x \n", responsePointer, responsePointer);
+  struct RemuxObject *resPtr = reinterpret_cast<RemuxObject*>(responsePointer);
+  printf("test response->stream %#x %#x %#x \n", (*resPtr).streamPointer);
 
 
-    // printf("test %d \n", ptr.c_str());
-    // auto foo = reinterpret_cast<int>(ptr.c_str());
-    // printf("foo %d \n", foo);
-    // struct RemuxObject *resPtr;
-    // resPtr = reinterpret_cast<RemuxObject*>(&foo);
-    // // auto bar = reinterpret_cast<RemuxObject*>(foo);
-    // printf("bar %d \n", (*resPtr).streamPointer);
+  // struct RemuxObject *resPtr;
+  // resPtr = &ptr;
+  // printf("bar %d \n", (*resPtr).streamPointer);
+
+
+  // printf("test %d \n", ptr.c_str());
+  // auto foo = reinterpret_cast<int>(ptr.c_str());
+  // printf("foo %d \n", foo);
+  // struct RemuxObject *resPtr;
+  // resPtr = reinterpret_cast<RemuxObject*>(&foo);
+  // // auto bar = reinterpret_cast<RemuxObject*>(foo);
+  // printf("bar %d \n", (*resPtr).streamPointer);
 
 
 
 
-    // ptr->pointer;
+  // ptr->pointer;
 
-    // printf("test %d \n", foo);
+  // printf("test %d \n", foo);
 
 
-    return 1;
-  }
-};
-
+  return 1;
+}
 
 
 EMSCRIPTEN_BINDINGS(structs) {
@@ -267,5 +268,5 @@ EMSCRIPTEN_BINDINGS(structs) {
 
   // emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
   emscripten::function("initTransmux", &initTransmux);
-  // emscripten::function("test", &test);
+  emscripten::function("test", &test);
 }
