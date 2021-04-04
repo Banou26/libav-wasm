@@ -177,10 +177,6 @@ extern "C" {
     unsigned int formatContextPointer;
   } RemuxObject;
 
-  // RemuxObject demux(std::stringstream *streamPtr, char *buf, int length) {
-  //   auto stream = streamPtr;
-  //   stream->write(buf, length);
-  //   printf("demux %s \n", buf);
   RemuxObject initTransmux(std::string buf) {
     printf("initTransmux %s  %d \n", buf.c_str(), buf.length());
 
@@ -218,10 +214,6 @@ extern "C" {
     (*responseBuffer).formatContextPointer = reinterpret_cast<unsigned int>(&formatContext);
     (*responseBuffer).pointer = *reinterpret_cast<unsigned int*>(&responseBuffer);
 
-    // (*responseBuffer).streamPointer = &stream;
-    // (*responseBuffer).formatContextPointer = &formatContext;
-    // (*responseBuffer).pointer = responseBuffer;
-
     printf("response ptr test %#x %#x %#x %#x %#x \n", responseBuffer, (*responseBuffer).pointer, &responseBuffer, responseBuffer->pointer);
     printf("stream ptr test %#x %#x %#x \n", &stream, (*responseBuffer).streamPointer, responseBuffer->streamPointer);
 
@@ -231,34 +223,12 @@ extern "C" {
 
 int test(unsigned int responsePointer, std::string buf) {
   printf("test %d %#x %s  %d \n", responsePointer, responsePointer, buf.c_str(), buf.length());
-  struct RemuxObject *resPtr = reinterpret_cast<RemuxObject*>(responsePointer);
+  struct RemuxObject *resPtr = (RemuxObject*)responsePointer;
   printf("test response->stream %#x \n", (*resPtr).streamPointer);
 
   std::stringstream *stream = (std::stringstream*)(*resPtr).streamPointer;
-  (*stream).write(buf.c_str(), buf.length())
+  (*stream).write(buf.c_str(), buf.length());
   printf("aaaaaa %p \n", stream);
-
-  // struct RemuxObject *resPtr;
-  // resPtr = &ptr;
-  // printf("bar %d \n", (*resPtr).streamPointer);
-
-
-  // printf("test %d \n", ptr.c_str());
-  // auto foo = reinterpret_cast<int>(ptr.c_str());
-  // printf("foo %d \n", foo);
-  // struct RemuxObject *resPtr;
-  // resPtr = reinterpret_cast<RemuxObject*>(&foo);
-  // // auto bar = reinterpret_cast<RemuxObject*>(foo);
-  // printf("bar %d \n", (*resPtr).streamPointer);
-
-
-
-
-  // ptr->pointer;
-
-  // printf("test %d \n", foo);
-
-
   return 1;
 }
 
