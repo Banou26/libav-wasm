@@ -32,7 +32,7 @@ import('../dist/libav.js').then(async v => {
   const remuxer = new module.Remuxer(typedArrayBuffer2)
   console.log('res 1', await remuxer)
   remuxer.push(typedArrayBuffer3)
-  remuxer.getInfo()
+  console.log('video formats: ', remuxer.getInfo())
 
 
 
