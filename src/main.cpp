@@ -6,6 +6,9 @@
 #include <sstream>
 #include <emscripten.h>
 #include <emscripten/bind.h>
+#include <algorithm>
+
+using namespace emscripten;
 
 extern "C" {
   #include <libavcodec/avcodec.h>
@@ -28,7 +31,7 @@ static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     return stream.gcount();
 }
 
-extern "C" {
+// extern "C" {
   // std::stringstream* _initTransmux(char *buf, int length) {
   //   printf("initTransmux %d | %lu | %d | %d | %s \n", length, sizeof(buf), &buf, buf, buf);
 
@@ -171,75 +174,195 @@ extern "C" {
   //   av_free(input_format_context );
   // }
 
-  typedef struct RemuxObject {
-    unsigned int pointer;
-    unsigned int streamPointer;
-    unsigned int formatContextPointer;
-  } RemuxObject;
+  // typedef struct RemuxObject {
+  //   unsigned int pointer;
+  //   unsigned int streamPointer;
+  //   unsigned int formatContextPointer;
+  // } RemuxObject;
 
-  RemuxObject initTransmux(std::string buf) {
-    printf("initTransmux %s  %d \n", buf.c_str(), buf.length());
+//   RemuxObject initTransmux(std::string buf) {
+//     printf("initTransmux %s  %d \n", buf.c_str(), buf.length());
+
+//     std::stringstream stream;
+//     stream.write(buf.c_str(), buf.length());
+
+//     unsigned char* buffer = (unsigned char*)av_malloc(10000000);
+//     AVIOContext* input_format_context = avio_alloc_context(
+//       buffer,
+//       1000000,
+//       0,
+//       reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
+//       &readFunction,
+//       nullptr,
+//       nullptr
+//     );
+//     AVFormatContext*output_format_context = NULL;
+//     AVFormatContext *formatContext = avformat_alloc_context();
+//     formatContext->pb = input_format_context;
+
+//     int res;
+//     if ((res = avformat_find_stream_info(formatContext, NULL)) < 0) {
+//       printf("ERROR: could not get stream info | %s \n", av_err2str(res));
+//     }
+//     if ((res = avformat_open_input(&formatContext, "", nullptr, nullptr)) < 0) {
+//       printf("ERROR: %s \n", av_err2str(res));
+//     }
+
+//     std::string name = formatContext->iformat->name;
+//     printf("video formats %s \n", name.c_str());
+
+//     RemuxObject *responseBuffer = (RemuxObject*)av_malloc(sizeof(RemuxObject));
+
+//     (*responseBuffer).streamPointer = reinterpret_cast<unsigned int>(&stream);
+//     (*responseBuffer).formatContextPointer = reinterpret_cast<unsigned int>(&formatContext);
+//     (*responseBuffer).pointer = *reinterpret_cast<unsigned int*>(&responseBuffer);
+
+//     printf("response ptr test %#x %#x %#x %#x %#x \n", responseBuffer, (*responseBuffer).pointer, &responseBuffer, responseBuffer->pointer);
+//     printf("stream ptr test %#x %#x %#x \n", &stream, (*responseBuffer).streamPointer, responseBuffer->streamPointer);
+
+//     return *responseBuffer;
+//   }
+// }
+
+// int test(unsigned int responsePointer, std::string buf) {
+//   printf("test %d %#x %s  %d \n", responsePointer, responsePointer, buf.c_str(), buf.length());
+//   struct RemuxObject *resPtr = (RemuxObject*)responsePointer;
+//   printf("test response->stream %#x \n", (*resPtr).streamPointer);
+
+//   std::stringstream *stream = (std::stringstream*)(*resPtr).streamPointer;
+//   (*stream).write(buf.c_str(), buf.length());
+//   printf("aaaaaa %p \n", stream);
+//   return 1;
+// }
+
+
+// EMSCRIPTEN_BINDINGS(structs) {
+//   emscripten::value_object<RemuxObject>("RemuxObject")
+//     .field("pointer", &RemuxObject::pointer)
+//     .field("streamPointer", &RemuxObject::streamPointer)
+//     .field("formatContextPointer", &RemuxObject::formatContextPointer);
+
+//   // emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
+//   emscripten::function("initTransmux", &initTransmux);
+//   emscripten::function("test", &test);
+// }
+
+extern "C" {
+  // class Remuxer {
+  //   public:
+  //     std::stringstream stream;
+  //     AVIOContext* input_format_context;
+  //     AVFormatContext* output_format_context;
+  //     AVFormatContext *formatContext;
+
+  //     Remuxer(std::string buf) :
+  //       remuxer(buf) {
+  //       stream.write(buf.c_str(), buf.length());
+
+  //       unsigned char* buffer = (unsigned char*)av_malloc(10000000);
+
+  //       input_format_context = avio_alloc_context(
+  //         buffer,
+  //         1000000,
+  //         0,
+  //         reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
+  //         &readFunction,
+  //         nullptr,
+  //         nullptr
+  //       );
+
+  //       output_format_context = NULL;
+  //       formatContext = avformat_alloc_context();
+  //       formatContext->pb = input_format_context;
+  //     }
+
+  //     void push(std::string buf) {
+  //       stream.write(buf.c_str(), buf.length());
+  //     }
+  // };
+
+  // EMSCRIPTEN_BINDINGS(my_module) {
+  //   class_<Remuxer>("Remuxer")
+  //     .constructor<int>()
+  //     .function("push", &Remuxer::push);
+  // }
+
+
+
+  class Remuxer {
+  public:
+    Remuxer(std::string buf) {
+      printf("init remuxer");
+      stream.write(buf.c_str(), buf.length());
+
+      unsigned char* buffer = (unsigned char*)av_malloc(10000000);
+
+      input_format_context = avio_alloc_context(
+        buffer,
+        1000000,
+        0,
+        reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
+        &readFunction,
+        nullptr,
+        nullptr
+      );
+
+      output_format_context = NULL;
+      formatContext = avformat_alloc_context();
+      formatContext->pb = input_format_context;
+    }
+
+    void getInfo () {
+      int res;
+      if ((res = avformat_find_stream_info(formatContext, NULL)) < 0) {
+        printf("ERROR: could not get stream info | %s \n", av_err2str(res));
+      }
+      if ((res = avformat_open_input(&formatContext, "", nullptr, nullptr)) < 0) {
+        printf("ERROR: %s \n", av_err2str(res));
+      }
+
+      std::string name = formatContext->iformat->name;
+      printf("video formats %s \n", name.c_str());
+    }
+
+    void push(std::string buf) {
+      stream.write(buf.c_str(), buf.length());
+    }
+
+    void incrementX() {
+      ++x;
+    }
+
+    int getX() const {
+      return x;
+    }
+    void setX(int x_) {
+      x = x_;
+    }
+
+    static std::string getStringFromInstance(const Remuxer& instance) {
+      return instance.y;
+    }
+
+  private:
+    int x;
+    std::string y;
 
     std::stringstream stream;
-    stream.write(buf.c_str(), buf.length());
+    AVIOContext* input_format_context;
+    AVFormatContext* output_format_context;
+    AVFormatContext *formatContext;
+  };
 
-    unsigned char* buffer = (unsigned char*)av_malloc(10000000);
-    AVIOContext* input_format_context = avio_alloc_context(
-      buffer,
-      1000000,
-      0,
-      reinterpret_cast<void*>(static_cast<std::istream*>(&stream)),
-      &readFunction,
-      nullptr,
-      nullptr
-    );
-    AVFormatContext*output_format_context = NULL;
-    AVFormatContext *formatContext = avformat_alloc_context();
-    formatContext->pb = input_format_context;
-
-    int res;
-    if ((res = avformat_find_stream_info(formatContext, NULL)) < 0) {
-      printf("ERROR: could not get stream info | %s \n", av_err2str(res));
-    }
-    if ((res = avformat_open_input(&formatContext, "", nullptr, nullptr)) < 0) {
-      printf("ERROR: %s \n", av_err2str(res));
-    }
-
-    std::string name = formatContext->iformat->name;
-    printf("video formats %s \n", name.c_str());
-
-    RemuxObject *responseBuffer = (RemuxObject*)av_malloc(sizeof(RemuxObject));
-
-    (*responseBuffer).streamPointer = reinterpret_cast<unsigned int>(&stream);
-    (*responseBuffer).formatContextPointer = reinterpret_cast<unsigned int>(&formatContext);
-    (*responseBuffer).pointer = *reinterpret_cast<unsigned int*>(&responseBuffer);
-
-    printf("response ptr test %#x %#x %#x %#x %#x \n", responseBuffer, (*responseBuffer).pointer, &responseBuffer, responseBuffer->pointer);
-    printf("stream ptr test %#x %#x %#x \n", &stream, (*responseBuffer).streamPointer, responseBuffer->streamPointer);
-
-    return *responseBuffer;
+  // Binding code
+  EMSCRIPTEN_BINDINGS(my_class_example) {
+    class_<Remuxer>("Remuxer")
+      .constructor<std::string>()
+      .function("push", &Remuxer::push)
+      .function("getInfo", &Remuxer::getInfo)
+      .function("incrementX", &Remuxer::incrementX)
+      .property("x", &Remuxer::getX, &Remuxer::setX)
+      .class_function("getStringFromInstance", &Remuxer::getStringFromInstance)
+      ;
   }
-}
-
-int test(unsigned int responsePointer, std::string buf) {
-  printf("test %d %#x %s  %d \n", responsePointer, responsePointer, buf.c_str(), buf.length());
-  struct RemuxObject *resPtr = (RemuxObject*)responsePointer;
-  printf("test response->stream %#x \n", (*resPtr).streamPointer);
-
-  std::stringstream *stream = (std::stringstream*)(*resPtr).streamPointer;
-  (*stream).write(buf.c_str(), buf.length());
-  printf("aaaaaa %p \n", stream);
-  return 1;
-}
-
-
-EMSCRIPTEN_BINDINGS(structs) {
-  emscripten::value_object<RemuxObject>("RemuxObject")
-    .field("pointer", &RemuxObject::pointer)
-    .field("streamPointer", &RemuxObject::streamPointer)
-    .field("formatContextPointer", &RemuxObject::formatContextPointer);
-
-  // emscripten::function("initTransmux", &initTransmux, emscripten::allow_raw_pointers());
-  emscripten::function("initTransmux", &initTransmux);
-  emscripten::function("test", &test);
 }

@@ -18,12 +18,24 @@ import('../dist/libav.js').then(async v => {
   // // console.log(module.ccall('initTransmux', 'number', ['number'], [buf]));
   // console.log(module._initTransmux(buf, typedArrayBuffer.byteLength))
   // module._free(buf);
+
+  // console.log('call 1')
+  // const result = module.initTransmux(typedArrayBuffer2)
+  // console.log('res 1', await result)
+  // console.log('call 2')
+  // const result2 = module.test(result.pointer, typedArrayBuffer3)
+  // console.log('res 2', await result2)
+
+
+
   console.log('call 1')
-  const result = module.initTransmux(typedArrayBuffer2)
-  console.log('res 1', await result)
-  console.log('call 2')
-  const result2 = module.test(result.pointer, typedArrayBuffer3)
-  console.log('res 2', await result2)
+  const remuxer = new module.Remuxer(typedArrayBuffer2)
+  console.log('res 1', await remuxer)
+  remuxer.push(typedArrayBuffer3)
+  remuxer.getInfo()
+
+
+
   // // const result = module.ccall(
   // //   'initTransmux',
   // //   'number',
@@ -49,3 +61,4 @@ import('../dist/libav.js').then(async v => {
   // console.log('res 2', await result2)
   // module.ccall('demux', 'number', ['number'], [buf]);
 })
+
