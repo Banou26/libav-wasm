@@ -65,6 +65,7 @@ extern "C" {
     std::stringstream input_stream;
     std::stringstream output_stream;
     AVIOContext* avioContext;
+    AVIOContext* avioContext2;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
     AVPacket packet;
@@ -85,6 +86,8 @@ extern "C" {
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
+      size_t avio_ctx_buffer_size = 4096; // 100000000; // 4096;
+
 
       RemuxObject *remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
       (*remuxObject).input_stream = &input_stream;
@@ -92,15 +95,15 @@ extern "C" {
 
       input_stream.write(buf.c_str(), buf.length());
 
-      unsigned char* buffer = (unsigned char*)av_malloc(10000000);
+      unsigned char* buffer = (unsigned char*)av_malloc(avio_ctx_buffer_size);
       avioContext = avio_alloc_context(
         buffer,
-        1000000,
+        avio_ctx_buffer_size,
         0,
         reinterpret_cast<void*>(remuxObject),
         // reinterpret_cast<void*>(static_cast<std::istream*>(&input_stream)),
         &readFunction,
-        &writeFunction,
+        nullptr,
         nullptr
       );
 
@@ -117,7 +120,22 @@ extern "C" {
       }
 
       // avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
-      avformat_alloc_output_context2(&output_format_context, av_guess_format("mp4", NULL, "video/mp4"), NULL, NULL);
+      // avformat_alloc_output_context2(&output_format_context, av_guess_format("mp4", NULL, "video/mp4"), NULL, NULL);
+
+      unsigned char* buffer2 = (unsigned char*)av_malloc(avio_ctx_buffer_size);
+      avioContext2 = avio_alloc_context(
+        buffer2,
+        avio_ctx_buffer_size,
+        1,
+        reinterpret_cast<void*>(remuxObject),
+        // reinterpret_cast<void*>(static_cast<std::istream*>(&input_stream)),
+        nullptr,
+        &writeFunction,
+        nullptr
+      );
+
+      avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
+      output_format_context->pb = avioContext2;
 
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_mallocz_array(number_of_streams, sizeof(*streams_list));
@@ -154,7 +172,6 @@ extern "C" {
         }
       }
 
-      output_format_context->pb = avioContext;
 
       // if (!(output_format_context->oformat->flags & AVFMT_NOFILE)) {
       //   res = avio_open(&output_format_context->pb, NULL, AVIO_FLAG_WRITE);
@@ -173,12 +190,13 @@ extern "C" {
       AVDictionary* opts = NULL;
 
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
-      av_dict_set(&opts, "c", "copy", 0);
+      // av_dict_set(&opts, "c", "copy", 0);
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
       printf("2 \n");
 
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
 
+      // if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
       if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
         printf("Error occurred when opening output file \n");
         return;
