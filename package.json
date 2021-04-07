@@ -22,6 +22,6 @@
   "devDependencies": {
     "concurrently": "^6.0.0",
     "nodemon": "^2.0.7",
-    "parcel": "2.0.0-nightly.500"
+    "parcel": "^2.0.0-nightly.634"
   }
 }

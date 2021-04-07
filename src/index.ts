@@ -9,8 +9,8 @@ import('../dist/libav.js').then(async v => {
 
   // const typedArrayBuffer2 = typedArrayBuffer
   // const typedArrayBuffer2 = typedArrayBuffer.slice(0, 6_000_000)
-  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 5_000_000)
-  const typedArrayBuffer3 = typedArrayBuffer.slice(5_000_000, 10_000_000)
+  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 10_000_000)
+  const typedArrayBuffer3 = typedArrayBuffer.slice(10_000_000, 20_000_000)
   // const typedArrayBuffer2 = typedArrayBuffer.slice(0, 6_000_000)
   // const typedArrayBuffer3 = typedArrayBuffer.slice(1_000_000, 6_000_000)
   // const buf = module._malloc(typedArrayBuffer.byteLength * typedArrayBuffer.BYTES_PER_ELEMENT);
@@ -27,13 +27,10 @@ import('../dist/libav.js').then(async v => {
   // console.log('res 2', await result2)
 
 
-
-  console.log('call 1')
   const remuxer = new module.Remuxer(typedArrayBuffer2)
-  console.log('res 1', await remuxer)
+  console.log('remuxer', remuxer)
   remuxer.push(typedArrayBuffer3)
   console.log('video formats: ', remuxer.getInfo())
-
 
 
   // // const result = module.ccall(
