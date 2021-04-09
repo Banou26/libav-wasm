@@ -172,6 +172,8 @@ extern "C" {
         }
       }
 
+      printf("streams_list %s \n", streams_list);
+
       AVDictionary* opts = NULL;
 
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
@@ -192,15 +194,15 @@ extern "C" {
         AVStream *in_stream, *out_stream;
         in_stream  = input_format_context->streams[packet.stream_index];
         out_stream = output_format_context->streams[packet.stream_index];
-        // printf("===\n");
-        // printf("PTI: %d \n", packet.stream_index);
-        // printf("PTS: %d \n", av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        // printf("DTS: %d \n", av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        // printf("===\n");
+        printf("===\n");
+        printf("PTI: %d \n", packet.stream_index);
+        printf("PTS: %d \n", av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        printf("DTS: %d \n", av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        printf("===\n");
         
-        if (packet.stream_index >= 2) {
-          continue;
-        }
+        // if (packet.stream_index >= 2) {
+        //   continue;
+        // }
 
         if (currentStreamIndex != packet.stream_index) {
           currentStreamIndex = packet.stream_index;
@@ -221,7 +223,8 @@ extern "C" {
 
         if ((res = av_interleaved_write_frame(output_format_context, &packet)) < 0) {
           printf("Error muxing packet \n");
-          break;
+          // break;
+          continue;
         }
         av_packet_unref(&packet);
       }
