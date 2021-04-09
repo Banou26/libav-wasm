@@ -31,7 +31,20 @@ import('../dist/libav.js').then(async v => {
   console.log('remuxer', remuxer)
   remuxer.push(typedArrayBuffer3)
   console.log('video formats: ', remuxer.getInfo())
+  const resultBuffer: Int8Array = remuxer.getInt8Array()
+  console.log('OOOOOF', resultBuffer)
 
+  const videoBlob = new Blob([new Uint8Array(resultBuffer, 0, resultBuffer.length)], { type: 'video/mp4' });
+  const videoElement = document.createElement('video')
+  videoElement.controls = true
+  videoElement.autoplay = true
+  videoElement.addEventListener('error', ev => {
+    console.error(ev.target.error)
+  })
+  videoElement.src = URL.createObjectURL(videoBlob)
+  document.body.appendChild(videoElement)
+
+  
 
   // // const result = module.ccall(
   // //   'initTransmux',

@@ -86,7 +86,7 @@ extern "C" {
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      size_t avio_ctx_buffer_size = 4096; // 100000000; // 4096;
+      size_t avio_ctx_buffer_size = 1000000; // 100000000; // 4096;
 
 
       RemuxObject *remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
@@ -153,8 +153,8 @@ extern "C" {
         printf("Codec type: %s \n", in_codecpar->codec_type);
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
-            in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO // &&
-            // in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
+          in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO // &&
+          // in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
         ) {
           streams_list[i] = -1;
           continue;
@@ -172,27 +172,11 @@ extern "C" {
         }
       }
 
-
-      // if (!(output_format_context->oformat->flags & AVFMT_NOFILE)) {
-      //   res = avio_open(&output_format_context->pb, NULL, AVIO_FLAG_WRITE);
-      //   if (res < 0) {
-      //     printf("Could not open output file \n");
-      //     return;
-      //   }
-      // }
-
-
-      // if (res = avio_open(&output_format_context->pb, NULL, AVFMT_NOFILE) < 0) {
-      //   printf("Could not open output file \n");
-      //   return;
-      // }
-      printf("1 \n");
       AVDictionary* opts = NULL;
 
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
-      // av_dict_set(&opts, "c", "copy", 0);
+      av_dict_set(&opts, "c", "copy", 0);
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
-      printf("2 \n");
 
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
 
@@ -201,38 +185,77 @@ extern "C" {
         printf("Error occurred when opening output file \n");
         return;
       }
-      printf("3 \n");
-      while (1) {
+
+      int currentStreamIndex = 0;
+      int currentDts = 0;
+      while ((res = av_read_frame(input_format_context, &packet)) >= 0) {
         AVStream *in_stream, *out_stream;
-        res = av_read_frame(input_format_context, &packet);
-        printf("4 \n");
-        if (res < 0)
-          break;
         in_stream  = input_format_context->streams[packet.stream_index];
-        if (packet.stream_index >= number_of_streams || streams_list[packet.stream_index] < 0) {
-          av_packet_unref(&packet);
+        out_stream = output_format_context->streams[packet.stream_index];
+        // printf("===\n");
+        // printf("PTI: %d \n", packet.stream_index);
+        // printf("PTS: %d \n", av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        // printf("DTS: %d \n", av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        // printf("===\n");
+        
+        if (packet.stream_index >= 2) {
           continue;
         }
-        printf("5 \n");
-        packet.stream_index = streams_list[packet.stream_index];
-        out_stream = output_format_context->streams[packet.stream_index];
-        /* copy packet */
-        packet.pts = av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
-        packet.dts = av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
-        packet.duration = av_rescale_q(packet.duration, in_stream->time_base, out_stream->time_base);
-        // https://ffmpeg.org/doxygen/trunk/structAVPacket.html#ab5793d8195cf4789dfb3913b7a693903
-        packet.pos = -1;
-        printf("6 \n");
 
-        //https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga37352ed2c63493c38219d935e71db6c1
-        printf("7 \n");
+        if (currentStreamIndex != packet.stream_index) {
+          currentStreamIndex = packet.stream_index;
+          currentDts = packet.dts;
+        }
+        
+        if (packet.dts < currentDts) {
+          continue;
+        }
+        // currentPts = packet.pts;
+        /* copy packet */
+
+        // packet.pts = packet.dts = AV_NOPTS_VALUE;
+
+        
+        av_packet_rescale_ts(&packet, in_stream->time_base, out_stream->time_base);
+        packet.pos = -1;
+
         if ((res = av_interleaved_write_frame(output_format_context, &packet)) < 0) {
           printf("Error muxing packet \n");
           break;
         }
-        printf("8 \n");
         av_packet_unref(&packet);
       }
+      // while (1) {
+      //   AVStream *in_stream, *out_stream;
+      //   res = av_read_frame(input_format_context, &packet);
+      //   if (res < 0)
+      //     break;
+      //   in_stream  = input_format_context->streams[packet.stream_index];
+      //   if (packet.stream_index >= number_of_streams || streams_list[packet.stream_index] < 0) {
+      //     av_packet_unref(&packet);
+      //     continue;
+      //   }
+      //   packet.stream_index = streams_list[packet.stream_index];
+      //   out_stream = output_format_context->streams[packet.stream_index];
+      //   /* copy packet */
+      //   printf("Packet INDEX: %d \n", packet.stream_index);
+      //   packet.pts = av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      //   printf("Packet PTS: %d \n", packet.pts);
+      //   packet.dts = av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      //   printf("Packet DTS: %d \n", packet.dts);
+      //   packet.duration = av_rescale_q(packet.duration, in_stream->time_base, out_stream->time_base);
+      //   printf("Packet DURATION: %d \n", packet.duration);
+      //   // printf("INDEX: %d, PTS: %d, DTS: %d, DURATION: %d \n", packet.stream_index, packet.pts, packet.dts, packet.duration);
+      //   // https://ffmpeg.org/doxygen/trunk/structAVPacket.html#ab5793d8195cf4789dfb3913b7a693903
+      //   packet.pos = -1;
+
+      //   //https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga37352ed2c63493c38219d935e71db6c1
+      //   if ((res = av_interleaved_write_frame(output_format_context, &packet)) < 0) {
+      //     printf("Error muxing packet \n");
+      //     break;
+      //   }
+      //   av_packet_unref(&packet);
+      // }
       //https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga7f14007e7dc8f481f054b21614dfec13
       av_write_trailer(output_format_context);
     }
@@ -245,6 +268,20 @@ extern "C" {
     void push(std::string buf) {
       input_stream.write(buf.c_str(), buf.length());
     }
+
+    emscripten::val getInt8Array() {
+      return emscripten::val(
+        emscripten::typed_memory_view(
+          output_stream.str().size(),
+          output_stream.str().data()
+        )
+      );
+    }
+
+    void getBuffer(std::string buf) {
+      output_stream.str();
+      // stream.read(reinterpret_cast<char*>(buf), buf_size)
+    }
   };
 
   // Binding code
@@ -253,6 +290,7 @@ extern "C" {
       .constructor<std::string>()
       .function("push", &Remuxer::push)
       .function("getInfo", &Remuxer::getInfo)
+      .function("getInt8Array", &Remuxer::getInt8Array)
       ;
   }
 }
