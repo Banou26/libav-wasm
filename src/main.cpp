@@ -94,12 +94,12 @@ extern "C" {
       input_format_context->pb = avioContext;
 
       int res;
-      if ((res = avformat_find_stream_info(input_format_context, NULL)) < 0) {
-        printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
-        return;
-      }
       if ((res = avformat_open_input(&input_format_context, NULL, nullptr, nullptr)) < 0) {
         printf("ERROR: %s \n", av_err2str(res));
+        return;
+      }
+      if ((res = avformat_find_stream_info(input_format_context, NULL)) < 0) {
+        printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
         return;
       }
 
