@@ -8,9 +8,9 @@ dist/ffprobe-wasm.js:
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-s EXTRA_EXPORTED_RUNTIME_METHODS="[cwrap, ccall, getValue, setValue, writeAsciiToMemory]" \
-	-s INITIAL_MEMORY=2GB \
-	-s TOTAL_MEMORY=1500mb \
-	-s TOTAL_STACK=1200mb \
+	-s INITIAL_MEMORY=1GB \
+	-s TOTAL_MEMORY=500mb \
+	-s TOTAL_STACK=400mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \

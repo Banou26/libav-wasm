@@ -30,7 +30,7 @@ import('../dist/libav.js').then(async v => {
   // const typedArrayBuffer2 = typedArrayBuffer
   // const typedArrayBuffer2 = typedArrayBuffer.slice(0, 6_000_000)
   const typedArrayBuffer2 = typedArrayBuffer.slice(0, 30_000_000)
-  const typedArrayBuffer3 = typedArrayBuffer.slice(10_000_000, 20_000_000)
+  // const typedArrayBuffer3 = typedArrayBuffer.slice(10_000_000, 20_000_000)
   // const typedArrayBuffer2 = typedArrayBuffer.slice(0, 6_000_000)
   // const typedArrayBuffer3 = typedArrayBuffer.slice(1_000_000, 6_000_000)
   // const buf = module._malloc(typedArrayBuffer.byteLength * typedArrayBuffer.BYTES_PER_ELEMENT);
@@ -50,11 +50,15 @@ import('../dist/libav.js').then(async v => {
 
   const remuxer = new module.Remuxer(typedArrayBuffer2)
   console.log('remuxer', remuxer)
-  remuxer.push(typedArrayBuffer3)
+  // remuxer.push(typedArrayBuffer3)
   console.log('video formats: ', remuxer.getInfo())
-  const resultBuffer: Int8Array = remuxer.getInt8Array()
-  downloadArrayBuffer(resultBuffer)
-  console.log('OOOOOF', resultBuffer)
+  const resultBuffer = new Uint8Array(remuxer.getInt8Array())
+  // downloadArrayBuffer(resultBuffer)
+
+  const header = [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D]
+  resultBuffer.set(header, 0)
+
+  // console.log('OOOOOF', resultBuffer, new TextDecoder().decode(resultBuffer))
 
 
 
