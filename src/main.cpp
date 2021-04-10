@@ -29,6 +29,13 @@ struct RemuxObject {
   std::stringstream* output_stream;
 };
 
+// static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
+//     printf("readFunction %#x | %s | %d \n", buf, buf, buf_size);
+//     auto& stream = *reinterpret_cast<std::istream*>(opaque);
+//     stream.read(reinterpret_cast<char*>(buf), buf_size);
+//     return stream.gcount();
+// }
+
 static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     printf("readFunction %#x | %s | %d \n", buf, buf, buf_size);
     auto& remuxObject = *reinterpret_cast<RemuxObject*>(opaque);
@@ -45,6 +52,13 @@ static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     return stream.gcount();
 }
 
+// int write_packet (void *opaque, uint8_t *buf, int buf_size) {
+//     IOOutput* out = reinterpret_cast<IOOutput*>(opaque);
+//     memcpy(out->outBuffer+out->bytesSet, buf, buf_size);
+//     out->bytesSet+=buf_size;
+//     return buf_size;
+// }
+
 extern "C" {
   class Remuxer {
   private:
@@ -54,6 +68,7 @@ extern "C" {
     AVIOContext* avioContext2;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
+    AVPacket packet;
     int ret, i;
     int stream_index;
     int *streams_list;
@@ -86,6 +101,7 @@ extern "C" {
         avio_ctx_buffer_size,
         0,
         reinterpret_cast<void*>(remuxObject),
+        // reinterpret_cast<void*>(static_cast<std::istream*>(&input_stream)),
         &readFunction,
         nullptr,
         nullptr
@@ -103,12 +119,16 @@ extern "C" {
         return;
       }
 
+      // avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
+      // avformat_alloc_output_context2(&output_format_context, av_guess_format("mp4", NULL, "video/mp4"), NULL, NULL);
+
       unsigned char* buffer2 = (unsigned char*)av_malloc(avio_ctx_buffer_size);
       avioContext2 = avio_alloc_context(
         buffer2,
         avio_ctx_buffer_size,
         1,
         reinterpret_cast<void*>(remuxObject),
+        // reinterpret_cast<void*>(static_cast<std::istream*>(&input_stream)),
         nullptr,
         &writeFunction,
         nullptr
@@ -126,16 +146,11 @@ extern "C" {
         return;
       }
 
-      AVCodec  *pCodec = NULL;
-      AVCodecParameters *pCodecParameters = NULL;
-      int video_stream_index = -1;
-
-
       for (i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
         AVCodecParameters *in_codecpar = in_stream->codecpar;
-        printf("Codec type: %s \n", av_get_media_type_string(in_codecpar->codec_type));
+        printf("Codec type: %s \n", in_codecpar->codec_type);
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO // &&
@@ -144,13 +159,6 @@ extern "C" {
           streams_list[i] = -1;
           continue;
         }
-
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          video_stream_index = i;
-          pCodec = avcodec_find_decoder(in_codecpar->codec_id);
-          pCodecParameters = in_codecpar;
-        }
-
         streams_list[i] = stream_index++;
         out_stream = avformat_new_stream(output_format_context, NULL);
         if (!out_stream) {
@@ -164,88 +172,90 @@ extern "C" {
         }
       }
 
-      printf("streams_list %s \n", streams_list);
-
       AVDictionary* opts = NULL;
 
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
       av_dict_set(&opts, "c", "copy", 0);
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
-      
 
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
 
+      // if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
       if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
         printf("Error occurred when opening output file \n");
         return;
       }
 
-      AVCodecContext *pCodecContext = avcodec_alloc_context3(pCodec);
-      avcodec_parameters_to_context(pCodecContext, pCodecParameters);
-      avcodec_open2(pCodecContext, pCodec, NULL);
-
-      AVPacket* packet = av_packet_alloc();
-      AVFrame *pFrame = av_frame_alloc();
-
       int currentStreamIndex = 0;
       int currentDts = 0;
-      while ((res = av_read_frame(input_format_context, packet)) >= 0) {
-
+      while ((res = av_read_frame(input_format_context, &packet)) >= 0) {
         AVStream *in_stream, *out_stream;
-        in_stream  = input_format_context->streams[packet->stream_index];
-        out_stream = output_format_context->streams[packet->stream_index];
-
-        if (packet->stream_index == video_stream_index) {
-          // res = avcodec_send_packet(pCodecContext, packet);
-          // if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-          //   continue;
-          // }
-          if ((res = avcodec_send_packet(pCodecContext, packet)) >= 0) {
-            printf("Error muxing packet \n");
-            continue;
-          }
-          res = avcodec_receive_frame(pCodecContext, pFrame);
-          if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-            continue;
-          }
-
-
-          if (pFrame->key_frame == 1) {
-            printf("===\n");
-            printf("KEYFRAME: true\n");
-            printf("STREAM INDEX: %d \n", packet->stream_index);
-            printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-            printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-            printf("POS: %d \n", packet->pos);
-            printf("===\n");
-          }
-        }
-
-        if (currentStreamIndex != packet->stream_index) {
-          currentStreamIndex = packet->stream_index;
-          currentDts = packet->dts;
-        }
-
-        if (packet->dts < currentDts) {
-          // packet->dts = AV_NOPTS_VALUE;
-          // printf("===\n");
-          // printf("PTI: %d \n", packet->stream_index);
-          // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-          // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-          // printf("POS: %d \n", packet->pos);
-          // printf("===\n");
+        in_stream  = input_format_context->streams[packet.stream_index];
+        out_stream = output_format_context->streams[packet.stream_index];
+        // printf("===\n");
+        // printf("PTI: %d \n", packet.stream_index);
+        // printf("PTS: %d \n", av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        // printf("DTS: %d \n", av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        // printf("===\n");
+        
+        if (packet.stream_index >= 2) {
           continue;
+        }
+
+        if (currentStreamIndex != packet.stream_index) {
+          currentStreamIndex = packet.stream_index;
+          currentDts = packet.dts;
         }
         
-        av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-        // packet->pos = -1;
-
-        if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          printf("Error muxing packet \n");
+        if (packet.dts < currentDts) {
           continue;
         }
-        av_packet_unref(packet);
+        // currentPts = packet.pts;
+        /* copy packet */
+
+        // packet.pts = packet.dts = AV_NOPTS_VALUE;
+
+        
+        av_packet_rescale_ts(&packet, in_stream->time_base, out_stream->time_base);
+        packet.pos = -1;
+
+        if ((res = av_interleaved_write_frame(output_format_context, &packet)) < 0) {
+          printf("Error muxing packet \n");
+          break;
+        }
+        av_packet_unref(&packet);
       }
+      // while (1) {
+      //   AVStream *in_stream, *out_stream;
+      //   res = av_read_frame(input_format_context, &packet);
+      //   if (res < 0)
+      //     break;
+      //   in_stream  = input_format_context->streams[packet.stream_index];
+      //   if (packet.stream_index >= number_of_streams || streams_list[packet.stream_index] < 0) {
+      //     av_packet_unref(&packet);
+      //     continue;
+      //   }
+      //   packet.stream_index = streams_list[packet.stream_index];
+      //   out_stream = output_format_context->streams[packet.stream_index];
+      //   /* copy packet */
+      //   printf("Packet INDEX: %d \n", packet.stream_index);
+      //   packet.pts = av_rescale_q_rnd(packet.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      //   printf("Packet PTS: %d \n", packet.pts);
+      //   packet.dts = av_rescale_q_rnd(packet.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+      //   printf("Packet DTS: %d \n", packet.dts);
+      //   packet.duration = av_rescale_q(packet.duration, in_stream->time_base, out_stream->time_base);
+      //   printf("Packet DURATION: %d \n", packet.duration);
+      //   // printf("INDEX: %d, PTS: %d, DTS: %d, DURATION: %d \n", packet.stream_index, packet.pts, packet.dts, packet.duration);
+      //   // https://ffmpeg.org/doxygen/trunk/structAVPacket.html#ab5793d8195cf4789dfb3913b7a693903
+      //   packet.pos = -1;
+
+      //   //https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga37352ed2c63493c38219d935e71db6c1
+      //   if ((res = av_interleaved_write_frame(output_format_context, &packet)) < 0) {
+      //     printf("Error muxing packet \n");
+      //     break;
+      //   }
+      //   av_packet_unref(&packet);
+      // }
       //https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga7f14007e7dc8f481f054b21614dfec13
       av_write_trailer(output_format_context);
     }
@@ -267,7 +277,11 @@ extern "C" {
         )
       );
     }
-  
+
+    void getBuffer(std::string buf) {
+      output_stream.str();
+      // stream.read(reinterpret_cast<char*>(buf), buf_size)
+    }
   };
 
   // Binding code
