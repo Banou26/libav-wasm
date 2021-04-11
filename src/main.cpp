@@ -183,13 +183,18 @@ extern "C" {
       AVPacket* packet = av_packet_alloc();
       // AVFrame* pFrame = av_frame_alloc();
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
+        if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
+          av_packet_unref(packet);
+          continue;
+        }
+
         AVStream *in_stream, *out_stream;
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
 
-        if (packet->stream_index >= 2) {
-          continue;
-        }
+        // if (packet->stream_index >= 2) {
+        //   continue;
+        // }
 
         // if (packet->stream_index == video_stream_index) {
         //   // res = avcodec_send_packet(pCodecContext, packet);
