@@ -24,7 +24,7 @@ import('../dist/libav.js').then(async v => {
   // console.log(module._demux(1))
 
   const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
-  const mp4 = new Uint8Array((await (await fetch('./video.mp4')).arrayBuffer()))
+  // const mp4 = new Uint8Array((await (await fetch('./video.mp4')).arrayBuffer()))
   console.log('typedArrayBuffer', typedArrayBuffer, typedArrayBuffer.byteLength)
 
   // const typedArrayBuffer2 = typedArrayBuffer
@@ -48,17 +48,17 @@ import('../dist/libav.js').then(async v => {
 
 
   const remuxer = new module.Remuxer(typedArrayBuffer2)
-  return
   console.log('remuxer', remuxer)
   // remuxer.push(typedArrayBuffer3)
   console.log('video formats: ', remuxer.getInfo())
   const resultBuffer = new Uint8Array(remuxer.getInt8Array())
+
+  // const header = [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D]
+  // resultBuffer.set(header, 0)
   // downloadArrayBuffer(resultBuffer)
+  // return
 
-  const header = [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D]
-  resultBuffer.set(header, 0)
-
-  // console.log('OOOOOF', resultBuffer, new TextDecoder().decode(resultBuffer))
+  console.log('OOOOOF', resultBuffer, new TextDecoder().decode(resultBuffer))
 
 
 
@@ -100,7 +100,7 @@ import('../dist/libav.js').then(async v => {
   // @ts-ignore
   buff.fileStart = 0
   console.log('buff', buff)
-  console.log('mp4', mp4)
+  // console.log('mp4', mp4)
 
   // return
 
