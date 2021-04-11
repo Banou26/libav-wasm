@@ -182,30 +182,13 @@ extern "C" {
 
       AVPacket* packet = av_packet_alloc();
       // AVFrame* pFrame = av_frame_alloc();
-
-      int currentStreamIndex = 0;
-      int currentDts = 0;
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         AVStream *in_stream, *out_stream;
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
-        
+
         if (packet->stream_index >= 2) {
           continue;
-        }
-
-        if (currentStreamIndex != packet->stream_index) {
-          currentStreamIndex = packet->stream_index;
-          currentDts = packet->dts;
-        }
-        
-        if (packet->dts < currentDts) {
-          printf("STREAM INDEX: %d \n", packet->stream_index);
-          printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-          printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-          printf("POS: %d \n", packet->pos);
-
-          // continue;
         }
 
         // if (packet->stream_index == video_stream_index) {
