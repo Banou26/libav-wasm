@@ -24,11 +24,6 @@ int main() {
   return 0;
 }
 
-struct RemuxObject {
-  std::stringstream* input_stream;
-  std::stringstream* output_stream;
-};
-
 extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size);
@@ -40,7 +35,6 @@ extern "C" {
     AVIOContext* avioContext2;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
-    RemuxObject* remuxObject;
     size_t avio_ctx_buffer_size;
 
     AVCodec* pCodec;
@@ -73,10 +67,6 @@ extern "C" {
       streams_list = NULL;
       number_of_streams = 0;
       avio_ctx_buffer_size = 8192; // 100000000; // 4096; // 8192;
-
-      // remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
-      // (*remuxObject).input_stream = &input_stream;
-      // (*remuxObject).output_stream = &output_stream;
 
       input_stream.write(buf.c_str(), buf.length());
       input_size += buf.length();

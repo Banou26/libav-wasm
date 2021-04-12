@@ -10,7 +10,7 @@ import('../dist/libav.js').then(async v => {
 
   const typedArrayBuffer2 = typedArrayBuffer.slice(0, 2_000_000) // 5
   const typedArrayBuffer3 = typedArrayBuffer.slice(2_000_000, 4_000_000) // 14s
-  const typedArrayBuffer4 = typedArrayBuffer.slice(4_000_000, 6_000_000)
+  const typedArrayBuffer4 = typedArrayBuffer.slice(4_000_000, 6_000_000) // 22s
 
   const remuxer = new module.Remuxer(typedArrayBuffer2)
   console.log('remuxer', remuxer)
