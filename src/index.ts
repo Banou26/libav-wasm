@@ -18,38 +18,86 @@ import('../dist/libav.js').then(async v => {
 
   console.log('PUSH_SIZE', PUSH_SIZE)
 
-  const remuxer = new module.Remuxer()
-  console.log('remuxer', remuxer)
+  // const remuxer = new module.Remuxer()
+  // console.log('remuxer', remuxer)
 
   const resultBuffer = new Uint8Array(300_000_000)
   let processedBytes = 0
   let outputBytes = 0
 
-  while (processedBytes < 6_000_000) { // processedBytes !== typedArrayBuffer.byteLength
+  // while (processedBytes < 6_000_000) { // processedBytes !== typedArrayBuffer.byteLength
 
-    const bufferToPush = typedArrayBuffer.slice(processedBytes, processedBytes + PUSH_SIZE)
-    remuxer.push(bufferToPush)
+  //   const bufferToPush = typedArrayBuffer.slice(processedBytes, processedBytes + PUSH_SIZE)
+  //   remuxer.push(bufferToPush)
 
-    if (processedBytes === 0) {
-      remuxer.init(BUFFER_SIZE)
-    }
-    processedBytes += bufferToPush.byteLength
+  //   if (processedBytes === 0) {
+  //     remuxer.init(BUFFER_SIZE)
+  //   }
+  //   processedBytes += bufferToPush.byteLength
 
-    remuxer.process()
+  //   remuxer.process()
 
-    const result = remuxer.getInt8Array()
-    resultBuffer.set(result, outputBytes)
-    outputBytes += result.byteLength
+  //   const result = remuxer.getInt8Array()
+  //   resultBuffer.set(result, outputBytes)
+  //   outputBytes += result.byteLength
   
+  //   remuxer.clearInput()
+  //   remuxer.clearOutput()
+  //   console.log(
+  //     'processedBytes', processedBytes,
+  //     '\noutputBytes', outputBytes,
+  //     '\nbufferToPush.byteLength', bufferToPush.byteLength,
+  //     '\nresult.byteLength', result.byteLength
+  //   )
+  // }
+
+
+  ;(() => {
+    const BUFFER_SIZE = 500_000
+
+    const PUSH_ARRAY_SIZE = 2_000_000
+  
+    const PUSH_SIZE = Math.round(PUSH_ARRAY_SIZE / BUFFER_SIZE) * BUFFER_SIZE
+  
+    const FIRST_ARRAY_SIZE = PUSH_SIZE
+    const SECOND_ARRAY_SIZE = FIRST_ARRAY_SIZE + PUSH_SIZE
+    const THIRD_ARRAY_SIZE = SECOND_ARRAY_SIZE + PUSH_SIZE
+    const FOURTH_ARRAY_SIZE = THIRD_ARRAY_SIZE + PUSH_SIZE
+    const FIFTH_ARRAY_SIZE = FOURTH_ARRAY_SIZE + PUSH_SIZE
+  
+    const typedArrayBuffer2 = typedArrayBuffer.slice(0, FIRST_ARRAY_SIZE) // 5s
+    const typedArrayBuffer3 = typedArrayBuffer.slice(FIRST_ARRAY_SIZE, SECOND_ARRAY_SIZE) // 14s
+    const typedArrayBuffer4 = typedArrayBuffer.slice(SECOND_ARRAY_SIZE, THIRD_ARRAY_SIZE) // 22s
+    const typedArrayBuffer5 = typedArrayBuffer.slice(THIRD_ARRAY_SIZE, FOURTH_ARRAY_SIZE) // 22s
+    const typedArrayBuffer6 = typedArrayBuffer.slice(FOURTH_ARRAY_SIZE, FIFTH_ARRAY_SIZE) // 22s
+    console.log('PUSH_SIZE', PUSH_SIZE)
+  
+    const remuxer = new module.Remuxer()
+    remuxer.push(typedArrayBuffer2)
+    remuxer.init(BUFFER_SIZE)
+    console.log('remuxer', remuxer)
+    remuxer.push(typedArrayBuffer3)
+    remuxer.process()
+    const buff1 = new Uint8Array(remuxer.getInt8Array())
     remuxer.clearInput()
     remuxer.clearOutput()
-    console.log(
-      'processedBytes', processedBytes,
-      '\noutputBytes', outputBytes,
-      '\nbufferToPush.byteLength', bufferToPush.byteLength,
-      '\nresult.byteLength', result.byteLength
-    )
-  }
+    remuxer.push(typedArrayBuffer4)
+    remuxer.push(typedArrayBuffer5)
+    remuxer.process()
+    console.log('video formats: ', remuxer.getInfo())
+    const buff2 = new Uint8Array(remuxer.getInt8Array())
+    remuxer.clearInput()
+    remuxer.clearOutput()
+    remuxer.push(typedArrayBuffer6)
+    remuxer.process()
+    const buff3 = new Uint8Array(remuxer.getInt8Array())
+    const _resultBuffer = new Uint8Array(buff1.byteLength + buff2.byteLength + buff3.byteLength)
+    _resultBuffer.set(buff1, 0)
+    _resultBuffer.set(buff2, buff1.byteLength)
+    _resultBuffer.set(buff3, buff2.byteLength)
+    resultBuffer.set(_resultBuffer, 0)
+  })()
+
 
   const header = [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D]
   resultBuffer.set(header, 0)
@@ -86,9 +134,9 @@ import('../dist/libav.js').then(async v => {
   let mp4boxfile = createFile()
   mp4boxfile.onError = e => console.error('onError', e)
 
-  const buff = resultBuffer.slice(0, 5_000_000).buffer
+  const buff = resultBuffer.slice(0, 6_000_000).buffer
   // @ts-ignore
-  buff.fileStart = 0
+  // buff.fileStart = 0
   console.log('buff', buff)
 
   // const info: any = await new Promise(resolve => {
@@ -126,4 +174,9 @@ import('../dist/libav.js').then(async v => {
     )
   
   sourceBuffer.appendBuffer(buff)
+  setTimeout(() => {
+    const buff2 = resultBuffer.slice(6_000_000, 10_000_000).buffer
+    console.log('buff2', buff2)
+    sourceBuffer.appendBuffer(buff2)
+  }, 1000)
 })
