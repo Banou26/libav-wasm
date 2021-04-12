@@ -51,6 +51,7 @@ import('../dist/libav.js').then(async v => {
   //   )
   // }
 
+  let duration = 0
 
   ;(() => {
     const BUFFER_SIZE = 500_000
@@ -69,7 +70,6 @@ import('../dist/libav.js').then(async v => {
     const typedArrayBuffer3 = typedArrayBuffer.slice(FIRST_ARRAY_SIZE, SECOND_ARRAY_SIZE) // 14s
     const typedArrayBuffer4 = typedArrayBuffer.slice(SECOND_ARRAY_SIZE, THIRD_ARRAY_SIZE) // 22s
     const typedArrayBuffer5 = typedArrayBuffer.slice(THIRD_ARRAY_SIZE, FOURTH_ARRAY_SIZE) // 22s
-    const typedArrayBuffer6 = typedArrayBuffer.slice(FOURTH_ARRAY_SIZE, FIFTH_ARRAY_SIZE) // 22s
     console.log('PUSH_SIZE', PUSH_SIZE)
   
     const remuxer = new module.Remuxer()
@@ -84,17 +84,13 @@ import('../dist/libav.js').then(async v => {
     remuxer.push(typedArrayBuffer4)
     remuxer.push(typedArrayBuffer5)
     remuxer.process()
+    // remuxer.close()
     console.log('video formats: ', remuxer.getInfo())
+    duration = remuxer.getInfo().input.duration / 1_000_000
     const buff2 = new Uint8Array(remuxer.getInt8Array())
-    remuxer.clearInput()
-    remuxer.clearOutput()
-    remuxer.push(typedArrayBuffer6)
-    remuxer.process()
-    const buff3 = new Uint8Array(remuxer.getInt8Array())
-    const _resultBuffer = new Uint8Array(buff1.byteLength + buff2.byteLength + buff3.byteLength)
+    const _resultBuffer = new Uint8Array(buff1.byteLength + buff2.byteLength)
     _resultBuffer.set(buff1, 0)
     _resultBuffer.set(buff2, buff1.byteLength)
-    _resultBuffer.set(buff3, buff2.byteLength)
     resultBuffer.set(_resultBuffer, 0)
   })()
 
@@ -172,11 +168,7 @@ import('../dist/libav.js').then(async v => {
         { once: true }
       )
     )
-  
+
+  mediaSource.duration = duration
   sourceBuffer.appendBuffer(buff)
-  setTimeout(() => {
-    const buff2 = resultBuffer.slice(6_000_000, 10_000_000).buffer
-    console.log('buff2', buff2)
-    sourceBuffer.appendBuffer(buff2)
-  }, 1000)
 })

@@ -24,6 +24,17 @@ int main() {
   return 0;
 }
 
+typedef struct MediaInfoObject {
+  std::string formatName;
+  std::string mimeType;
+  int duration;
+} MediaInfoObject;
+
+typedef struct InfoObject {
+  MediaInfoObject input;
+  MediaInfoObject output;
+} InfoObject;
+
 extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size);
@@ -225,9 +236,19 @@ extern "C" {
       }
     }
 
-    std::string getInfo () {
-      std::string name = input_format_context->iformat->name;
-      return name.c_str();
+    InfoObject getInfo () {
+      return {
+        .input = {
+          .formatName = input_format_context->iformat->name,
+          .mimeType = input_format_context->iformat->mime_type,
+          .duration = (int)input_format_context->duration
+        },
+        .output = {
+          .formatName = output_format_context->oformat->name,
+          .mimeType = output_format_context->oformat->mime_type,
+          .duration = (int)output_format_context->duration
+        }
+      };
     }
 
     void clearInput() {
@@ -281,6 +302,15 @@ extern "C" {
 
   // Binding code
   EMSCRIPTEN_BINDINGS(my_class_example) {
+    emscripten::value_object<MediaInfoObject>("MediaInfoObject")
+      .field("formatName", &MediaInfoObject::formatName)
+      .field("duration", &MediaInfoObject::duration)
+      .field("mimeType", &MediaInfoObject::mimeType);
+
+    emscripten::value_object<InfoObject>("InfoObject")
+      .field("input", &InfoObject::input)
+      .field("output", &InfoObject::output);
+
     class_<Remuxer>("Remuxer")
       .constructor<>()
       .function("init", &Remuxer::init)
