@@ -230,11 +230,18 @@ extern "C" {
       return name.c_str();
     }
 
-    void clear() {
+    void clearInput() {
       input_stream.clear();
       input_stream.str("");
       input_stream.seekp(0);
       input_stream.seekg(0);
+    }
+
+    void clearOutput() {
+      output_stream.clear();
+      output_stream.str("");
+      output_stream.seekp(0);
+      output_stream.seekg(0);
     }
 
     void close () {
@@ -283,7 +290,8 @@ extern "C" {
       .function("push", &Remuxer::push)
       .function("process", &Remuxer::process)
       .function("close", &Remuxer::close)
-      .function("clear", &Remuxer::clear)
+      .function("clearInput", &Remuxer::clearInput)
+      .function("clearOutput", &Remuxer::clearOutput)
       .function("getInfo", &Remuxer::getInfo)
       .function("getInt8Array", &Remuxer::getInt8Array)
       ;
