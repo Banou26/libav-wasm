@@ -53,7 +53,9 @@ extern "C" {
     std::stringstream output_stream;
     int used_input;
 
-    Remuxer(std::string buf) {
+    Remuxer() {}
+
+    void init(int buffer_size) {
       printf("init remuxer \n");
 
       input_format_context = avformat_alloc_context();
@@ -66,10 +68,7 @@ extern "C" {
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      avio_ctx_buffer_size = 8192; // 100000000; // 4096; // 8192;
-
-      input_stream.write(buf.c_str(), buf.length());
-      input_size += buf.length();
+      avio_ctx_buffer_size = buffer_size; // 100000000; // 4096; // 8192;
 
       unsigned char* buffer = (unsigned char*)av_malloc(avio_ctx_buffer_size);
       avioContext = avio_alloc_context(
@@ -167,10 +166,6 @@ extern "C" {
       }
     }
 
-    void clear(std::string buf) {
-      input_stream.write(buf.c_str(), buf.length());
-    }
-
     void process() {
       int res;
       AVPacket* packet = av_packet_alloc();
@@ -230,13 +225,20 @@ extern "C" {
       }
     }
 
-    void close () {
-      av_write_trailer(output_format_context);
-    }
-
     std::string getInfo () {
       std::string name = input_format_context->iformat->name;
       return name.c_str();
+    }
+
+    void clear() {
+      input_stream.clear();
+      input_stream.str("");
+      input_stream.seekp(0);
+      input_stream.seekg(0);
+    }
+
+    void close () {
+      av_write_trailer(output_format_context);
     }
 
     void push(std::string buf) {
@@ -276,10 +278,12 @@ extern "C" {
   // Binding code
   EMSCRIPTEN_BINDINGS(my_class_example) {
     class_<Remuxer>("Remuxer")
-      .constructor<std::string>()
+      .constructor<>()
+      .function("init", &Remuxer::init)
       .function("push", &Remuxer::push)
       .function("process", &Remuxer::process)
       .function("close", &Remuxer::close)
+      .function("clear", &Remuxer::clear)
       .function("getInfo", &Remuxer::getInfo)
       .function("getInt8Array", &Remuxer::getInt8Array)
       ;

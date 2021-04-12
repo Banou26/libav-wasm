@@ -8,14 +8,27 @@ import('../dist/libav.js').then(async v => {
   const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
   console.log('typedArrayBuffer', typedArrayBuffer, typedArrayBuffer.byteLength)
 
-  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 2_000_000) // 5
-  const typedArrayBuffer3 = typedArrayBuffer.slice(2_000_000, 4_000_000) // 14s
-  const typedArrayBuffer4 = typedArrayBuffer.slice(4_000_000, 6_000_000) // 22s
+  const BUFFER_SIZE = 8192
 
-  const remuxer = new module.Remuxer(typedArrayBuffer2)
+  const PUSH_ARRAY_SIZE = 2000000
+
+  const PUSH_SIZE = Math.round(PUSH_ARRAY_SIZE / BUFFER_SIZE) * BUFFER_SIZE
+
+  const FIRST_ARRAY_SIZE = PUSH_SIZE
+  const SECOND_ARRAY_SIZE = FIRST_ARRAY_SIZE + PUSH_SIZE
+  const THIRD_ARRAY_SIZE = SECOND_ARRAY_SIZE + PUSH_SIZE
+
+  const typedArrayBuffer2 = typedArrayBuffer.slice(0, FIRST_ARRAY_SIZE) // 5s
+  const typedArrayBuffer3 = typedArrayBuffer.slice(FIRST_ARRAY_SIZE, SECOND_ARRAY_SIZE) // 14s
+  const typedArrayBuffer4 = typedArrayBuffer.slice(SECOND_ARRAY_SIZE, THIRD_ARRAY_SIZE) // 22s
+
+  const remuxer = new module.Remuxer()
+  remuxer.push(typedArrayBuffer2)
+  remuxer.init(BUFFER_SIZE)
   console.log('remuxer', remuxer)
   remuxer.push(typedArrayBuffer3)
   remuxer.process()
+  // remuxer.clear()
   remuxer.push(typedArrayBuffer4)
   remuxer.process()
   console.log('video formats: ', remuxer.getInfo())
