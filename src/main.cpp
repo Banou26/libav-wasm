@@ -179,7 +179,7 @@ extern "C" {
         avcodec_open2(pCodecContext, pCodec, NULL);
       }
 
-      printf("stream index %d/%d \n", used_input, input_size);
+      // printf("stream index %d/%d \n", used_input, input_size);
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
@@ -217,9 +217,9 @@ extern "C" {
         }
         av_packet_unref(packet);
 
-        printf("stream index %d/%d \n", used_input, input_size);
+        // printf("stream index %d/%d \n", used_input, input_size);
         if (used_input + avio_ctx_buffer_size > input_size) {
-          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d \n", used_input, input_size);
+          // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d \n", used_input, input_size);
           break;
         }
       }
@@ -254,7 +254,6 @@ extern "C" {
     }
 
     emscripten::val getInt8Array() {
-      printf("get remuxed result %s \n", output_stream.str().data());
       return emscripten::val(
         emscripten::typed_memory_view(
           output_stream.str().size(),
@@ -265,7 +264,6 @@ extern "C" {
   };
 
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("readFunction %#x | %s | %d \n", buf, buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     remuxObject.used_input += buf_size;
     auto& stream = remuxObject.input_stream;
@@ -274,7 +272,6 @@ extern "C" {
   }
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("writeFunction %#x | %s | %d \n", buf, buf, buf_size);
     // printf("writeFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& stream = remuxObject.output_stream;

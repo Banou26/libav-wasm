@@ -8,7 +8,7 @@ import('../dist/libav.js').then(async v => {
   const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
   console.log('typedArrayBuffer', typedArrayBuffer, typedArrayBuffer.byteLength)
 
-  const BUFFER_SIZE = 1_000_000
+  const BUFFER_SIZE = 500_000
 
   const PUSH_ARRAY_SIZE = 2_000_000
 
