@@ -8,12 +8,16 @@ import('../dist/libav.js').then(async v => {
   const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
   console.log('typedArrayBuffer', typedArrayBuffer, typedArrayBuffer.byteLength)
 
-  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 2_000_000)
-  const typedArrayBuffer3 = typedArrayBuffer.slice(2_000_000, 4_000_000)
+  const typedArrayBuffer2 = typedArrayBuffer.slice(0, 2_000_000) // 5
+  const typedArrayBuffer3 = typedArrayBuffer.slice(2_000_000, 4_000_000) // 14s
+  const typedArrayBuffer4 = typedArrayBuffer.slice(4_000_000, 6_000_000)
 
   const remuxer = new module.Remuxer(typedArrayBuffer2)
   console.log('remuxer', remuxer)
   remuxer.push(typedArrayBuffer3)
+  remuxer.process()
+  remuxer.push(typedArrayBuffer4)
+  remuxer.process()
   console.log('video formats: ', remuxer.getInfo())
   const resultBuffer = new Uint8Array(remuxer.getInt8Array())
 

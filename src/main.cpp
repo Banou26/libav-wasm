@@ -55,10 +55,18 @@ extern "C" {
     AVIOContext* avioContext2;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
+    RemuxObject* remuxObject;
+    size_t avio_ctx_buffer_size;
+
+    AVCodec* pCodec;
+    AVCodecParameters* pCodecParameters;
+    int video_stream_index;
+
     int ret, i;
     int stream_index;
     int *streams_list;
     int number_of_streams;
+    bool should_decode;
 
   public:
     Remuxer(std::string buf) {
@@ -69,14 +77,14 @@ extern "C" {
       avioContext = NULL;
       output_format_context = avformat_alloc_context();
 
-      bool should_decode = false;
+      should_decode = false;
       
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      size_t avio_ctx_buffer_size = 1000000; // 100000000; // 4096;
+      avio_ctx_buffer_size = 8192; // 100000000; // 4096;
 
-      RemuxObject *remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
+      remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
       (*remuxObject).input_stream = &input_stream;
       (*remuxObject).output_stream = &output_stream;
 
@@ -128,9 +136,9 @@ extern "C" {
         return;
       }
 
-      AVCodec  *pCodec = NULL;
-      AVCodecParameters *pCodecParameters = NULL;
-      int video_stream_index = -1;
+      pCodec = NULL;
+      pCodecParameters = NULL;
+      video_stream_index = -1;
 
       for (i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
@@ -176,7 +184,14 @@ extern "C" {
         printf("Error occurred when opening output file \n");
         return;
       }
+    }
 
+    void clear(std::string buf) {
+      input_stream.write(buf.c_str(), buf.length());
+    }
+
+    void process() {
+      int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVCodecContext* pCodecContext;
@@ -193,7 +208,7 @@ extern "C" {
           av_packet_unref(packet);
           continue;
         }
-
+        printf("stream index %d/%d \n", input_stream.gcount(), input_stream.tellg());
         AVStream *in_stream, *out_stream;
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
@@ -226,7 +241,9 @@ extern "C" {
         }
         av_packet_unref(packet);
       }
+    }
 
+    void close () {
       av_write_trailer(output_format_context);
     }
 
@@ -255,6 +272,8 @@ extern "C" {
     class_<Remuxer>("Remuxer")
       .constructor<std::string>()
       .function("push", &Remuxer::push)
+      .function("process", &Remuxer::process)
+      .function("close", &Remuxer::close)
       .function("getInfo", &Remuxer::getInfo)
       .function("getInt8Array", &Remuxer::getInt8Array)
       ;
