@@ -29,28 +29,13 @@ struct RemuxObject {
   std::stringstream* output_stream;
 };
 
-static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("readFunction %#x | %s | %d \n", buf, buf, buf_size);
-    auto& remuxObject = *reinterpret_cast<RemuxObject*>(opaque);
-    auto& stream = *reinterpret_cast<std::istream*>(remuxObject.input_stream);
-    stream.read(reinterpret_cast<char*>(buf), buf_size);
-    return stream.gcount();
-}
-
-static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("writeFunction %#x | %s | %d \n", buf, buf, buf_size);
-    // printf("writeFunction %#x | %s | %d \n", buf, &buf, buf_size);
-    auto& remuxObject = *reinterpret_cast<RemuxObject*>(opaque);
-    auto& stream = *reinterpret_cast<std::stringstream*>(remuxObject.output_stream);
-    stream.write(reinterpret_cast<char*>(buf), buf_size);
-    return stream.gcount();
-}
-
 extern "C" {
+
+  static int writeFunction(void* opaque, uint8_t* buf, int buf_size);
+  static int readFunction(void* opaque, uint8_t* buf, int buf_size);
+
   class Remuxer {
   private:
-    std::stringstream input_stream;
-    std::stringstream output_stream;
     AVIOContext* avioContext;
     AVIOContext* avioContext2;
     AVFormatContext* output_format_context;
@@ -67,8 +52,13 @@ extern "C" {
     int *streams_list;
     int number_of_streams;
     bool should_decode;
+    int input_size;
 
   public:
+    std::stringstream input_stream;
+    std::stringstream output_stream;
+    int used_input;
+
     Remuxer(std::string buf) {
       printf("init remuxer \n");
 
@@ -82,20 +72,21 @@ extern "C" {
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      avio_ctx_buffer_size = 8192; // 100000000; // 4096;
+      avio_ctx_buffer_size = 8192; // 100000000; // 4096; // 8192;
 
-      remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
-      (*remuxObject).input_stream = &input_stream;
-      (*remuxObject).output_stream = &output_stream;
+      // remuxObject = (RemuxObject*)av_malloc(sizeof(RemuxObject));
+      // (*remuxObject).input_stream = &input_stream;
+      // (*remuxObject).output_stream = &output_stream;
 
       input_stream.write(buf.c_str(), buf.length());
+      input_size += buf.length();
 
       unsigned char* buffer = (unsigned char*)av_malloc(avio_ctx_buffer_size);
       avioContext = avio_alloc_context(
         buffer,
         avio_ctx_buffer_size,
         0,
-        reinterpret_cast<void*>(remuxObject),
+        reinterpret_cast<void*>(this),
         &readFunction,
         nullptr,
         nullptr
@@ -118,7 +109,7 @@ extern "C" {
         buffer2,
         avio_ctx_buffer_size,
         1,
-        reinterpret_cast<void*>(remuxObject),
+        reinterpret_cast<void*>(this),
         nullptr,
         &writeFunction,
         nullptr
@@ -203,12 +194,12 @@ extern "C" {
         avcodec_open2(pCodecContext, pCodec, NULL);
       }
 
+      printf("stream index %d/%d \n", used_input, input_size);
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
         }
-        printf("stream index %d/%d \n", input_stream.gcount(), input_stream.tellg());
         AVStream *in_stream, *out_stream;
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
@@ -240,6 +231,12 @@ extern "C" {
           break;
         }
         av_packet_unref(packet);
+
+        printf("stream index %d/%d \n", used_input, input_size);
+        if (used_input + avio_ctx_buffer_size > input_size) {
+          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d \n", used_input, input_size);
+          break;
+        }
       }
     }
 
@@ -254,6 +251,7 @@ extern "C" {
 
     void push(std::string buf) {
       input_stream.write(buf.c_str(), buf.length());
+      input_size += buf.length();
     }
 
     emscripten::val getInt8Array() {
@@ -266,6 +264,24 @@ extern "C" {
       );
     }
   };
+
+  static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
+    printf("readFunction %#x | %s | %d \n", buf, buf, buf_size);
+    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    remuxObject.used_input += buf_size;
+    auto& stream = remuxObject.input_stream;
+    stream.read(reinterpret_cast<char*>(buf), buf_size);
+    return stream.gcount();
+  }
+
+  static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
+    printf("writeFunction %#x | %s | %d \n", buf, buf, buf_size);
+    // printf("writeFunction %#x | %s | %d \n", buf, &buf, buf_size);
+    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    auto& stream = remuxObject.output_stream;
+    stream.write(reinterpret_cast<char*>(buf), buf_size);
+    return stream.gcount();
+  }
 
   // Binding code
   EMSCRIPTEN_BINDINGS(my_class_example) {

@@ -79,4 +79,3 @@ import('../dist/libav.js').then(async v => {
   
   sourceBuffer.appendBuffer(buff)
 })
-
