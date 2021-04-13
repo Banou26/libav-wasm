@@ -48,7 +48,7 @@ import('../dist/libav.js').then(async v => {
   const remuxer = new module.Remuxer()
   console.log('remuxer', remuxer)
 
-  const resultBuffer = new Uint8Array(300_000_000)
+  const resultBuffer = new Uint8Array(2_000_000_000)
   let processedBytes = 0
   let outputBytes = 0
   let isInitialized = false
