@@ -230,7 +230,7 @@ extern "C" {
 
         // printf("stream index %d/%d \n", used_input, input_size);
         if (used_input + avio_ctx_buffer_size > input_size) {
-          // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d \n", used_input, input_size);
+          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d \n", used_input, input_size);
           break;
         }
       }
