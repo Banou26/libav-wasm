@@ -17,6 +17,14 @@ const downloadArrayBuffer = buffer => {
   xhr.send();
 }
 
+interface Chunk {
+  id: number
+  start: number
+  end: number
+  buffered: boolean
+}
+
+
 import('../dist/libav.js').then(async v => {
   console.log(':)')
   const module = await v()
@@ -44,7 +52,8 @@ import('../dist/libav.js').then(async v => {
   let processedBytes = 0
   let outputBytes = 0
   let isInitialized = false
-  while (processedBytes < 100_000_000) { // processedBytes !== typedArrayBuffer.byteLength
+  while (processedBytes !== typedArrayBuffer.byteLength) { // processedBytes !== typedArrayBuffer.byteLength
+  // while (processedBytes < 100_000_000) { // processedBytes !== typedArrayBuffer.byteLength
     const bufferToPush = typedArrayBuffer.slice(processedBytes, processedBytes + PUSH_SIZE)
     remuxer.push(bufferToPush)
     processedBytes += bufferToPush.byteLength
@@ -88,7 +97,11 @@ import('../dist/libav.js').then(async v => {
   let mp4boxfile = createFile()
   mp4boxfile.onError = e => console.error('onError', e)
 
-  const chunks = []
+  const chunks: Chunk[] = []
+
+  const _buffer = resultBuffer.slice(0, outputBytes).buffer
+  _buffer.fileStart = 0
+  mp4boxfile.appendBuffer(_buffer)
 
   mp4boxfile.onSamples = (id, user, samples) => {
     console.log('onSamples', id, user, samples)
@@ -114,21 +127,19 @@ import('../dist/libav.js').then(async v => {
     }
   }
   mp4boxfile.setExtractionOptions(1)
+  mp4boxfile.start()
 
   const buffer = resultBuffer.slice(0, outputBytes).buffer
   // @ts-ignore
   buffer.fileStart = 0
 
   const info: any = await new Promise(resolve => {
-    mp4boxfile.onReady = info => {
-      console.log('READY', info)
-      resolve(info)
-    }
+    mp4boxfile.onReady = resolve
     mp4boxfile.start()
     mp4boxfile.appendBuffer(buffer)
     console.log('APPENDED')
-    mp4boxfile.flush()
-    console.log('FLUSHED')
+    // mp4boxfile.flush()
+    // console.log('FLUSHED')
   })
   console.log('mp4boxfile', mp4boxfile, chunks)
 
@@ -148,19 +159,156 @@ import('../dist/libav.js').then(async v => {
     await new Promise(resolve =>
       mediaSource.addEventListener(
         'sourceopen',
-        () => resolve(mediaSource.addSourceBuffer(mime)), // mime: video/mp4; codecs="avc1.640029,mp4a.40.2"; profiles="iso5,iso6,mp41"
+        () => resolve(mediaSource.addSourceBuffer(mime)),
         { once: true }
       )
     )
 
   mediaSource.duration = duration
-  // const buffer = resultBuffer.slice(0, 80_000_000).buffer
-  console.log('buffer', outputBytes.toLocaleString(), buffer)
-  sourceBuffer.appendBuffer(buffer)
-  // sourceBuffer.appendBuffer(resultBuffer.slice(0, 80_000_000).buffer)
+  sourceBuffer.mode = 'segments'
 
-  // setTimeout(() => {
-  //   video.currentTime = 4.5 * 60
-  //   sourceBuffer.appendBuffer(resultBuffer.slice(80_000_000, outputBytes).buffer)
-  // }, 1000)
+  let resolve, reject, abortResolve
+
+  const getTimeRanges = () =>
+    Array(sourceBuffer.buffered.length)
+      .fill(undefined)
+      .map((_, index) => ({
+        index,
+        start: sourceBuffer.buffered.start(index),
+        end: sourceBuffer.buffered.end(index)
+      }))
+
+  const getTimeRange = (time: number) =>
+    getTimeRanges()
+      .find(({ start, end }) => time >= start && time <= end)
+
+  const appendBuffer = (buffer: ArrayBuffer) =>
+    new Promise((_resolve, _reject) => {
+      resolve = _resolve
+      reject = _reject
+      sourceBuffer.appendBuffer(buffer)
+    })
+
+  const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
+    new Promise((_resolve, _reject) => {
+      resolve = _resolve
+      reject = _reject
+      sourceBuffer.remove(
+        Math.max(sourceBuffer.buffered.start(index), start),
+        Math.min(sourceBuffer.buffered.end(index), end)
+      )
+    })
+
+  const appendChunk = async (chunk: Chunk) => {
+    await appendBuffer(
+      resultBuffer.buffer.slice(
+        // segment metadata
+        mp4boxfile.moofs[chunk.id].start,
+        // segment data
+        mp4boxfile.mdats[chunk.id].start + mp4boxfile.mdats[chunk.id].size
+      )
+    )
+    chunk.buffered = true
+  }
+
+  const removeChunk = async (chunk: Chunk) => {
+    const range = getTimeRange(chunk.start) ?? getTimeRange(chunk.end)
+    if (!range) throw new RangeError('No TimeRange found with this chunk')
+    await removeRange({ start: chunk.start, end: chunk.end, index: range.index })
+    chunk.buffered = false
+  }
+
+  const abort = () =>
+    new Promise(resolve => {
+      abortResolve = resolve
+      sourceBuffer.abort()
+    })
+
+  sourceBuffer.addEventListener('updateend', ev => resolve(ev))
+  sourceBuffer.addEventListener('abort', ev => {
+    reject(ev)
+    abortResolve(ev)
+  })
+  sourceBuffer.addEventListener('error', ev => reject(ev))
+
+  const initializationBuffer = resultBuffer.buffer.slice(0, mp4boxfile.moov.start + mp4boxfile.moov.size)
+  await appendBuffer(initializationBuffer)
+
+  
+  const throttle = (func, limit) => {
+    let inThrottle
+    return function() {
+      const args = arguments
+      const context = this
+      if (!inThrottle) {
+        func.apply(context, args)
+        inThrottle = true
+        setTimeout(() => inThrottle = false, limit)
+      }
+    }
+  }
+
+  const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
+  const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
+
+  let currentSeek
+  const myEfficientFn = throttle(async () => {
+    const { currentTime } = video
+    currentSeek = currentTime
+    const neededChunks =
+      chunks
+        .filter(({ start, end }) =>
+          currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < start
+          && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > end
+        )
+    const shouldUnbufferChunks =
+      chunks
+        .filter(chunk => !neededChunks.includes(chunk))
+
+    if (sourceBuffer.updating) await abort()
+    for (const chunk of shouldUnbufferChunks) {
+      if (!chunk.buffered) continue
+      try {
+        await removeChunk(chunk)
+      } catch (err) {
+        if (err.message !== 'No TimeRange found with this chunk') throw err
+      }
+    }
+    for (const chunk of neededChunks) {
+      if (
+        chunk.buffered
+        || (
+          processedBytes !== typedArrayBuffer.byteLength
+          && chunk.id + 1 === chunks.length
+        )
+      ) continue
+      await appendChunk(chunk)
+    }
+    // for (const chunk of neededChunks) {
+    //   if (
+    //     chunk.buffered
+    //     || (
+    //       !done
+    //       && chunk.id + 1 === chunks.length
+    //     )
+    //   ) continue
+    //   await appendChunk(chunk)
+    // }
+  }, 10)
+
+  video.addEventListener('seeking', myEfficientFn)
+
+  video.addEventListener('timeupdate', () => {
+    // console.log('timeupdate', video.currentTime)
+    myEfficientFn()
+  })
+
+  await appendChunk(chunks[0])
+
+  // for (const chunk of chunks) {
+  //   await appendChunk(chunk)
+  // }
+
+  // if (chunks.length) await appendChunk(chunks[0])
+  // if (chunks.length) await appendChunk(chunks[1])
 })
