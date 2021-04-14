@@ -31,13 +31,14 @@ import('../dist/libav.js').then(async v => {
   console.log(v)
   console.log(module)
 
-  const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
+  const typedArrayBuffer = new Uint8Array((await (await fetch('./video2.mkv')).arrayBuffer()))
   console.log('typedArrayBuffer', typedArrayBuffer, typedArrayBuffer.byteLength)
 
-  const BUFFER_SIZE = 2_000_000
+  const BUFFER_SIZE = 5_000_000
+  // const BUFFER_SIZE = 2_000_000
   // const BUFFER_SIZE = 65536
 
-  const PUSH_ARRAY_SIZE = 5_000_000
+  const PUSH_ARRAY_SIZE = 10_000_000
 
   const PUSH_SIZE = Math.round(PUSH_ARRAY_SIZE / BUFFER_SIZE) * BUFFER_SIZE
   // const PUSH_SIZE = 2_000_000
@@ -79,11 +80,15 @@ import('../dist/libav.js').then(async v => {
     )
   }
 
+  // remuxer.close()
+
   const duration = remuxer.getInfo().input.duration / 1_000_000
 
   const header = [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D]
   resultBuffer.set(header, 0)
   console.log('resultBuffer', outputBytes.toLocaleString(), resultBuffer)
+
+  // downloadArrayBuffer(resultBuffer)
 
   const video = document.createElement('video')
   video.autoplay = true
