@@ -57,6 +57,7 @@ extern "C" {
     int *streams_list;
     int number_of_streams;
     bool should_decode;
+    int processed_bytes;
     int input_size;
 
   public:
@@ -64,7 +65,9 @@ extern "C" {
     std::stringstream output_stream;
     int used_input;
 
-    Remuxer() {}
+    Remuxer(int _input_size) {
+      input_size =_input_size;
+    }
 
     void init(int buffer_size) {
       printf("init remuxer \n");
@@ -190,7 +193,8 @@ extern "C" {
         avcodec_open2(pCodecContext, pCodec, NULL);
       }
 
-      // printf("stream index %d/%d \n", used_input, input_size);
+      bool is_last_chunk = used_input + avio_ctx_buffer_size > processed_bytes;
+
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
@@ -228,9 +232,8 @@ extern "C" {
         }
         av_packet_unref(packet);
 
-        // printf("stream index %d/%d \n", used_input, input_size);
-        if (used_input + avio_ctx_buffer_size > input_size) {
-          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d \n", used_input, input_size);
+        if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
+          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
           break;
         }
       }
@@ -271,7 +274,7 @@ extern "C" {
 
     void push(std::string buf) {
       input_stream.write(buf.c_str(), buf.length());
-      input_size += buf.length();
+      processed_bytes += buf.length();
     }
 
     emscripten::val getInt8Array() {
@@ -312,7 +315,7 @@ extern "C" {
       .field("output", &InfoObject::output);
 
     class_<Remuxer>("Remuxer")
-      .constructor<>()
+      .constructor<int>()
       .function("init", &Remuxer::init)
       .function("push", &Remuxer::push)
       .function("process", &Remuxer::process)

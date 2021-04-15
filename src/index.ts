@@ -24,14 +24,130 @@ interface Chunk {
   buffered: boolean
 }
 
+const BUFFER_SIZE = 5_000_000
+const PUSH_ARRAY_SIZE = 10_000_000
+const PUSH_SIZE = Math.round(PUSH_ARRAY_SIZE / BUFFER_SIZE) * BUFFER_SIZE
+
+let libavInstance
+
+const remux =
+  async (
+    { stream, autoStart = false, autoProcess = true }:
+    { stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
+  ) => {
+    const remuxer = libavInstance ?? new (libavInstance = await (await import('../dist/libav.js'))()).Remuxer()
+    const reader = stream.getReader()
+
+    const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
+    let processedBytes = 0
+    let currentBufferBytes = 0
+    let leftOverData
+    let isInitialized = false
+    let paused = false
+
+    const [resultStream, controller] = await new Promise(resolve => {
+      let controller
+      resolve([
+        new ReadableStream({
+          start: _controller => {
+            controller = _controller
+          }
+        }),
+        controller
+      ])
+    })
+
+    const processData = (initOnly = false) => {
+      if (!isInitialized) {
+        remuxer.init(BUFFER_SIZE)
+        isInitialized = true
+        if (initOnly) return
+      }
+      remuxer.process()
+      remuxer.clearInput()
+
+      const result = remuxer.getInt8Array()
+      remuxer.clearOutput()
+      controller.enqueue(result)
+      if (leftOverData) {
+        buffer.set(leftOverData, 0)
+        currentBufferBytes += leftOverData.byteLength
+        leftOverData = undefined
+      }
+    }
+
+    // todo: change the way leftOverData to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
+
+    const readData = (process = true) =>
+      !leftOverData
+      && !paused
+      && reader
+        .read()
+        .then(({ value: arrayBuffer, done }) => {
+          if (done || !arrayBuffer) return
+          // console.log('readData')
+          // console.log('buffer', buffer)
+          // console.log(
+          //   'arrayBuffer', arrayBuffer,
+          //   '\ncurrentBufferBytes', currentBufferBytes,
+          //   '\nPUSH_ARRAY_SIZE - currentBufferBytes', PUSH_ARRAY_SIZE - currentBufferBytes
+          // )
+          const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
+          // console.log('slicedArrayBuffer', slicedArrayBuffer)
+          buffer.set(slicedArrayBuffer, currentBufferBytes)
+          currentBufferBytes += slicedArrayBuffer.byteLength
+          if (currentBufferBytes === PUSH_ARRAY_SIZE) {
+            leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - currentBufferBytes)
+            currentBufferBytes = 0
+            if (process) {
+              remuxer.push(buffer)
+              processData()
+            }
+          }
+
+          if (!paused && !done) readData(autoProcess)
+        })
+
+    if (autoStart) readData(autoProcess)
+
+    return {
+      stream: resultStream,
+      pause: () => {
+        paused = true
+      },
+      resume: () => {
+        paused = false
+      },
+      start: () => {
+        if (!isInitialized) readData()
+      },
+      stop: () => {
+        paused = true
+        remuxer.clearInput()
+        remuxer.clearOutput()
+      },
+      setAutoProcess: (value: boolean) => {
+        autoProcess = value
+      },
+      getAutoProcess: () => autoProcess,
+      getInfo: () => remuxer.getInfo()
+    }
+  }
+
+// fetch('./video.mkv')
+//   .then(({ body }) => {
+//     const { stream } = remux({ stream: body, autoStart: true })
+//   })
+
 
 import('../dist/libav.js').then(async v => {
+  // return
   console.log(':)')
   const module = await v()
   console.log(v)
   console.log(module)
 
-  const typedArrayBuffer = new Uint8Array((await (await fetch('./video2.mkv')).arrayBuffer()))
+  const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
   console.log('typedArrayBuffer', typedArrayBuffer, typedArrayBuffer.byteLength)
 
   const BUFFER_SIZE = 5_000_000
@@ -46,7 +162,7 @@ import('../dist/libav.js').then(async v => {
   console.log('BUFFER_SIZE', BUFFER_SIZE)
   console.log('PUSH_SIZE', PUSH_SIZE)
 
-  const remuxer = new module.Remuxer()
+  const remuxer = new module.Remuxer(typedArrayBuffer.byteLength)
   console.log('remuxer', remuxer)
 
   const resultBuffer = new Uint8Array(2_000_000_000)
@@ -55,6 +171,11 @@ import('../dist/libav.js').then(async v => {
   let isInitialized = false
   while (processedBytes !== typedArrayBuffer.byteLength) { // processedBytes !== typedArrayBuffer.byteLength
   // while (processedBytes < 100_000_000) { // processedBytes !== typedArrayBuffer.byteLength
+    console.log(
+      '============',
+      'processedBytes', processedBytes,
+      '\noutputBytes', outputBytes
+    )
     const bufferToPush = typedArrayBuffer.slice(processedBytes, processedBytes + PUSH_SIZE)
     remuxer.push(bufferToPush)
     processedBytes += bufferToPush.byteLength
@@ -80,7 +201,7 @@ import('../dist/libav.js').then(async v => {
     )
   }
 
-  // remuxer.close()
+  remuxer.close()
 
   const duration = remuxer.getInfo().input.duration / 1_000_000
 
