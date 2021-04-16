@@ -30,24 +30,11 @@ const PUSH_SIZE = Math.round(PUSH_ARRAY_SIZE / BUFFER_SIZE) * BUFFER_SIZE
 
 let libavInstance
 
-const compareBuffers = (a, b) => {
-  let i = 0;
-  while (i < a.length) {
-      if (a[i] !== b[i]) {
-        console.log('NOT SAME RESULT', i, a.slice(i - 1), b.slice(i - 1))
-        return true;
-      }
-      i++
-  }
-  return true
-}
-
 const remux =
   async (
     { size, stream, autoStart = false, autoProcess = true }:
     { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
-    const typedArrayBuffer = new Uint8Array((await (await fetch('./video.mkv')).arrayBuffer()))
     const remuxer = libavInstance ?? new (libavInstance = await (await import('../dist/libav.js'))()).Remuxer(size)
     const reader = stream.getReader()
 
@@ -71,9 +58,7 @@ const remux =
     })
 
     // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
-
     const processData = (initOnly = false) => {
-      console.log('processData LEFTOVER DATA', leftOverData)
       if (!isInitialized) {
         remuxer.init(BUFFER_SIZE)
         isInitialized = true
@@ -90,14 +75,11 @@ const remux =
         currentBufferBytes += leftOverData.byteLength
         leftOverData = undefined
       }
-      console.log('PPPPPPPPPPPPPPPP', processedBytes, size)
       if (processedBytes === size) {
         remuxer.close()
         controller.close()
       }
     }
-
-    let i = 0
 
     const readData = async (process = true) =>
       !leftOverData
@@ -105,38 +87,24 @@ const remux =
       && reader
         .read()
         .then(({ value: arrayBuffer, done }) => {
-          if (done || !arrayBuffer) return
-          const isLastChunk = processedBytes + PUSH_ARRAY_SIZE >= size
+          // console.log('readData', arrayBuffer, done)
+          if (done || !arrayBuffer) {
+            const lastChunk = buffer.slice(0, size - processedBytes)
+            remuxer.push(lastChunk)
+            processedBytes += lastChunk.byteLength
+            processData()
+            return
+          }
           const _currentBufferBytes = currentBufferBytes
           const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
           buffer.set(slicedArrayBuffer, currentBufferBytes)
           currentBufferBytes += slicedArrayBuffer.byteLength
-          // console.log('IS LAST CHUNKKKKKKKKKKKKKKKKKKKKKK', processedBytes + PUSH_ARRAY_SIZE > size)
-          if (currentBufferBytes === PUSH_ARRAY_SIZE || isLastChunk) {
-            // console.log('OOOOOOOOOOOOOOOOO', currentBufferBytes)
-            console.log(
-              'OOOOOOOOOOOOOOOOO',
-              '\nsize', size,
-              '\ndone', done,
-              '\narrayBuffer', arrayBuffer,
-              '\nisLastChunk', isLastChunk,
-              '\ncurrentBufferBytes', currentBufferBytes,
-              '\nprocessedBytes', processedBytes,
-              '\nsize - processedBytes', size - processedBytes,
-              '\nequal', compareBuffers(buffer.slice(0, size - processedBytes), typedArrayBuffer.slice(i * PUSH_ARRAY_SIZE, (i + 1) * PUSH_ARRAY_SIZE)),
-              '\nbuffer', buffer.slice(0, size - processedBytes),
-              '\ntypedArrayBuffer', typedArrayBuffer.slice(i * PUSH_ARRAY_SIZE, (i + 1) * PUSH_ARRAY_SIZE),
-            )
-            i++
+          if (currentBufferBytes === PUSH_ARRAY_SIZE) {
             leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
             processedBytes += currentBufferBytes
             currentBufferBytes = 0
             if (process) {
-              if (isLastChunk) {
-                remuxer.push(buffer.slice(0, size - processedBytes))
-              } else {
-                remuxer.push(buffer.slice(0, size - processedBytes))
-              }
+              remuxer.push(buffer)
               processData()
             }
           }
@@ -194,24 +162,19 @@ fetch('./video.mkv')
     const fileSize = Number(headers.get('Content-Length'))
     const { stream, getInfo } = await remux({ size: fileSize, stream: body, autoStart: true })
     const reader = stream.getReader()
-    const resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
+    let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
     let processedBytes = 0
     const read = async () => {
       const { value: arrayBuffer, done } = await reader.read()
-      if (done) return
-      // console.log('arrayBuffer', arrayBuffer, done)
+      if (done) {
+        resultBuffer = resultBuffer.slice(0, processedBytes)
+        return
+      }
       resultBuffer.set(arrayBuffer, processedBytes)
       processedBytes += arrayBuffer.byteLength
-      // console.log('oof', done, fileSize, resultBuffer, processedBytes)
       return read()
     }
     await read()
-
-    return
-
-    console.log('AAAAAAAAAAAAAAAAAAAAAA')
-
-
 
     const duration = getInfo().input.duration / 1_000_000
 
