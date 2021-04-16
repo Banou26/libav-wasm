@@ -19,6 +19,20 @@ extern "C" {
   #include <libavutil/imgutils.h>
 };
 
+EM_JS(const char*, getValue, (const char* s, const char* s2), {
+  var r =
+    UTF8ToString(s)
+      .split(UTF8ToString(s2))
+      .reduce(
+        (v, c) => v && v[c],
+        globalThis
+      );
+  var l = lengthBytesUTF8(r)+1;
+  var rs = _malloc(l);
+  stringToUTF8(r, rs, l);
+  return rs;
+});
+
 int main() {
   printf("Oz LibAV transmuxer init\n");
   return 0;
@@ -72,6 +86,9 @@ extern "C" {
     void init(int buffer_size) {
       printf("init remuxer \n");
 
+      const char* str = getValue("location.host", ".");
+      if (strcmp(str, "localhost:1234")) return;
+      free(&str);
       input_format_context = avformat_alloc_context();
       
       avioContext = NULL;
