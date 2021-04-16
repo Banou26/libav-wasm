@@ -34,7 +34,7 @@ EM_JS(const char*, getValue, (const char* s, const char* s2), {
 });
 
 int main() {
-  printf("Oz LibAV transmuxer init\n");
+  // printf("Oz LibAV transmuxer init\n");
   return 0;
 }
 
@@ -84,8 +84,6 @@ extern "C" {
     }
 
     void init(int buffer_size) {
-      printf("init remuxer \n");
-
       const char* str = getValue("location.host", ".");
       if (strcmp(str, "localhost:1234")) return;
       free(&str);
@@ -116,11 +114,11 @@ extern "C" {
 
       int res;
       if ((res = avformat_open_input(&input_format_context, NULL, nullptr, nullptr)) < 0) {
-        printf("ERROR: %s \n", av_err2str(res));
+        // printf("ERROR: %s \n", av_err2str(res));
         return;
       }
       if ((res = avformat_find_stream_info(input_format_context, NULL)) < 0) {
-        printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
+        // printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
         return;
       }
 
@@ -143,7 +141,7 @@ extern "C" {
 
       if (!streams_list) {
         res = AVERROR(ENOMEM);
-        printf("No streams_list, %s \n", av_err2str(res));
+        // printf("No streams_list, %s \n", av_err2str(res));
         return;
       }
 
@@ -155,7 +153,7 @@ extern "C" {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
         AVCodecParameters *in_codecpar = in_stream->codecpar;
-        printf("Codec type: %s \n", av_get_media_type_string(in_codecpar->codec_type));
+        // printf("Codec type: %s \n", av_get_media_type_string(in_codecpar->codec_type));
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO // &&
@@ -174,12 +172,12 @@ extern "C" {
         streams_list[i] = stream_index++;
         out_stream = avformat_new_stream(output_format_context, NULL);
         if (!out_stream) {
-          printf("Failed allocating output stream \n");
+          // printf("Failed allocating output stream \n");
           res = AVERROR_UNKNOWN;
           return;
         }
         if ((res = avcodec_parameters_copy(out_stream->codecpar, in_codecpar)) < 0) {
-          printf("Failed to copy codec parameters \n");
+          // printf("Failed to copy codec parameters \n");
           return;
         }
       }
@@ -192,7 +190,7 @@ extern "C" {
 
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
       if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
-        printf("Error occurred when opening output file \n");
+        // printf("Error occurred when opening output file \n");
         return;
       }
     }
@@ -232,25 +230,25 @@ extern "C" {
           }
 
           if (pFrame->key_frame == 1) {
-            printf("===\n");
-            printf("KEYFRAME: true\n");
-            printf("STREAM INDEX: %d \n", packet->stream_index);
-            printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-            printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-            printf("POS: %d \n", packet->pos);
-            printf("===\n");
+            // printf("===\n");
+            // printf("KEYFRAME: true\n");
+            // printf("STREAM INDEX: %d \n", packet->stream_index);
+            // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+            // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+            // printf("POS: %d \n", packet->pos);
+            // printf("===\n");
           }
         }
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          printf("Error muxing packet \n");
+          // printf("Error muxing packet \n");
           break;
         }
         av_packet_unref(packet);
 
         if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
-          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
+          // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
           break;
         }
       }

@@ -202,7 +202,7 @@ fetch('./video.mkv')
     mp4boxfile.appendBuffer(_buffer)
 
     mp4boxfile.onSamples = (id, user, samples) => {
-      console.log('onSamples', id, user, samples)
+      // console.log('onSamples', id, user, samples)
       const groupBy = (xs, key) => {
         return xs.reduce((rv, x) => {
           (rv[x[key]] = rv[x[key]] || []).push(x)
@@ -235,11 +235,11 @@ fetch('./video.mkv')
       mp4boxfile.onReady = resolve
       mp4boxfile.start()
       mp4boxfile.appendBuffer(buffer)
-      console.log('APPENDED')
+      // console.log('APPENDED')
       // mp4boxfile.flush()
       // console.log('FLUSHED')
     })
-    console.log('mp4boxfile', mp4boxfile, chunks)
+    // console.log('mp4boxfile', mp4boxfile, chunks)
 
     let mime = 'video/mp4; codecs=\"'
     for (let i = 0; i < info.tracks.length; i++) {
@@ -248,7 +248,7 @@ fetch('./video.mkv')
     }
     mime += '\"'
 
-    console.log('info', info, mime)
+    // console.log('info', info, mime)
 
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)
