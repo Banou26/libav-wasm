@@ -32,10 +32,10 @@ let libavInstance
 
 const remux =
   async (
-    { stream, autoStart = false, autoProcess = true }:
-    { stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
+    { size, stream, autoStart = false, autoProcess = true }:
+    { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
-    const remuxer = libavInstance ?? new (libavInstance = await (await import('../dist/libav.js'))()).Remuxer()
+    const remuxer = libavInstance ?? new (libavInstance = await (await import('../dist/libav.js'))()).Remuxer(size)
     const reader = stream.getReader()
 
     const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
@@ -45,7 +45,7 @@ const remux =
     let isInitialized = false
     let paused = false
 
-    const [resultStream, controller] = await new Promise(resolve => {
+    const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
       let controller
       resolve([
         new ReadableStream({
@@ -58,6 +58,7 @@ const remux =
     })
 
     const processData = (initOnly = false) => {
+      console.log('LEFTOVER DATA', leftOverData)
       if (!isInitialized) {
         remuxer.init(BUFFER_SIZE)
         isInitialized = true
@@ -74,39 +75,58 @@ const remux =
         currentBufferBytes += leftOverData.byteLength
         leftOverData = undefined
       }
+      // console.log('OOOOOOOOOOOOOOOOO', processedBytes, size)
+      if (processedBytes === size) {
+        remuxer.close()
+        controller.close()
+      }
     }
 
-    // todo: change the way leftOverData to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
-
-    const readData = (process = true) =>
+    // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
+    const readData = async (process = true) =>
       !leftOverData
       && !paused
       && reader
         .read()
         .then(({ value: arrayBuffer, done }) => {
           if (done || !arrayBuffer) return
-          // console.log('readData')
-          // console.log('buffer', buffer)
-          // console.log(
-          //   'arrayBuffer', arrayBuffer,
-          //   '\ncurrentBufferBytes', currentBufferBytes,
-          //   '\nPUSH_ARRAY_SIZE - currentBufferBytes', PUSH_ARRAY_SIZE - currentBufferBytes
-          // )
+          const _currentBufferBytes = currentBufferBytes
           const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
-          // console.log('slicedArrayBuffer', slicedArrayBuffer)
           buffer.set(slicedArrayBuffer, currentBufferBytes)
           currentBufferBytes += slicedArrayBuffer.byteLength
-          if (currentBufferBytes === PUSH_ARRAY_SIZE) {
-            leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - currentBufferBytes)
+            // console.log('IS LAST CHUNKKKKKKKKKKKKKKKKKKKKKK', processedBytes + PUSH_ARRAY_SIZE > size)
+          if (/* processedBytes + PUSH_ARRAY_SIZE < size && */currentBufferBytes === PUSH_ARRAY_SIZE) {
+            console.log('OOOOOOOOOOOOOOOOO', currentBufferBytes)
+            leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
+            processedBytes += currentBufferBytes
             currentBufferBytes = 0
             if (process) {
               remuxer.push(buffer)
               processData()
             }
           }
-
           if (!paused && !done) readData(autoProcess)
         })
+
+    // const readData = async (process = true) => {
+    //   if (leftOverData || paused) return
+    //   const { value: arrayBuffer, done } = await reader.read()
+    //   if (done) return
+    //   const _currentBufferBytes = currentBufferBytes
+    //   const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
+    //   buffer.set(slicedArrayBuffer, currentBufferBytes)
+    //   currentBufferBytes += slicedArrayBuffer.byteLength
+    //   if (currentBufferBytes === PUSH_ARRAY_SIZE) {
+    //     leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
+    //     if (process) {
+    //       remuxer.push(buffer)
+    //       processData()
+    //     }
+    //     currentBufferBytes = 0
+    //   }
+
+    //   if (!paused && !done) readData(autoProcess)
+    // }
 
     if (autoStart) readData(autoProcess)
 
@@ -134,14 +154,261 @@ const remux =
     }
   }
 
-// fetch('./video.mkv')
-//   .then(({ body }) => {
-//     const { stream } = remux({ stream: body, autoStart: true })
-//   })
+fetch('./video.mkv')
+  .then(async ({ headers, body }) => {
+    const fileSize = Number(headers.get('Content-Length'))
+    const { stream, getInfo } = await remux({ size: fileSize, stream: body, autoStart: true })
+    const reader = stream.getReader()
+    const resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
+    let processedBytes = 0
+    const read = async () => {
+      const { value: arrayBuffer, done } = await reader.read()
+      console.log('arrayBuffer', arrayBuffer)
+      resultBuffer.set(arrayBuffer, processedBytes)
+      processedBytes += arrayBuffer.byteLength
+      console.log('oof', done, fileSize, resultBuffer, processedBytes)
+      if (!done) return read()
+    }
+    await read()
+
+
+
+    console.log('AAAAAAAAAAAAAAAAAAAAAA')
+
+
+
+
+    const duration = getInfo().input.duration / 1_000_000
+
+    const header = [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D]
+    resultBuffer.set(header, 0)
+
+    // downloadArrayBuffer(resultBuffer)
+
+    const video = document.createElement('video')
+    video.autoplay = true
+    video.controls = true
+    video.volume = 0
+    video.addEventListener('error', ev => {
+      console.error(ev.target.error)
+    })
+    document.body.appendChild(video)
+
+    let mp4boxfile = createFile()
+    mp4boxfile.onError = e => console.error('onError', e)
+
+    const chunks: Chunk[] = []
+
+    const _buffer = resultBuffer.slice(0).buffer
+    _buffer.fileStart = 0
+    mp4boxfile.appendBuffer(_buffer)
+
+    mp4boxfile.onSamples = (id, user, samples) => {
+      console.log('onSamples', id, user, samples)
+      const groupBy = (xs, key) => {
+        return xs.reduce((rv, x) => {
+          (rv[x[key]] = rv[x[key]] || []).push(x)
+          return rv
+        }, []).filter(Boolean)
+      }
+      const groupedSamples = groupBy(samples, 'moof_number')
+      for (const group of groupedSamples) {
+        const firstSample = group[0]
+        const lastSample = group.slice(-1)[0]
+
+        if (chunks[firstSample.moof_number - 1]) continue
+
+        chunks[firstSample.moof_number - 1] = {
+          id: firstSample.moof_number - 1,
+          start: firstSample.cts / firstSample.timescale,
+          end: lastSample.cts / lastSample.timescale,
+          buffered: false
+        }
+      }
+    }
+    mp4boxfile.setExtractionOptions(1)
+    mp4boxfile.start()
+
+    const buffer = resultBuffer.slice(0).buffer
+    // @ts-ignore
+    buffer.fileStart = 0
+
+    const info: any = await new Promise(resolve => {
+      mp4boxfile.onReady = resolve
+      mp4boxfile.start()
+      mp4boxfile.appendBuffer(buffer)
+      console.log('APPENDED')
+      // mp4boxfile.flush()
+      // console.log('FLUSHED')
+    })
+    console.log('mp4boxfile', mp4boxfile, chunks)
+
+    let mime = 'video/mp4; codecs=\"'
+    for (let i = 0; i < info.tracks.length; i++) {
+      if (i !== 0) mime += ','
+      mime += info.tracks[i].codec
+    }
+    mime += '\"'
+
+    console.log('info', info, mime)
+
+    const mediaSource = new MediaSource()
+    video.src = URL.createObjectURL(mediaSource)
+
+    const sourceBuffer: SourceBuffer =
+      await new Promise(resolve =>
+        mediaSource.addEventListener(
+          'sourceopen',
+          () => resolve(mediaSource.addSourceBuffer(mime)),
+          { once: true }
+        )
+      )
+
+    mediaSource.duration = duration
+    sourceBuffer.mode = 'segments'
+
+    let resolve, reject, abortResolve
+
+    const getTimeRanges = () =>
+      Array(sourceBuffer.buffered.length)
+        .fill(undefined)
+        .map((_, index) => ({
+          index,
+          start: sourceBuffer.buffered.start(index),
+          end: sourceBuffer.buffered.end(index)
+        }))
+
+    const getTimeRange = (time: number) =>
+      getTimeRanges()
+        .find(({ start, end }) => time >= start && time <= end)
+
+    const appendBuffer = (buffer: ArrayBuffer) =>
+      new Promise((_resolve, _reject) => {
+        resolve = _resolve
+        reject = _reject
+        sourceBuffer.appendBuffer(buffer)
+      })
+
+    const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
+      new Promise((_resolve, _reject) => {
+        resolve = _resolve
+        reject = _reject
+        sourceBuffer.remove(
+          Math.max(sourceBuffer.buffered.start(index), start),
+          Math.min(sourceBuffer.buffered.end(index), end)
+        )
+      })
+
+    const appendChunk = async (chunk: Chunk) => {
+      await appendBuffer(
+        resultBuffer.buffer.slice(
+          // segment metadata
+          mp4boxfile.moofs[chunk.id].start,
+          // segment data
+          mp4boxfile.mdats[chunk.id].start + mp4boxfile.mdats[chunk.id].size
+        )
+      )
+      chunk.buffered = true
+    }
+
+    const removeChunk = async (chunk: Chunk) => {
+      const range = getTimeRange(chunk.start) ?? getTimeRange(chunk.end)
+      if (!range) throw new RangeError('No TimeRange found with this chunk')
+      await removeRange({ start: chunk.start, end: chunk.end, index: range.index })
+      chunk.buffered = false
+    }
+
+    const abort = () =>
+      new Promise(resolve => {
+        abortResolve = resolve
+        sourceBuffer.abort()
+      })
+
+    sourceBuffer.addEventListener('updateend', ev => resolve(ev))
+    sourceBuffer.addEventListener('abort', ev => {
+      reject(ev)
+      abortResolve(ev)
+    })
+    sourceBuffer.addEventListener('error', ev => reject(ev))
+
+    const initializationBuffer = resultBuffer.buffer.slice(0, mp4boxfile.moov.start + mp4boxfile.moov.size)
+    await appendBuffer(initializationBuffer)
+
+    
+    const throttle = (func, limit) => {
+      let inThrottle
+      return function() {
+        const args = arguments
+        const context = this
+        if (!inThrottle) {
+          func.apply(context, args)
+          inThrottle = true
+          setTimeout(() => inThrottle = false, limit)
+        }
+      }
+    }
+
+    const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
+    const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
+
+    let currentSeek
+    const myEfficientFn = throttle(async () => {
+      const { currentTime } = video
+      currentSeek = currentTime
+      const neededChunks =
+        chunks
+          .filter(({ start, end }) =>
+            currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < start
+            && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > end
+          )
+      const shouldUnbufferChunks =
+        chunks
+          .filter(chunk => !neededChunks.includes(chunk))
+
+      if (sourceBuffer.updating) await abort()
+      for (const chunk of shouldUnbufferChunks) {
+        if (!chunk.buffered) continue
+        try {
+          await removeChunk(chunk)
+        } catch (err) {
+          if (err.message !== 'No TimeRange found with this chunk') throw err
+        }
+      }
+      for (const chunk of neededChunks) {
+        // if (
+        //   chunk.buffered
+        //   || (
+        //     processedBytes !== typedArrayBuffer.byteLength
+        //     && chunk.id + 1 === chunks.length
+        //   )
+        // ) continue
+        await appendChunk(chunk)
+      }
+      // for (const chunk of neededChunks) {
+      //   if (
+      //     chunk.buffered
+      //     || (
+      //       !done
+      //       && chunk.id + 1 === chunks.length
+      //     )
+      //   ) continue
+      //   await appendChunk(chunk)
+      // }
+    }, 10)
+
+    video.addEventListener('seeking', myEfficientFn)
+
+    video.addEventListener('timeupdate', () => {
+      // console.log('timeupdate', video.currentTime)
+      myEfficientFn()
+    })
+
+    await appendChunk(chunks[0])
+  })
 
 
 import('../dist/libav.js').then(async v => {
-  // return
+  return
   console.log(':)')
   const module = await v()
   console.log(v)
