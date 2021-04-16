@@ -193,7 +193,7 @@ extern "C" {
         avcodec_open2(pCodecContext, pCodec, NULL);
       }
 
-      bool is_last_chunk = used_input + avio_ctx_buffer_size > processed_bytes;
+      bool is_last_chunk = used_input + avio_ctx_buffer_size >= input_size;
 
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
