@@ -81,55 +81,31 @@ const remux =
       }
     }
 
-    const readData = async (process = true) =>
-      !leftOverData
-      && !paused
-      && reader
-        .read()
-        .then(({ value: arrayBuffer, done }) => {
-          // console.log('readData', arrayBuffer, done)
-          if (done || !arrayBuffer) {
-            const lastChunk = buffer.slice(0, size - processedBytes)
-            remuxer.push(lastChunk)
-            processedBytes += lastChunk.byteLength
-            processData()
-            return
-          }
-          const _currentBufferBytes = currentBufferBytes
-          const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
-          buffer.set(slicedArrayBuffer, currentBufferBytes)
-          currentBufferBytes += slicedArrayBuffer.byteLength
-          if (currentBufferBytes === PUSH_ARRAY_SIZE) {
-            leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
-            processedBytes += currentBufferBytes
-            currentBufferBytes = 0
-            if (process) {
-              remuxer.push(buffer)
-              processData()
-            }
-          }
-          if (!paused && !done) readData(autoProcess)
-        })
-
-    // const readData = async (process = true) => {
-    //   if (leftOverData || paused) return
-    //   const { value: arrayBuffer, done } = await reader.read()
-    //   if (done) return
-    //   const _currentBufferBytes = currentBufferBytes
-    //   const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
-    //   buffer.set(slicedArrayBuffer, currentBufferBytes)
-    //   currentBufferBytes += slicedArrayBuffer.byteLength
-    //   if (currentBufferBytes === PUSH_ARRAY_SIZE) {
-    //     leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
-    //     if (process) {
-    //       remuxer.push(buffer)
-    //       processData()
-    //     }
-    //     currentBufferBytes = 0
-    //   }
-
-    //   if (!paused && !done) readData(autoProcess)
-    // }
+    const readData = async (process = true) => {
+      if (leftOverData || paused) return
+      const { value: arrayBuffer, done } = await reader.read()
+      if (done || !arrayBuffer) {
+        const lastChunk = buffer.slice(0, size - processedBytes)
+        remuxer.push(lastChunk)
+        processedBytes += lastChunk.byteLength
+        processData()
+        return
+      }
+      const _currentBufferBytes = currentBufferBytes
+      const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
+      buffer.set(slicedArrayBuffer, currentBufferBytes)
+      currentBufferBytes += slicedArrayBuffer.byteLength
+      if (currentBufferBytes === PUSH_ARRAY_SIZE) {
+        leftOverData = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
+        processedBytes += currentBufferBytes
+        currentBufferBytes = 0
+        if (process) {
+          remuxer.push(buffer)
+          processData()
+        }
+      }
+      if (!paused && !done) readData(autoProcess)
+    }
 
     if (autoStart) readData(autoProcess)
 
