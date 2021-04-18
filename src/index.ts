@@ -144,42 +144,12 @@ fetch('./video2.mkv')
     const reader = stream.getReader()
     let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
     let processedBytes = 0
-    const read = async () => {
-      const { value: arrayBuffer, done } = await reader.read()
-      if (done) {
-        resultBuffer = resultBuffer.slice(0, processedBytes)
-        return
-      }
-      resultBuffer.set(arrayBuffer, processedBytes)
-      processedBytes += arrayBuffer.byteLength
-      return read()
-    }
-    await read()
-
-    const duration = getInfo().input.duration / 1_000_000
-
-    const video = document.createElement('video')
-    video.autoplay = true
-    video.controls = true
-    video.volume = 0
-    video.addEventListener('error', ev => {
-      console.error(ev.target.error)
-    })
-    document.body.appendChild(video)
 
     let mp4boxfile = createFile()
     mp4boxfile.onError = e => console.error('onError', e)
-
     const chunks: Chunk[] = []
 
-    const buffer = resultBuffer.buffer
-    // @ts-ignore
-    buffer.fileStart = 0
-
-    mp4boxfile.appendBuffer(buffer)
-
     mp4boxfile.onSamples = (id, user, samples) => {
-      // console.log('onSamples', id, user, samples)
       const groupBy = (xs, key) => {
         return xs.reduce((rv, x) => {
           (rv[x[key]] = rv[x[key]] || []).push(x)
@@ -201,25 +171,86 @@ fetch('./video2.mkv')
         }
       }
     }
-    mp4boxfile.setExtractionOptions(1)
-    mp4boxfile.start()
-
-    const info: any = await new Promise(resolve => {
-      mp4boxfile.onReady = resolve
-      mp4boxfile.start()
-      mp4boxfile.appendBuffer(buffer)
-      // console.log('APPENDED')
-      // mp4boxfile.flush()
-      // console.log('FLUSHED')
-    })
-    // console.log('mp4boxfile', mp4boxfile, chunks)
 
     let mime = 'video/mp4; codecs=\"'
-    for (let i = 0; i < info.tracks.length; i++) {
-      if (i !== 0) mime += ','
-      mime += info.tracks[i].codec
+    let info
+
+    mp4boxfile.onReady = (_info) => {
+      info = _info
+      for (let i = 0; i < info.tracks.length; i++) {
+        if (i !== 0) mime += ','
+        mime += info.tracks[i].codec
+      }
+      mime += '\"'
+      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
+      mp4boxfile.start()
     }
-    mime += '\"'
+
+    let first = false
+    const read = async () => {
+      const { value: arrayBuffer, done } = await reader.read()
+      if (done) {
+        resultBuffer = resultBuffer.slice(0, processedBytes)
+        return
+      }
+
+      const buffer = arrayBuffer.slice(0).buffer
+      // @ts-ignore
+      buffer.fileStart = processedBytes
+      mp4boxfile.appendBuffer(buffer)
+
+      resultBuffer.set(arrayBuffer, processedBytes)
+      processedBytes += arrayBuffer.byteLength
+      if (!first) {
+        first = true
+        return read()
+      }
+      read()
+    }
+
+    await read()
+    // await new Promise(resolve => setTimeout(resolve, 1000))
+    // await read()
+
+    // return
+
+    const duration = getInfo().input.duration / 1_000_000
+
+    const video = document.createElement('video')
+    video.autoplay = true
+    video.controls = true
+    video.volume = 0
+    video.addEventListener('error', ev => {
+      console.error(ev.target.error)
+    })
+    document.body.appendChild(video)
+
+    // const buffer = resultBuffer.buffer
+    // // @ts-ignore
+    // buffer.fileStart = 0
+
+    // mp4boxfile.appendBuffer(buffer)
+
+
+    // mp4boxfile.setExtractionOptions(1)
+    // mp4boxfile.start()
+
+    // const info: any = await new Promise(resolve => {
+    //   mp4boxfile.onReady = resolve
+    //   mp4boxfile.start()
+    //   mp4boxfile.appendBuffer(buffer)
+    //   // console.log('APPENDED')
+    //   // mp4boxfile.flush()
+    //   // console.log('FLUSHED')
+    // })
+    // // console.log('mp4boxfile', mp4boxfile, chunks)
+
+    // let mime = 'video/mp4; codecs=\"'
+    // for (let i = 0; i < info.tracks.length; i++) {
+    //   if (i !== 0) mime += ','
+    //   mime += info.tracks[i].codec
+    // }
+    // mime += '\"'
 
     // console.log('info', info, mime)
 
@@ -346,13 +377,13 @@ fetch('./video2.mkv')
         }
       }
       for (const chunk of neededChunks) {
-        // if (
-        //   chunk.buffered
-        //   || (
-        //     processedBytes !== typedArrayBuffer.byteLength
-        //     && chunk.id + 1 === chunks.length
-        //   )
-        // ) continue
+        if (
+          chunk.buffered
+          || (
+            processedBytes !== fileSize
+            && chunk.id + 1 === chunks.length
+          )
+        ) continue
         await appendChunk(chunk)
       }
       // for (const chunk of neededChunks) {
@@ -365,7 +396,7 @@ fetch('./video2.mkv')
       //   ) continue
       //   await appendChunk(chunk)
       // }
-    }, 10)
+    }, 100)
 
     video.addEventListener('seeking', myEfficientFn)
 
