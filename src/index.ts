@@ -1,22 +1,5 @@
 import { createFile } from 'mp4box'
 
-const downloadArrayBuffer = buffer => {
-  const videoBlob = new Blob([new Uint8Array(buffer, 0, buffer.length)], { type: 'video/mp4' });
-  
-  var xhr = new XMLHttpRequest();
-  xhr.open("GET", URL.createObjectURL(videoBlob));
-  xhr.responseType = "arraybuffer";
-
-  xhr.onload = function () {
-      if (this.status === 200) {
-          var blob = new Blob([xhr.response], {type: "application/octet-stream"});
-          var objectUrl = URL.createObjectURL(blob);
-          window.open(objectUrl);
-      }
-  };
-  xhr.send();
-}
-
 interface Chunk {
   id: number
   start: number
@@ -26,7 +9,6 @@ interface Chunk {
 
 const BUFFER_SIZE = 5_000_000
 const PUSH_ARRAY_SIZE = 10_000_000
-const PUSH_SIZE = Math.round(PUSH_ARRAY_SIZE / BUFFER_SIZE) * BUFFER_SIZE
 
 let libavInstance
 
@@ -209,10 +191,6 @@ fetch('./video2.mkv')
     }
 
     await read()
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // await read()
-
-    // return
 
     const duration = getInfo().input.duration / 1_000_000
 
@@ -224,35 +202,6 @@ fetch('./video2.mkv')
       console.error(ev.target.error)
     })
     document.body.appendChild(video)
-
-    // const buffer = resultBuffer.buffer
-    // // @ts-ignore
-    // buffer.fileStart = 0
-
-    // mp4boxfile.appendBuffer(buffer)
-
-
-    // mp4boxfile.setExtractionOptions(1)
-    // mp4boxfile.start()
-
-    // const info: any = await new Promise(resolve => {
-    //   mp4boxfile.onReady = resolve
-    //   mp4boxfile.start()
-    //   mp4boxfile.appendBuffer(buffer)
-    //   // console.log('APPENDED')
-    //   // mp4boxfile.flush()
-    //   // console.log('FLUSHED')
-    // })
-    // // console.log('mp4boxfile', mp4boxfile, chunks)
-
-    // let mime = 'video/mp4; codecs=\"'
-    // for (let i = 0; i < info.tracks.length; i++) {
-    //   if (i !== 0) mime += ','
-    //   mime += info.tracks[i].codec
-    // }
-    // mime += '\"'
-
-    // console.log('info', info, mime)
 
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)
