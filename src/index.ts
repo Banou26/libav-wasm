@@ -119,7 +119,7 @@ const remux =
     }
   }
 
-fetch('./video2.mkv')
+fetch('./video.mkv')
   .then(async ({ headers, body }) => {
     const fileSize = Number(headers.get('Content-Length'))
     const { stream, getInfo } = await remux({ size: fileSize, stream: body, autoStart: true })
@@ -173,6 +173,9 @@ fetch('./video2.mkv')
       const { value: arrayBuffer, done } = await reader.read()
       if (done) {
         resultBuffer = resultBuffer.slice(0, processedBytes)
+        const el = document.createElement('div')
+        el.innerText = 'Done'
+        document.body.appendChild(el)
         return
       }
 
@@ -242,6 +245,7 @@ fetch('./video2.mkv')
 
     const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
       new Promise((_resolve, _reject) => {
+        console.log('removeRange', start, end, index)
         resolve = _resolve
         reject = _reject
         sourceBuffer.remove(
@@ -251,6 +255,7 @@ fetch('./video2.mkv')
       })
 
     const appendChunk = async (chunk: Chunk) => {
+      console.log('appendChunk', chunk)
       await appendBuffer(
         resultBuffer.buffer.slice(
           // segment metadata
@@ -263,6 +268,7 @@ fetch('./video2.mkv')
     }
 
     const removeChunk = async (chunk: Chunk) => {
+      console.log('removeChunk', chunk)
       const range = getTimeRange(chunk.start) ?? getTimeRange(chunk.end)
       if (!range) throw new RangeError('No TimeRange found with this chunk')
       await removeRange({ start: chunk.start, end: chunk.end, index: range.index })
@@ -271,6 +277,7 @@ fetch('./video2.mkv')
 
     const abort = () =>
       new Promise(resolve => {
+        console.log('abort')
         abortResolve = resolve
         sourceBuffer.abort()
       })
@@ -303,7 +310,8 @@ fetch('./video2.mkv')
     const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
 
     let currentSeek
-    const myEfficientFn = throttle(async () => {
+    const myEfficientFn = throttle(async (...args) => {
+      console.log('myEfficientFn', args)
       const { currentTime } = video
       currentSeek = currentTime
       const neededChunks =
@@ -312,9 +320,11 @@ fetch('./video2.mkv')
             currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < start
             && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > end
           )
+      console.log('neededChunks', neededChunks)
       const shouldUnbufferChunks =
         chunks
           .filter(chunk => !neededChunks.includes(chunk))
+      console.log('shouldUnbufferChunks', shouldUnbufferChunks)
 
       if (sourceBuffer.updating) await abort()
       for (const chunk of shouldUnbufferChunks) {
@@ -333,7 +343,13 @@ fetch('./video2.mkv')
             && chunk.id + 1 === chunks.length
           )
         ) continue
-        await appendChunk(chunk)
+        try {
+          await appendChunk(chunk)
+        } catch (err) {
+          if (!(err instanceof Event)) throw err
+          // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
+          break
+        }
       }
       // for (const chunk of neededChunks) {
       //   if (
@@ -345,14 +361,21 @@ fetch('./video2.mkv')
       //   ) continue
       //   await appendChunk(chunk)
       // }
-    }, 100)
+    }, 10)
 
-    video.addEventListener('seeking', myEfficientFn)
-
-    video.addEventListener('timeupdate', () => {
-      // console.log('timeupdate', video.currentTime)
-      myEfficientFn()
+    video.addEventListener('seeking', (...args) => {
+      console.log('\n\n\n\n\n\n\n\n\nseeking', video.currentTime)
+      myEfficientFn(...args)
     })
+    video.addEventListener('timeupdate', (...args) => {
+      console.log('\n\n\n\n\n\n\n\n\ntimeupdate', video.currentTime)
+      myEfficientFn(...args)
+    })
+
+    // video.addEventListener('timeupdate', () => {
+    //   // console.log('timeupdate', video.currentTime)
+    //   myEfficientFn()
+    // })
 
     await appendChunk(chunks[0])
   })
