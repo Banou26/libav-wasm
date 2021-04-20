@@ -15,4 +15,5 @@ dist/ffprobe-wasm.js:
 	-s MODULARIZE=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
+	-s SINGLE_FILE=1 \
 	src/main.cpp
