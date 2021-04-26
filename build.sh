@@ -1,5 +1,5 @@
 mkdir -p dist
-docker build -t ffprobe-wasm .
-docker create -ti --name ffprobe-wasm-container ffprobe-wasm
-docker cp ffprobe-wasm-container:/build/dist/ www
-docker rm -fv ffprobe-wasm-container
+docker build -t libav-wasm .
+docker create -ti --name libav-wasm-container libav-wasm
+docker cp libav-wasm-container:/build/dist/ www
+docker rm -fv libav-wasm-container

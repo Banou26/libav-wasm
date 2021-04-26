@@ -1,12 +1,12 @@
-# `FFProbe Wasm`
-> A Web-based FFProbe. Powered by FFmpeg, Vue and Web Assembly!
+# `LibAV Wasm`
+> A Web-based LibAV. Powered by FFmpeg, Vue and Web Assembly!
 
-https://alfg.github.io/ffprobe-wasm/
+https://alfg.github.io/libav-wasm/
 
 ⚠️ ️Compatible with Chrome and Edge only due to limited support for [SharedArrayBuffer](https://caniuse.com/sharedarraybuffer) and the [required CORS headers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer) for Firefox on Github Pages.
 
 ## Development
-`ffprobe-wasm` uses [emscripten](https://emscripten.org/) to compile [FFmpeg](https://ffmpeg.org)'s [libav](https://ffmpeg.org/doxygen/4.1/index.html) to [Web Assembly](https://webassembly.org/) via [Docker](https://www.docker.com/).
+`libav-wasm` uses [emscripten](https://emscripten.org/) to compile [FFmpeg](https://ffmpeg.org)'s [libav](https://ffmpeg.org/doxygen/4.1/index.html) to [Web Assembly](https://webassembly.org/) via [Docker](https://www.docker.com/).
 
 Emscripten is also used to create and compile the Wasm bindings to be imported by the browser.
 
@@ -17,7 +17,7 @@ Emscripten is also used to create and compile the Wasm bindings to be imported b
 ### Setup 
 * Clone project and build the Wasm module via Docker:
 ```
-docker-compose run ffprobe-wasm make
+docker-compose run libav-wasm make
 ```
 
 This will build the Wasm module and place it into the `/dist` directory.

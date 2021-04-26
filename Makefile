@@ -1,7 +1,7 @@
 	# -pthread \
 	# -s EXPORTED_FUNCTIONS="['_main', '_demux', '_initTransmux']" \
 
-dist/ffprobe-wasm.js:
+dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
 	-O3 \

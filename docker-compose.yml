@@ -1,7 +1,7 @@
 version: '3'
 
 services:
-  ffprobe-wasm:
+  libav-wasm:
     build: .
     volumes:
       - "./:/build"

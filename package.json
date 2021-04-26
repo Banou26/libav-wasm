@@ -1,5 +1,5 @@
 {
-  "name": "oz-libav",
+  "name": "@oz/libav",
   "version": "0.0.1",
   "license": "MIT",
   "appModern": "dist/index.html",
@@ -17,7 +17,7 @@
     "dev-web": "parcel src/index.html",
     "dev-wasm": "nodemon -e cpp --exec \"yarn make-docker\"",
     "dev-wasm-build": "cd ../emsdk && emsdk_env.bat && cd ../libav && emcc src/main.cpp -o dist/libav.js -s MODULARIZE=1 -s INITIAL_MEMORY=268435456",
-    "make-docker": "docker-compose run ffprobe-wasm make"
+    "make-docker": "docker-compose run libav-wasm make"
   },
   "devDependencies": {
     "concurrently": "^6.0.0",
