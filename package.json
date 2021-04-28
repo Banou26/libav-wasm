@@ -13,6 +13,7 @@
     }
   },
   "scripts": {
+    "prepare": "docker-compose run libav-wasm make",
     "dev": "concurrently \"yarn dev-wasm\" \"yarn dev-web\"",
     "dev-web": "parcel src/index.html",
     "dev-wasm": "nodemon -e cpp --exec \"yarn make-docker\"",
