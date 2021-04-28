@@ -2,6 +2,7 @@
   "name": "@oz/libav",
   "version": "0.0.1",
   "license": "MIT",
+  "main": "dist/index.js",
   "appModern": "dist/index.html",
   "targets": {
     "appModern": {
@@ -13,7 +14,9 @@
     }
   },
   "scripts": {
-    "prepare": "docker-compose run libav-wasm make",
+    "prepare": "yarn build",
+    "build": "yarn make-docker && yarn build-web",
+    "build-web": "npx tsc src/index.ts --outDir dist",
     "dev": "concurrently \"yarn dev-wasm\" \"yarn dev-web\"",
     "dev-web": "parcel src/index.html",
     "dev-wasm": "nodemon -e cpp --exec \"yarn make-docker\"",
@@ -23,7 +26,8 @@
   "devDependencies": {
     "concurrently": "^6.0.0",
     "nodemon": "^2.0.7",
-    "parcel": "^2.0.0-nightly.642"
+    "parcel": "^2.0.0-nightly.642",
+    "typescript": "^4.2.4"
   },
   "dependencies": {
     "mp4box": "^0.4.1"
