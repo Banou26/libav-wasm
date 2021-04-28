@@ -31,7 +31,7 @@ RUN cd /tmp/ && \
   tar zxf ffmpeg-${FFMPEG_VERSION}.tar.gz && rm ffmpeg-${FFMPEG_VERSION}.tar.gz
 
 ARG CFLAGS="-s USE_PTHREADS=1 -O3 -I${PREFIX}/include"
-ARG LDFLAGS="$CFLAGS -L${PREFIX}/lib -s INITIAL_MEMORY=2GB"
+ARG LDFLAGS="$CFLAGS -L${PREFIX}/lib -s INITIAL_MEMORY=1G"
 
 # Compile ffmpeg.
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
