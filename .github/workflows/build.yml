@@ -21,6 +21,12 @@ jobs:
 
     - run: sudo npm run build
 
+    - name: Upload dist folder artifacts
+      uses: actions/upload-artifact@v2
+      with:
+          name: dist
+          path: "dist/*"
+
   package:
     needs: [build]
     runs-on: ubuntu-18.04
@@ -31,9 +37,15 @@ jobs:
         with:
           node-version: 16.x
 
-      - run: npm ci
+      - name: Download dist folder artifacts
+        uses: actions/download-artifact@v2
+        with:
+            name: dist
+            path: ./dist
+
       - run: npm version prerelease --preid=ci-$GITHUB_RUN_ID --no-git-tag-version
       - run: npm pack
+
       - name: Upload
         uses: actions/upload-artifact@v2
         with:
@@ -46,7 +58,7 @@ jobs:
     runs-on: ubuntu-18.04
     if: github.repository_owner == 'banou26'
     steps:
-    - name: Upload
+    - name: Download package artifact
       uses: actions/download-artifact@v2
       with:
           name: package
