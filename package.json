@@ -1,5 +1,5 @@
 {
-  "name": "@oz/libav",
+  "name": "@banou26/oz-libav",
   "version": "0.0.1",
   "license": "MIT",
   "main": "dist/index.js",
