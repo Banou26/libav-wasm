@@ -14,13 +14,11 @@
     }
   },
   "scripts": {
-    "prepare": "yarn build",
-    "build": "yarn make-docker && yarn build-web",
+    "build": "npm run make-docker && npm run build-web",
     "build-web": "npx tsc src/index.ts --outDir dist",
-    "dev": "concurrently \"yarn dev-wasm\" \"yarn dev-web\"",
+    "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-web": "parcel src/index.html",
-    "dev-wasm": "nodemon -e cpp --exec \"yarn make-docker\"",
-    "dev-wasm-build": "cd ../emsdk && emsdk_env.bat && cd ../libav && emcc src/main.cpp -o dist/libav.js -s MODULARIZE=1 -s INITIAL_MEMORY=268435456",
+    "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "make-docker": "docker-compose run libav-wasm make"
   },
   "devDependencies": {
