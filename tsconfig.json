@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "noImplicitAny": true,
+    "outDir": "./dist",
+    "sourceMap": true,
+    "declaration": true,
+    "moduleResolution": "node",
+    "lib": ["dom", "esnext"]
+  },
+  "include": ["src/index.ts"],
+  "exclude": ["node_modules"]
+}

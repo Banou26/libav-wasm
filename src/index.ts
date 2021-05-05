@@ -8,20 +8,21 @@ interface Chunk {
 const BUFFER_SIZE = 5_000_000
 const PUSH_ARRAY_SIZE = 10_000_000
 
-let libavInstance
+let libavInstance: any
 
 export const remux =
   async (
     { size, stream, autoStart = false, autoProcess = true }:
     { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
+    // @ts-ignore
     const remuxer = libavInstance ?? new (libavInstance = await (await import('../dist/libav.js'))()).Remuxer(size)
     const reader = stream.getReader()
 
     const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
     let processedBytes = 0
     let currentBufferBytes = 0
-    let leftOverData
+    let leftOverData: Uint8Array
     let isInitialized = false
     let paused = false
 
