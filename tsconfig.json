@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
+    "target": "ESNext",
     "module": "ESNext",
-    "noImplicitAny": true,
+    "lib": ["dom", "esnext"],
+    "noImplicitAny": false,
     "outDir": "./dist",
     "sourceMap": true,
     "declaration": true,
     "moduleResolution": "node",
-    "lib": ["dom", "esnext"]
+    "allowSyntheticDefaultImports": true
   },
   "include": ["src/index.ts"],
   "exclude": ["node_modules"]
