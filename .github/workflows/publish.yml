@@ -71,6 +71,6 @@ jobs:
     - run: npm publish $(ls *.tgz)
       env:
         NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-    - uses: actions/delete-package-versions@v1
-      with:
-        package-name: 'oz-libav'
+    # - uses: actions/delete-package-versions@v1
+    #   with:
+    #     package-name: 'oz-libav'
