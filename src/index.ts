@@ -42,8 +42,10 @@ export const remux =
     const processData = (initOnly = false) => {
       if (!isInitialized) {
         remuxer.init(BUFFER_SIZE)
-        isInitialized = true
-        if (initOnly) return
+        if (initOnly) {
+          isInitialized = true
+          return
+        }
       }
       remuxer.process()
       remuxer.clearInput()
@@ -52,6 +54,7 @@ export const remux =
       // todo: handle if initOnly is true, it won't apply the mp4 header
       if (!isInitialized) {
         result.set([0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x35, 0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6F, 0x35, 0x69, 0x73, 0x6F, 0x36, 0x6D], 0)
+        isInitialized = true
       }
       remuxer.clearOutput()
       controller.enqueue(result)
