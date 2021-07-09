@@ -13,6 +13,7 @@ dist/libav-wasm.js:
 	-s TOTAL_STACK=5mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
+	-s NO_DYNAMIC_EXECUTION=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
 	-s SINGLE_FILE=1 \
