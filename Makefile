@@ -8,9 +8,9 @@ dist/libav-wasm.js:
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-s EXTRA_EXPORTED_RUNTIME_METHODS="[cwrap, ccall, getValue, setValue, writeAsciiToMemory]" \
-	-s INITIAL_MEMORY=150mb \
-	-s TOTAL_MEMORY=125mb \
-	-s TOTAL_STACK=100mb \
+	-s INITIAL_MEMORY=400mb \
+	-s TOTAL_MEMORY=300mb \
+	-s TOTAL_STACK=200mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
 	-s NO_DYNAMIC_EXECUTION=1 \
