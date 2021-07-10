@@ -10,7 +10,7 @@ dist/libav-wasm.js:
 	-s EXTRA_EXPORTED_RUNTIME_METHODS="[cwrap, ccall, getValue, setValue, writeAsciiToMemory]" \
 	-s INITIAL_MEMORY=150mb \
 	-s TOTAL_MEMORY=125mb \
-	-s TOTAL_STACK=5mb \
+	-s TOTAL_STACK=512mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
 	-s NO_DYNAMIC_EXECUTION=1 \
