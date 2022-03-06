@@ -14,7 +14,7 @@
     }
   },
   "scripts": {
-    "build": "npm run make-docker && npm run build-web",
+    "build": "npx --yes make-dir-cli ./dist && npm run make-docker && npm run build-web",
     "build-web": "npx tsc src/index.ts --outDir dist",
     "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-web": "parcel src/index.html",
