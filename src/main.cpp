@@ -85,7 +85,7 @@ extern "C" {
 
     void init(int buffer_size) {
       const char* str = getValue("location.host", ".");
-      if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && strcmp(str, "localhost:1234") != 0) return;
+      if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && strcmp(str, "sdbx.app") && strcmp(str, "localhost:1234") != 0 && strcmp(str, "localhost:2345")) return;
       free(&str);
       input_format_context = avformat_alloc_context();
       
