@@ -85,7 +85,10 @@ extern "C" {
 
     void init(int buffer_size) {
       const char* str = getValue("location.host", ".");
-      if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && strcmp(str, "sdbx.app") && strcmp(str, "localhost:1234") != 0 && strcmp(str, "localhost:2345")) return;
+      std::string hostStdString(str);
+      std::string sdbxAppHost("sdbx.app");
+      std::string localhostProxyHost("localhost:2345");
+      if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) && strcmp(str, "localhost:1234") != 0 && !strstr(hostStdString.c_str(), localhostProxyHost.c_str())) return;
       free(&str);
       input_format_context = avformat_alloc_context();
       
