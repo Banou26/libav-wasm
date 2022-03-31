@@ -53,6 +53,7 @@ extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size);
   static int readFunction(void* opaque, uint8_t* buf, int buf_size);
+  static int64_t seekFunction(void* opaque, int64_t offset, int whence);
 
   class Remuxer {
   private:
@@ -73,6 +74,7 @@ extern "C" {
     bool should_decode;
     int processed_bytes;
     int input_size;
+    int keyframe_index;
 
   public:
     std::stringstream input_stream;
@@ -110,7 +112,7 @@ extern "C" {
         reinterpret_cast<void*>(this),
         &readFunction,
         nullptr,
-        nullptr
+        &seekFunction
       );
 
       input_format_context->pb = avioContext;
@@ -213,6 +215,8 @@ extern "C" {
 
       bool is_last_chunk = used_input + avio_ctx_buffer_size >= input_size;
 
+      int packetIndex = 0;
+
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
@@ -242,13 +246,52 @@ extern "C" {
             // printf("===\n");
           }
         }
+
+        
+        // printf("in index entry [%d] timestamp offset: %lld, timestamp: %lld \n", i, in_stream->mux_ts_offset, in_stream->index_entries[0].timestamp);
+        // printf("out index entry [%d] timestamp offset: %lld, timestamp: %lld \n", i, out_stream->mux_ts_offset, out_stream->index_entries[0].timestamp);
+
+        // int i;
+        // for (i = 0; i < in_stream->nb_index_entries; i++) {
+        //   printf("index entry [%d] timestamp: %lld \n", i, in_stream->index_entries[i].timestamp);
+        // }
+        
+        // printf("index entries: %d \n", in_stream->index_entries);
+        // printf("PTS before: %#x \n", packet->flags);
+        // if (packet->flags & AV_PKT_FLAG_KEY) {
+        //   printf("PTS before: %d \n", packet->pts);
+        // }
+
+        if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+          // printf("before packet in start: %f \n", static_cast<double>(in_stream->start_time));
+          printf("packet %d %f\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den);
+          // printf("before packet in start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
+          // printf("before packet out start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
+          keyframe_index = keyframe_index + 1;
+        }
+
+        // int currentPacketIndex = packetIndex;
+        // packetIndex = packetIndex + 1;
+
+        // if (in_stream-> == currentPacketIndex) {
+        //   printf("packet currentPacketIndex %d %d \n", currentPacketIndex, in_stream->nb_index_entries);
+        //   packetIndex = 0;
+        // }
+
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+        // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        //   // printf("after packet start_time: %lld, time_base: %d, pts: %lld, dts: %lld, pos: %lld, size: %d \n", in_stream->cur_dts, in_stream->, packet->den, packet->dts, packet->pos, packet->size);
+        // }
+        // if (packet->flags & AV_PKT_FLAG_KEY) {
+        //   printf("PTS before: %d \n", packet->pts);
+        // }
 
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           // printf("Error muxing packet \n");
           break;
         }
         av_packet_unref(packet);
+        // av_packet_free(&packet);
 
         if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
           // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
@@ -286,6 +329,10 @@ extern "C" {
       output_stream.seekg(0);
     }
 
+    void seek() {
+      printf("seek");
+    }
+
     void close () {
       av_write_trailer(output_format_context);
     }
@@ -306,6 +353,8 @@ extern "C" {
   };
 
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
+    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
+    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     remuxObject.used_input += buf_size;
     auto& stream = remuxObject.input_stream;
@@ -319,6 +368,12 @@ extern "C" {
     auto& stream = remuxObject.output_stream;
     stream.write(reinterpret_cast<char*>(buf), buf_size);
     return stream.gcount();
+  }
+
+  static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
+    // printf("seekFunction %d | %d \n", offset, whence);
+    // printf("seekFunction %#x | %d \n", offset, whence);
+    return -1;
   }
 
   // Binding code
@@ -340,6 +395,7 @@ extern "C" {
       .function("close", &Remuxer::close)
       .function("clearInput", &Remuxer::clearInput)
       .function("clearOutput", &Remuxer::clearOutput)
+      .function("seek", &Remuxer::seek)
       .function("getInfo", &Remuxer::getInfo)
       .function("getInt8Array", &Remuxer::getInt8Array)
       ;
