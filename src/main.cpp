@@ -310,6 +310,7 @@ extern "C" {
       }
       if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
         printf("packet end %d %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+        av_write_trailer(output_format_context);
       }
       // av_packet_free(&packet);
     }
