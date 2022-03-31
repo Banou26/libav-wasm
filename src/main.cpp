@@ -75,6 +75,7 @@ extern "C" {
     int processed_bytes;
     int input_size;
     int keyframe_index;
+    uint64_t previous_packet_pts;
 
   public:
     std::stringstream input_stream;
@@ -213,16 +214,20 @@ extern "C" {
         avcodec_open2(pCodecContext, pCodec, NULL);
       }
 
+      // av_dump_format(input_format_context, 0, "", 1);
+      // av_dump_format(output_format_context, 0, "", 1);
+
       bool is_last_chunk = used_input + avio_ctx_buffer_size >= input_size;
 
       int packetIndex = 0;
+
+      AVStream *in_stream, *out_stream;
 
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
         }
-        AVStream *in_stream, *out_stream;
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
 
@@ -263,12 +268,17 @@ extern "C" {
         // }
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+          if (previous_packet_pts != -1) {
+            printf("packet end %d at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+          }
           // printf("before packet in start: %f \n", static_cast<double>(in_stream->start_time));
-          printf("packet %d %f\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den);
+          printf("packet start %d at %f\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den);
           // printf("before packet in start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
           // printf("before packet out start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
           keyframe_index = keyframe_index + 1;
         }
+
+        previous_packet_pts = packet->pts;
 
         // int currentPacketIndex = packetIndex;
         // packetIndex = packetIndex + 1;
@@ -290,14 +300,18 @@ extern "C" {
           // printf("Error muxing packet \n");
           break;
         }
+
         av_packet_unref(packet);
-        // av_packet_free(&packet);
 
         if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
           // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
           break;
         }
       }
+      if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
+        printf("packet end %d %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+      }
+      // av_packet_free(&packet);
     }
 
     InfoObject getInfo () {
