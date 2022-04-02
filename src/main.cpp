@@ -86,6 +86,7 @@ extern "C" {
     std::stringstream output_stream;
     std::stringstream output_input_stream;
     int used_input;
+    int written_output;
     int used_output_input;
     int keyframe_index;
 
@@ -108,7 +109,7 @@ extern "C" {
 
       should_decode = false;
       should_demux = false;
-      
+      written_output = 0;
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
@@ -327,6 +328,7 @@ extern "C" {
           keyframe_index = keyframe_index + 1;
         }
 
+
         previous_packet_pts = packet->pts;
 
         // int currentPacketIndex = packetIndex;
@@ -336,7 +338,7 @@ extern "C" {
         //   printf("packet currentPacketIndex %d %d \n", currentPacketIndex, in_stream->nb_index_entries);
         //   packetIndex = 0;
         // }
-
+        packet->pos = -1;
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
         // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         //   // printf("after packet start_time: %lld, time_base: %d, pts: %lld, dts: %lld, pos: %lld, size: %d \n", in_stream->cur_dts, in_stream->, packet->den, packet->dts, packet->pos, packet->size);
@@ -449,10 +451,12 @@ extern "C" {
         printf("packet %d end %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
         av_write_trailer(output_format_context);
         av_packet_free(&packet);
-        avformat_close_input(&input_format_context);
-        avio_close(avioContext);
-        avio_close(avioContext2);
-        avio_close(avioContext3);
+        avformat_free_context(input_format_context);
+        avformat_free_context(output_format_context);
+        avformat_free_context(output_input_format_context);
+        // avio_close(avioContext);
+        // avio_close(avioContext2);
+        // avio_close(avioContext3);
       }
     }
 
@@ -530,8 +534,9 @@ extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
-    printf("writeFunction %d | %d \n", remuxObject.keyframe_index - 2, buf_size);
+    printf("writeFunction %d | %d | %d \n", remuxObject.keyframe_index - 2, buf_size, remuxObject.written_output);
     auto& stream = remuxObject.output_stream;
+    remuxObject.written_output += buf_size;
     stream.write(reinterpret_cast<char*>(buf), buf_size);
     // auto& stream2 = remuxObject.output_input_stream;
     // stream2.write(reinterpret_cast<char*>(buf), buf_size);
