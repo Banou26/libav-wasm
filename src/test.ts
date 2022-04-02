@@ -1,5 +1,5 @@
 import { createFile } from 'mp4box'
-
+// const {  } = Stream
 interface Chunk {
   id: number
   start: number
@@ -126,28 +126,28 @@ fetch('./video.mkv')
   .then(async ({ headers, body }) => {
     const [stream1, stream2] = body.tee()
 
-    const parser = new MatroskaSubtitles.SubtitleParser()
+    // const parser = new MatroskaSubtitles.SubtitleParser()
     
-    // first an array of subtitle track information is emitted
-    parser.once('tracks', (tracks) => console.log(tracks))
+    // // first an array of subtitle track information is emitted
+    // parser.once('tracks', (tracks) => console.log(tracks))
     
-    // afterwards each subtitle is emitted
-    parser.on('subtitle', (subtitle, trackNumber) =>
-    console.log('Track ' + trackNumber + ':', subtitle))
+    // // afterwards each subtitle is emitted
+    // parser.on('subtitle', (subtitle, trackNumber) =>
+    // console.log('Track ' + trackNumber + ':', subtitle))
 
-    const streamReader = stream1.getReader()
-    const readStream = async () => {
-      const { value, done } = await streamReader.read()
-      if (done) {
-        parser.end()
-        return
-      }
-      parser.write(value)
-      readStream()
-    }
-    readStream()
+    // const streamReader = stream1.getReader()
+    // const readStream = async () => {
+    //   const { value, done } = await streamReader.read()
+    //   if (done) {
+    //     parser.end()
+    //     return
+    //   }
+    //   parser.write(value)
+    //   readStream()
+    // }
+    // readStream()
   
-    console.log(parser)
+    // console.log(parser)
     
     const fileSize = Number(headers.get('Content-Length'))
     const { stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
@@ -174,6 +174,8 @@ fetch('./video.mkv')
         if (chunks[firstSample.moof_number - 1]) continue
 
         chunks[firstSample.moof_number - 1] = {
+          firstSample,
+          lastSample,
           id: firstSample.moof_number - 1,
           start: firstSample.cts / firstSample.timescale,
           end: lastSample.cts / lastSample.timescale,
@@ -204,6 +206,8 @@ fetch('./video.mkv')
         const el = document.createElement('div')
         el.innerText = 'Done'
         document.body.appendChild(el)
+        console.log('mp4box chunks', chunks)
+        console.log('mp4boxfile', mp4boxfile)
         return
       }
 

@@ -53,13 +53,16 @@ extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size);
   static int readFunction(void* opaque, uint8_t* buf, int buf_size);
+  static int readOutputFunction(void* opaque, uint8_t* buf, int buf_size);
   static int64_t seekFunction(void* opaque, int64_t offset, int whence);
 
   class Remuxer {
   private:
     AVIOContext* avioContext;
     AVIOContext* avioContext2;
+    AVIOContext* avioContext3;
     AVFormatContext* output_format_context;
+    AVFormatContext* output_input_format_context;
     AVFormatContext* input_format_context;
     size_t avio_ctx_buffer_size;
 
@@ -72,21 +75,26 @@ extern "C" {
     int *streams_list;
     int number_of_streams;
     bool should_decode;
+    bool should_demux;
     int processed_bytes;
     int input_size;
-    int keyframe_index;
+    int buffer_size;
     uint64_t previous_packet_pts;
 
   public:
     std::stringstream input_stream;
     std::stringstream output_stream;
+    std::stringstream output_input_stream;
     int used_input;
+    int used_output_input;
+    int keyframe_index;
 
     Remuxer(int _input_size) {
       input_size =_input_size;
     }
 
-    void init(int buffer_size) {
+    void init(int _buffer_size) {
+      buffer_size = _buffer_size;
       const char* str = getValue("location.host", ".");
       std::string hostStdString(str);
       std::string sdbxAppHost("sdbx.app");
@@ -99,11 +107,12 @@ extern "C" {
       output_format_context = avformat_alloc_context();
 
       should_decode = false;
+      should_demux = false;
       
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      avio_ctx_buffer_size = buffer_size; // 100000000; // 4096; // 8192;
+      avio_ctx_buffer_size = _buffer_size; // 100000000; // 4096; // 8192;
 
       unsigned char* buffer = (unsigned char*)av_malloc(avio_ctx_buffer_size);
       avioContext = avio_alloc_context(
@@ -142,6 +151,30 @@ extern "C" {
       avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
       output_format_context->pb = avioContext2;
 
+      if (should_demux) {
+        output_input_format_context = avformat_alloc_context();
+        avioContext3 = avio_alloc_context(
+          buffer2,
+          avio_ctx_buffer_size,
+          0,
+          reinterpret_cast<void*>(this),
+          &readOutputFunction,
+          nullptr,
+          nullptr
+        );
+
+        output_input_format_context->pb = avioContext3;
+
+        // if ((res = avformat_open_input(&output_input_format_context, NULL, nullptr, nullptr)) < 0) {
+        //   // printf("ERROR: %s \n", av_err2str(res));
+        //   return;
+        // }
+        // if ((res = avformat_find_stream_info(output_input_format_context, NULL)) < 0) {
+        //   // printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
+        //   return;
+        // }
+      }
+
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_mallocz_array(number_of_streams, sizeof(*streams_list));
 
@@ -158,6 +191,7 @@ extern "C" {
       for (i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
+        AVStream *out_in_stream;
         AVCodecParameters *in_codecpar = in_stream->codecpar;
         // printf("Codec type: %s \n", av_get_media_type_string(in_codecpar->codec_type));
         if (
@@ -177,6 +211,7 @@ extern "C" {
 
         streams_list[i] = stream_index++;
         out_stream = avformat_new_stream(output_format_context, NULL);
+        out_in_stream = avformat_new_stream(output_input_format_context, NULL);
         if (!out_stream) {
           // printf("Failed allocating output stream \n");
           res = AVERROR_UNKNOWN;
@@ -201,6 +236,18 @@ extern "C" {
       }
     }
 
+    static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag)
+    {
+        AVRational *time_base = &fmt_ctx->streams[pkt->stream_index]->time_base;
+    
+        printf("%s: pts:%s pts_time:%s dts:%s dts_time:%s duration:%s duration_time:%s stream_index:%d\n",
+              tag,
+              av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, time_base),
+              av_ts2str(pkt->dts), av_ts2timestr(pkt->dts, time_base),
+              av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, time_base),
+              pkt->stream_index);
+    }
+
     void process() {
       int res;
       AVPacket* packet = av_packet_alloc();
@@ -217,8 +264,9 @@ extern "C" {
       // av_dump_format(input_format_context, 0, "", 1);
       // av_dump_format(output_format_context, 0, "", 1);
 
+      bool is_first_chunk = used_input == buffer_size;
       bool is_last_chunk = used_input + avio_ctx_buffer_size >= input_size;
-
+      bool output_input_init_done = false;
       int packetIndex = 0;
 
       AVStream *in_stream, *out_stream;
@@ -269,10 +317,11 @@ extern "C" {
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           if (previous_packet_pts != -1) {
-            printf("packet end %d at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+            printf("packet %d end at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
           }
           // printf("before packet in start: %f \n", static_cast<double>(in_stream->start_time));
-          printf("packet start %d at %f\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den);
+          // log_packet(input_format_context, packet, "in");
+          printf("packet %d start at %f, size: %d, %d, %lld\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
           // printf("before packet in start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
           // printf("before packet out start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
           keyframe_index = keyframe_index + 1;
@@ -303,16 +352,108 @@ extern "C" {
 
         av_packet_unref(packet);
 
+        if (should_demux) {
+          printf("FIRST CHUNKKKKKKKKKK %d \n", keyframe_index);
+          if (is_first_chunk && keyframe_index == 0 && !output_input_init_done) {
+            printf("FIRST CHUNKKKKKKKKKK \n");
+            if ((res = avformat_open_input(&output_input_format_context, NULL, nullptr, nullptr)) < 0) {
+              // printf("ERROR: %s \n", av_err2str(res));
+              return;
+            }
+            if ((res = avformat_find_stream_info(output_input_format_context, NULL)) < 0) {
+              // printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
+              return;
+            }
+            output_input_init_done = true;
+          }
+
+          if (!is_first_chunk) {
+
+            printf("try readframe \n");
+
+            if ((res = av_read_frame(output_input_format_context, packet)) < 0) {
+              printf("ERROR: av_read_frame(output_input_format_context, packet) | %s \n", av_err2str(res));
+              return;
+            }
+            printf("try readframe done \n");
+
+            out_stream = output_input_format_context->streams[packet->stream_index];
+
+            if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+              // if (previous_packet_pts != -1) {
+              //   printf("packet %d end at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+              // }
+              // printf("before packet in start: %f \n", static_cast<double>(in_stream->start_time));
+              // log_packet(input_format_context, packet, "in");
+              printf("packet start at %f, size: %d, %d, %lld\n", static_cast<double>(packet->pts) / out_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
+              // printf("before packet in start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
+              // printf("before packet out start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
+              // keyframe_index = keyframe_index + 1;
+            }
+
+            av_packet_unref(packet);
+          }
+        }
+
         if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
           // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
           break;
         }
       }
-      if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
-        printf("packet end %d %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
-        av_write_trailer(output_format_context);
+
+      // printf("FIRST CHUNKKKKKKKKKK %d %d %d %d \n", is_first_chunk, used_input, input_size, buffer_size);
+
+      // if (is_first_chunk && keyframe_index - 1 == 0) {
+      //   printf("FIRST CHUNKKKKKKKKKK \n");
+      //   if ((res = avformat_open_input(&output_input_format_context, NULL, nullptr, nullptr)) < 0) {
+      //     // printf("ERROR: %s \n", av_err2str(res));
+      //     return;
+      //   }
+      //   if ((res = avformat_find_stream_info(output_input_format_context, NULL)) < 0) {
+      //     // printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
+      //     return;
+      //   }
+      // }
+
+      if (should_demux) {
+        printf("should demux\n");
+        if (is_first_chunk) {
+          while ((res = av_read_frame(output_input_format_context, packet)) >= 0) {
+            printf("OUT packet start\n");
+            out_stream = output_input_format_context->streams[packet->stream_index];
+
+            if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+              // if (previous_packet_pts != -1) {
+              //   printf("packet %d end at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+              // }
+              // printf("before packet in start: %f \n", static_cast<double>(in_stream->start_time));
+              // log_packet(input_format_context, packet, "in");
+              printf("packet start at %f, size: %d, %d, %lld\n", static_cast<double>(packet->pts) / out_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
+              // printf("before packet in start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
+              // printf("before packet out start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
+              // keyframe_index = keyframe_index + 1;
+            }
+
+            // previous_packet_pts = packet->pts;
+
+            av_packet_unref(packet);
+            if (!is_last_chunk && used_output_input + avio_ctx_buffer_size > processed_bytes) {
+              // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
+              break;
+            }
+          }
+        }
       }
-      // av_packet_free(&packet);
+
+      if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
+        printf("packet %d end %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+        av_write_trailer(output_format_context);
+        av_packet_free(&packet);
+        avformat_close_input(&input_format_context);
+        avio_close(avioContext);
+        avio_close(avioContext2);
+        avio_close(avioContext3);
+      }
     }
 
     InfoObject getInfo () {
@@ -349,7 +490,7 @@ extern "C" {
     }
 
     void close () {
-      av_write_trailer(output_format_context);
+      // av_write_trailer(output_format_context);
     }
 
     void push(std::string buf) {
@@ -377,11 +518,23 @@ extern "C" {
     return stream.gcount();
   }
 
-  static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    // printf("writeFunction %#x | %s | %d \n", buf, &buf, buf_size);
+  static int readOutputFunction(void* opaque, uint8_t* buf, int buf_size) {
+    printf("readOutputFunction %#x | %s | %d \n", buf, &buf, buf_size);
+    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    remuxObject.used_output_input += buf_size;
+    auto& stream = remuxObject.output_input_stream;
+    stream.read(reinterpret_cast<char*>(buf), buf_size);
+    return stream.gcount();
+  }
+
+  static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
+    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    printf("writeFunction %d | %d \n", remuxObject.keyframe_index - 2, buf_size);
     auto& stream = remuxObject.output_stream;
     stream.write(reinterpret_cast<char*>(buf), buf_size);
+    // auto& stream2 = remuxObject.output_input_stream;
+    // stream2.write(reinterpret_cast<char*>(buf), buf_size);
     return stream.gcount();
   }
 
