@@ -67,6 +67,8 @@ extern "C" {
     size_t avio_ctx_buffer_size;
 
     AVCodec* pCodec;
+    // AVCodec* subtitleCodec;
+    // AVCodecParameters* subtitleCodecParameters;
     AVCodecParameters* pCodecParameters;
     int video_stream_index;
 
@@ -186,7 +188,9 @@ extern "C" {
       }
 
       pCodec = NULL;
+      // subtitleCodec = NULL;
       pCodecParameters = NULL;
+      // subtitleCodecParameters = NULL;
       video_stream_index = -1;
 
       for (i = 0; i < input_format_context->nb_streams; i++) {
@@ -195,6 +199,14 @@ extern "C" {
         AVStream *out_in_stream;
         AVCodecParameters *in_codecpar = in_stream->codecpar;
         // printf("Codec type: %s \n", av_get_media_type_string(in_codecpar->codec_type));
+
+        // if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        //   streams_list[i] = -1;
+        //   subtitleCodec = avcodec_find_decoder(in_codecpar->codec_id);
+        //   subtitleCodecParameters = in_codecpar;
+        //   continue;
+        // }
+
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO // &&
@@ -254,6 +266,7 @@ extern "C" {
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVCodecContext* pCodecContext;
+      // AVCodecContext* subtitleCodecContext;
 
       if (should_decode) {
         pFrame = av_frame_alloc();
@@ -261,6 +274,12 @@ extern "C" {
         avcodec_parameters_to_context(pCodecContext, pCodecParameters);
         avcodec_open2(pCodecContext, pCodec, NULL);
       }
+      // else {
+      //   printf("codec name subtitle %s\n", subtitleCodec->long_name);
+      //   subtitleCodecContext = avcodec_alloc_context3(subtitleCodec);
+      //   avcodec_parameters_to_context(subtitleCodecContext, subtitleCodecParameters);
+      //   avcodec_open2(subtitleCodecContext, subtitleCodec, NULL);
+      // }
 
       // av_dump_format(input_format_context, 0, "", 1);
       // av_dump_format(output_format_context, 0, "", 1);
@@ -270,9 +289,36 @@ extern "C" {
       bool output_input_init_done = false;
       int packetIndex = 0;
 
+      // int got_sub;
+      // AVSubtitle* subtitle;
+      // AVSubtitleRect** rects;
+      // AVSubtitleRect* rect;
+      // AVStream *subtitle_stream  = input_format_context->streams[packet->stream_index];
       AVStream *in_stream, *out_stream;
 
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
+        // if (input_format_context->streams[packet->stream_index]->codec->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        // if (input_format_context->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        //   subtitle_stream = input_format_context->streams[packet->stream_index];
+        //   res = avcodec_send_packet(pCodecContext, packet);
+        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
+        //     continue;
+        //   }
+        //   if ((res = avcodec_decode_subtitle2(pCodecContext, subtitle, &got_sub, packet)) < 0) {
+        //     printf("Error decoding subtitle %s \n", av_err2str(res));
+        //     break;
+        //   }
+        //   rects = subtitle->rects;
+        //   for (i = 0; i < subtitle->num_rects; i++) {
+        //     rect = rects[i];
+        //     if (rect->type == SUBTITLE_ASS) {
+        //       printf("%s \n", rect->ass);
+        //     } else if (rect->type == SUBTITLE_TEXT) {
+        //       printf("%s \n", rect->text);
+        //     }
+        //   }
+        //   continue;
+        // }
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
@@ -338,6 +384,8 @@ extern "C" {
         //   printf("packet currentPacketIndex %d %d \n", currentPacketIndex, in_stream->nb_index_entries);
         //   packetIndex = 0;
         // }
+
+        // todo: check if https://stackoverflow.com/questions/64547604/libavformat-ffmpeg-muxing-into-mp4-with-avformatcontext-drops-the-final-frame could help with the last frames
         packet->pos = -1;
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
         // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
