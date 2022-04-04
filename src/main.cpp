@@ -90,13 +90,15 @@ extern "C" {
     int used_input;
     int written_output;
     int used_output_input;
+    val callback = val::undefined();
     int keyframe_index;
 
     Remuxer(int _input_size) {
-      input_size =_input_size;
+      input_size = _input_size;
     }
 
-    void init(int _buffer_size) {
+    void init(int _buffer_size, val cb) {
+      callback = cb;
       buffer_size = _buffer_size;
       const char* str = getValue("location.host", ".");
       std::string hostStdString(str);
@@ -363,6 +365,7 @@ extern "C" {
         // }
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+          callback(keyframe_index - 1);
           if (previous_packet_pts != -1) {
             printf("packet %d end at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
           }

@@ -42,7 +42,9 @@ const remux =
     // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
     const processData = (initOnly = false) => {
       if (!isInitialized) {
-        remuxer.init(BUFFER_SIZE)
+        remuxer.init(BUFFER_SIZE, (...args) => {
+          console.log('callback args', ...args)
+        })
         if (initOnly) {
           isInitialized = true
           return
