@@ -88,10 +88,12 @@ extern "C" {
     std::stringstream output_stream;
     std::stringstream output_input_stream;
     int used_input;
-    int written_output;
+    int written_output = 0;
     int used_output_input;
     val callback = val::undefined();
     int keyframe_index;
+    double keyframe_start_time;
+    double keyframe_end_time;
 
     Remuxer(int _input_size) {
       input_size = _input_size;
@@ -365,12 +367,14 @@ extern "C" {
         // }
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-          callback(keyframe_index - 1);
+          // callback(keyframe_index - 1);
           if (previous_packet_pts != -1) {
             printf("packet %d end at %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+            keyframe_end_time = static_cast<double>(previous_packet_pts) / in_stream->time_base.den;
           }
           // printf("before packet in start: %f \n", static_cast<double>(in_stream->start_time));
           // log_packet(input_format_context, packet, "in");
+          keyframe_start_time = static_cast<double>(packet->pts) / in_stream->time_base.den;
           printf("packet %d start at %f, size: %d, %d, %lld\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
           // printf("before packet in start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
           // printf("before packet out start: %f,  pts: %lld, dts: %lld, pos: %lld, size: %d \n", static_cast<double>(packet->pts) / in_stream->time_base.den, packet->pts, packet->dts, packet->pos, packet->size);
@@ -500,6 +504,7 @@ extern "C" {
 
       if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
         printf("packet %d end %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
+        keyframe_end_time = static_cast<double>(previous_packet_pts) / in_stream->time_base.den;
         av_write_trailer(output_format_context);
         av_packet_free(&packet);
         avformat_free_context(input_format_context);
@@ -570,6 +575,10 @@ extern "C" {
     remuxObject.used_input += buf_size;
     auto& stream = remuxObject.input_stream;
     stream.read(reinterpret_cast<char*>(buf), buf_size);
+    auto gcount = stream.gcount();
+    if (gcount == 0) {
+      return AVERROR_EOF;
+    }
     return stream.gcount();
   }
 
@@ -585,12 +594,33 @@ extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    // auto& callback = remuxObject.callback;
+    // callback("test datawriteFunction ", callback);
+    // if (callback.as<bool>()) {
+    //   callback(static_cast<std::string>("data"), remuxObject.keyframe_index - 2, remuxObject.keyframe_start_time, remuxObject.keyframe_end_time, buf_size, remuxObject.written_output, 
+      
+    //   // emscripten::val(
+    //   //   emscripten::typed_memory_view(
+    //   //     buf_size,
+    //   //     buf
+    //   //   )
+    //   // )
+    //   );
+    //   // callback(reinterpret_cast<char*>("data"), remuxObject.keyframe_index - 2, remuxObject.keyframe_start_time, remuxObject.keyframe_end_time);
+    // }
+    // remuxObject.callback();
+    // callback(remuxObject.keyframe_index - 2);
+    // callback("data", remuxObject.keyframe_index - 2, remuxObject.keyframe_start_time, remuxObject.keyframe_end_time);
     printf("writeFunction %d | %d | %d \n", remuxObject.keyframe_index - 2, buf_size, remuxObject.written_output);
     auto& stream = remuxObject.output_stream;
     remuxObject.written_output += buf_size;
     stream.write(reinterpret_cast<char*>(buf), buf_size);
     // auto& stream2 = remuxObject.output_input_stream;
     // stream2.write(reinterpret_cast<char*>(buf), buf_size);
+    // if (callback.as<bool>()) {
+    //   callback(static_cast<std::string>("data"), remuxObject.keyframe_index - 2, remuxObject.keyframe_start_time, remuxObject.keyframe_end_time, buf_size, remuxObject.written_output, remuxObject.getInt8Array());
+    //   // callback(reinterpret_cast<char*>("data"), remuxObject.keyframe_index - 2, remuxObject.keyframe_start_time, remuxObject.keyframe_end_time);
+    // }
     return stream.gcount();
   }
 

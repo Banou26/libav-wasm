@@ -44,6 +44,7 @@ const remux =
       if (!isInitialized) {
         remuxer.init(BUFFER_SIZE, (...args) => {
           console.log('callback args', ...args)
+          // controller.enqueue(new Uint8Array(args[6]))
         })
         if (initOnly) {
           isInitialized = true
@@ -62,6 +63,7 @@ const remux =
       remuxer.clearOutput()
       controller.enqueue(result)
       if (leftOverData) {
+        console.log('leftOverData', buffer, leftOverData)
         buffer.set(leftOverData, 0)
         currentBufferBytes += leftOverData.byteLength
         leftOverData = undefined
