@@ -138,7 +138,7 @@ extern "C" {
       avioContext = NULL;
       output_format_context = avformat_alloc_context();
 
-      should_decode = true;
+      should_decode = false;
       should_demux = false;
       written_output = 0;
       stream_index = 0;
@@ -436,30 +436,44 @@ extern "C" {
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
 
-          if (should_decode && packet->stream_index == video_stream_index) {
+          if (should_decode) {
+            // res = avcodec_send_packet(pCodecContext, packet);
+            // if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
+            //   continue;
+            // }
+            // res = avcodec_receive_frame(pCodecContext, pFrame);
+            // if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
+            //   continue;
+            // }
+            // pFrame = av_frame_alloc();
             res = avcodec_send_packet(pCodecContext, packet);
-            if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-              continue;
+            if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {}
+            else {
+              res = avcodec_receive_frame(pCodecContext, pFrame);
+              if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {}
+              else {
+                if (pFrame->key_frame == 1) {
+                  printf("KEYFRAME %d PTS: %f\n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
+                  // printf("KEYFRAME2 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
+                  // printf("KEYFRAME3 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pkt_pts) / in_stream->time_base.den));
+                  printf("KEYFRAME4 %d PTS: %f \n", keyframe_index, (static_cast<double>(packet->pts) / in_stream->time_base.den));
+                  
+                  // printf("===\n");
+                  // printf("KEYFRAME: true\n");
+                  // printf("STREAM INDEX: %d \n", packet->stream_index);
+                  // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+                  // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+                  // printf("POS: %d \n", packet->pos);
+                  // printf("===\n");
+                }
+              }
+              // av_freep(&pFrame->data[0]);
+              // av_frame_unref(pFrame);
             }
-            res = avcodec_receive_frame(pCodecContext, pFrame);
-            if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-              continue;
-            }
-
-            if (pFrame->key_frame == 1) {
-              printf("KEYFRAME %d PTS: %f\n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
-              printf("KEYFRAME2 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
-              printf("KEYFRAME3 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pkt_pts) / in_stream->time_base.den));
-              printf("KEYFRAME4 %d PTS: %f \n", keyframe_index, (static_cast<double>(packet->pts) / in_stream->time_base.den));
-              
-              // printf("===\n");
-              // printf("KEYFRAME: true\n");
-              // printf("STREAM INDEX: %d \n", packet->stream_index);
-              // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-              // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-              // printf("POS: %d \n", packet->pos);
-              // printf("===\n");
-            }
+            // av_frame_unref(pFrame);
+            // av_frame_free(&pFrame);
+            // av_free(pFrame);
+            // av_freep(pFrame);
           }
 
           keyframe_duration += packet->duration;
@@ -505,9 +519,12 @@ extern "C" {
           // printf("Error muxing packet \n");
           break;
         }
-
+        if (should_decode) {
+          av_frame_unref(pFrame);
+        }
         av_packet_unref(packet);
-        av_frame_unref(pFrame);
+
+        // av_frame_unref(pFrame);
         // av_free(frame);
         // av_freep(frame);
 
@@ -515,6 +532,12 @@ extern "C" {
           // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
           break;
         }
+      }
+
+      if (should_decode) {
+        av_frame_free(&pFrame);
+        avcodec_flush_buffers(pCodecContext);
+        avcodec_free_context(&pCodecContext);
       }
 
       if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {

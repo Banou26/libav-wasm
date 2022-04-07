@@ -214,7 +214,10 @@ fetch('./video2.mkv')
         const lastSample = group.slice(-1)[0]
 
         if (chunks[firstSample.moof_number - 1]) continue
-        if (firstSample.cts / firstSample.timescale === lastSample.cts / lastSample.timescale) continue
+        if (firstSample.cts / firstSample.timescale === lastSample.cts / lastSample.timescale) {
+          console.log('BRUHHHHHHHHHHHHHHHHHHHHHHHHHH', firstSample.cts / firstSample.timescale, lastSample.cts / lastSample.timescale, firstSample, lastSample)
+          continue
+        }
         chunks[firstSample.moof_number - 1] = {
           firstSample,
           lastSample,
@@ -261,14 +264,14 @@ fetch('./video2.mkv')
         // console.log('mp4box chunks', chunks)
         console.log('mp4boxfile', mp4boxfile)
         console.log('libav', _chunks)
-        for (const _chunk of _chunks) {
-          const chunk = chunks[_chunk.keyframeIndex]
-          let startWrong = false
-          let endWrong = false
-          if (_chunk.startTime !== chunk.startTime) startWrong = true
-          if (_chunk.endTime !== chunk.endTime) endWrong = true
-          console.log(`chunk[${chunk.keyframeIndex}] ${_chunk.startTime}!=${chunk.startTime} ||| ${_chunk.endTime}!=${chunk.endTime}`)
-        }
+        // for (const _chunk of _chunks) {
+        //   const chunk = chunks[_chunk.keyframeIndex]
+        //   let startWrong = false
+        //   let endWrong = false
+        //   if (_chunk.startTime !== chunk.startTime) startWrong = true
+        //   if (_chunk.endTime !== chunk.endTime) endWrong = true
+        //   console.log(`chunk[${chunk.keyframeIndex}] ${_chunk.startTime}!=${chunk.startTime} ||| ${_chunk.endTime}!=${chunk.endTime}`)
+        // }
         console.log('mp4boxfile', mp4boxfile)
         console.log('libav', _chunks)
         return
