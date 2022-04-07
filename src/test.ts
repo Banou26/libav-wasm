@@ -43,6 +43,7 @@ const remux =
     })
 
     const chunks = []
+    const headerChunks = []
 
     // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
     const processData = (initOnly = false) => {
@@ -50,7 +51,11 @@ const remux =
         let previousTimes
         let correctedFirstChunk
         remuxer.init(BUFFER_SIZE, (type, keyframeIndex, startTime, endTime, size, offset, arrayBuffer, ended) => {
-          // if (keyframeIndex < 0) return controller.enqueue(new Uint8Array(arrayBuffer))
+          if (keyframeIndex < 0) {
+          const buffer = arrayBuffer.slice()
+          headerChunks.push({ keyframeIndex, startTime, endTime, size, offset, arrayBuffer: buffer, ended })
+            return controller.enqueue(new Uint8Array(arrayBuffer))
+          }
           if (type === 'keyframeTimestampCorrection') {
             correctedFirstChunk = { startTime, endTime }
             return
@@ -64,7 +69,7 @@ const remux =
               : { keyframeIndex, ...previousTimes ?? {}, size, offset, arrayBuffer: buffer, ended }
 
           chunks.push(newChunk)
-          console.log('new chunk', newChunk)
+          // console.log('new chunk', newChunk)
           previousTimes = { startTime, endTime }
           controller.enqueue(new Uint8Array(buffer))
         })
@@ -120,12 +125,14 @@ const remux =
           processData()
         }
       }
-      if (!paused && !done) readData(autoProcess)
+      // if (!paused && !done) readData(autoProcess)
+      if (!paused && !done) requestAnimationFrame(() => readData(autoProcess))
     }
 
     if (autoStart) readData(autoProcess)
 
     return {
+      headerChunks,
       chunks,
       stream: resultStream,
       pause: () => {
@@ -179,7 +186,7 @@ fetch('./video2.mkv')
     
     const fileSize = Number(headers.get('Content-Length'))
     // const { stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
-    const { chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    const { headerChunks, chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
     const reader = stream.getReader()
     console.log('fileSize', fileSize)
     // let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
@@ -338,12 +345,12 @@ fetch('./video2.mkv')
     const appendChunk = async (chunk: Chunk) => {
       // console.log('appendChunk', chunks[chunk.keyframeIndex + 2])
       // console.log('appendChunk', chunk)
-      await appendBuffer(chunks[chunk.keyframeIndex + 2].arrayBuffer.buffer)
+      await appendBuffer(chunks[chunk.keyframeIndex].arrayBuffer.buffer)
       
       console.log('appendChunk',
-        chunks[chunk.keyframeIndex + 2],
-        chunk.keyframeIndex + 2,
-        chunks[chunk.keyframeIndex + 2].arrayBuffer.buffer,
+        chunks[chunk.keyframeIndex],
+        chunk.keyframeIndex,
+        chunks[chunk.keyframeIndex].arrayBuffer.buffer,
         // resultBuffer.buffer.slice(
         //   chunks[chunk.keyframeIndex + 2].offset,
         //   chunks[chunk.keyframeIndex + 2].offset + chunks[chunk.keyframeIndex + 2].size,
@@ -369,9 +376,9 @@ fetch('./video2.mkv')
     }
 
     const removeChunk = async (chunk: Chunk) => {
-      // console.log('removeChunk', chunk)ww
       if (chunk.keyframeIndex < 0) return console.log('skipped remove', chunk)
       const range = getTimeRange(chunk.startTime) ?? getTimeRange(chunk.endTime)
+      console.log('removeChunk', chunk, range?.index, range)
       if (!range) throw new RangeError('No TimeRange found with this chunk')
       await removeRange({ start: chunk.startTime, end: chunk.endTime, index: range.index })
       chunk.buffered = false
@@ -392,11 +399,10 @@ fetch('./video2.mkv')
     sourceBuffer.addEventListener('error', ev => reject(ev))
 
     // const initializationBuffer = resultBuffer.buffer.slice(0, mp4boxfile.moov.start + mp4boxfile.moov.size)
-    const headerBuffer = new Uint8Array(chunks[0].arrayBuffer.byteLength + chunks[1].arrayBuffer.byteLength);
-    headerBuffer.set(new Uint8Array(chunks[0].arrayBuffer), 0);
-    headerBuffer.set(new Uint8Array(chunks[1].arrayBuffer), chunks[0].arrayBuffer.byteLength);
+    const headerBuffer = new Uint8Array(headerChunks[0].arrayBuffer.byteLength + headerChunks[1].arrayBuffer.byteLength);
+    headerBuffer.set(new Uint8Array(headerChunks[0].arrayBuffer), 0);
+    headerBuffer.set(new Uint8Array(headerChunks[1].arrayBuffer), headerChunks[0].arrayBuffer.byteLength);
     await appendBuffer(headerBuffer)
-
     
     const throttle = (func, limit) => {
       let inThrottle
@@ -486,6 +492,8 @@ fetch('./video2.mkv')
         chunks
           .filter(chunk => !neededChunks.includes(chunk))
   
+      console.log('bufferedRanges', getTimeRanges())
+
       if (sourceBuffer.updating) await abort()
       for (const chunk of shouldUnbufferChunks) {
         if (!chunk.buffered) continue
@@ -495,6 +503,15 @@ fetch('./video2.mkv')
           if (err.message === 'No TimeRange found with this chunk') chunk.buffered = false
           if (err.message !== 'No TimeRange found with this chunk') throw err
         }
+      }
+      const bufferedRanges = 
+        getTimeRanges()
+          .filter(({ start, end }) =>
+              currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > start && currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > end ||
+              currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < start && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < end
+            )
+      for (const range of bufferedRanges) {
+        await removeRange(range)
       }
       for (const chunk of neededChunks) {
         if (
@@ -535,7 +552,7 @@ fetch('./video2.mkv')
     //   myEfficientFn()
     // })
 
-    await appendChunk(chunks[2])
+    await appendChunk(chunks[0])
     // await appendChunk(chunks[0])
     // await appendChunk(chunks[1])
   })
