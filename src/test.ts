@@ -127,8 +127,8 @@ const remux =
           processData()
         }
       }
-      // if (!paused && !done) readData(autoProcess)
-      if (!paused && !done) setTimeout(() => readData(autoProcess), 1)
+      if (!paused && !done) readData(autoProcess)
+      // if (!paused && !done) setTimeout(() => readData(autoProcess), 1)
     }
 
     if (autoStart) readData(autoProcess)
@@ -260,6 +260,17 @@ fetch('./video2.mkv')
         document.body.appendChild(el)
         // console.log('mp4box chunks', chunks)
         console.log('mp4boxfile', mp4boxfile)
+        console.log('libav', _chunks)
+        for (const _chunk of _chunks) {
+          const chunk = chunks[_chunk.keyframeIndex]
+          let startWrong = false
+          let endWrong = false
+          if (_chunk.startTime !== chunk.startTime) startWrong = true
+          if (_chunk.endTime !== chunk.endTime) endWrong = true
+          console.log(`chunk[${chunk.keyframeIndex}] ${_chunk.startTime}!=${chunk.startTime} ||| ${_chunk.endTime}!=${chunk.endTime}`)
+        }
+        console.log('mp4boxfile', mp4boxfile)
+        console.log('libav', _chunks)
         return
       }
 
@@ -352,20 +363,20 @@ fetch('./video2.mkv')
       // console.log('appendChunk', chunk)
       await appendBuffer(_chunks[chunk.keyframeIndex].arrayBuffer.buffer)
       
-      console.log('appendChunk',
-        chunks[chunk.keyframeIndex],
-        chunk.keyframeIndex,
-        _chunks[chunk.keyframeIndex].arrayBuffer.buffer,
-        // resultBuffer.buffer.slice(
-        //   chunks[chunk.keyframeIndex + 2].offset,
-        //   chunks[chunk.keyframeIndex + 2].offset + chunks[chunk.keyframeIndex + 2].size,
-        //   // segment metadata
-        //   // mp4boxfile.moofs[chunk.keyframeIndex].start,
-        //   // // segment data
-        //   // mp4boxfile.mdats[chunk.keyframeIndex].start + mp4boxfile.mdats[chunk.keyframeIndex].size
-        // ),
-        chunks.filter(({ buffered }) => buffered)
-      )
+      // console.log('appendChunk',
+      //   chunks[chunk.keyframeIndex],
+      //   chunk.keyframeIndex,
+      //   _chunks[chunk.keyframeIndex].arrayBuffer.buffer,
+      //   // resultBuffer.buffer.slice(
+      //   //   chunks[chunk.keyframeIndex + 2].offset,
+      //   //   chunks[chunk.keyframeIndex + 2].offset + chunks[chunk.keyframeIndex + 2].size,
+      //   //   // segment metadata
+      //   //   // mp4boxfile.moofs[chunk.keyframeIndex].start,
+      //   //   // // segment data
+      //   //   // mp4boxfile.mdats[chunk.keyframeIndex].start + mp4boxfile.mdats[chunk.keyframeIndex].size
+      //   // ),
+      //   chunks.filter(({ buffered }) => buffered)
+      // )
       // await appendBuffer(
       //   // chunks[chunk.keyframeIndex].arrayBuffer.buffer
       //   resultBuffer.buffer.slice(
@@ -383,7 +394,7 @@ fetch('./video2.mkv')
     const removeChunk = async (chunk: Chunk) => {
       if (chunk.keyframeIndex < 0) return console.log('skipped remove', chunk)
       const range = getTimeRange(chunk.startTime) ?? getTimeRange(chunk.endTime)
-      console.log('removeChunk', chunk, range?.index, range)
+      // console.log('removeChunk', chunk, range?.index, range)
       if (!range) throw new RangeError('No TimeRange found with this chunk')
       await removeRange({ start: chunk.startTime, end: chunk.endTime, index: range.index })
       chunk.buffered = false
@@ -497,7 +508,7 @@ fetch('./video2.mkv')
         chunks
           .filter(chunk => !neededChunks.includes(chunk))
   
-      console.log('bufferedRanges', getTimeRanges())
+      // console.log('bufferedRanges', getTimeRanges())
 
       if (sourceBuffer.updating) await abort()
       for (const chunk of shouldUnbufferChunks) {
