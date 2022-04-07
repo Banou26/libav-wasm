@@ -428,7 +428,7 @@ extern "C" {
           }
           keyframe_duration = 0;
           // printf("packet %d start duration: %f\n", keyframe_index, static_cast<double>(packet->duration) / in_stream->time_base.den);
-          printf("packet %d start at %f, size: %d, %d, %lld\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
+          // printf("packet %d start at %f, size: %d, %d, %lld\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
           keyframe_index += 1;
         }
 

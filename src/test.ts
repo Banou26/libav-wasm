@@ -51,27 +51,27 @@ const remux =
         let previousTimes
         let correctedFirstChunk
         remuxer.init(BUFFER_SIZE, (type, keyframeIndex, startTime, endTime, size, offset, arrayBuffer, ended) => {
-          if (keyframeIndex < 0) {
-          const buffer = arrayBuffer.slice()
-          headerChunks.push({ keyframeIndex, startTime, endTime, size, offset, arrayBuffer: buffer, ended })
-            return controller.enqueue(new Uint8Array(arrayBuffer))
-          }
+          // if (keyframeIndex < 0) {
+          //   const buffer = arrayBuffer.slice()
+          //   headerChunks.push({ keyframeIndex, startTime, endTime, size, offset, arrayBuffer: buffer, ended })
+          //   return controller.enqueue(new Uint8Array(arrayBuffer))
+          // }
           if (type === 'keyframeTimestampCorrection') {
             correctedFirstChunk = { startTime, endTime }
             return
           }
-          const buffer = arrayBuffer.slice()
-          // const buffer = new ArrayBuffer(arrayBuffer.byteLength)
-          // new Uint8Array(buffer).set(new Uint8Array(arrayBuffer))
-          const newChunk =
-            !keyframeIndex
-              ? { keyframeIndex, ...correctedFirstChunk, size, offset, arrayBuffer: buffer, ended }
-              : { keyframeIndex, ...previousTimes ?? {}, size, offset, arrayBuffer: buffer, ended }
+          // const buffer = arrayBuffer.slice()
+          // // const buffer = new ArrayBuffer(arrayBuffer.byteLength)
+          // // new Uint8Array(buffer).set(new Uint8Array(arrayBuffer))
+          // const newChunk =
+          //   !keyframeIndex
+          //     ? { keyframeIndex, ...correctedFirstChunk, size, offset, arrayBuffer: buffer, ended }
+          //     : { keyframeIndex, ...previousTimes ?? {}, size, offset, arrayBuffer: buffer, ended }
 
-          chunks.push(newChunk)
-          // console.log('new chunk', newChunk)
-          previousTimes = { startTime, endTime }
-          controller.enqueue(new Uint8Array(buffer))
+          // chunks.push(newChunk)
+          // // console.log('new chunk', newChunk)
+          // previousTimes = { startTime, endTime }
+          controller.enqueue(new Uint8Array(buffer.slice()))
         })
         if (initOnly) {
           isInitialized = true
@@ -185,45 +185,45 @@ fetch('./video2.mkv')
     // console.log(parser)
     
     const fileSize = Number(headers.get('Content-Length'))
-    // const { stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
-    const { headerChunks, chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    const { headerChunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    // const { headerChunks, chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
     const reader = stream.getReader()
     console.log('fileSize', fileSize)
-    // let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
+    let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
     let processedBytes = 0
 
     let mp4boxfile = createFile()
     mp4boxfile.onError = e => console.error('onError', e)
-    // const chunks: Chunk[] = []
+    const chunks: Chunk[] = []
     console.log('mp4box chunks', chunks)
     console.log('mp4boxfile', mp4boxfile)
-    // mp4boxfile.onSamples = (id, user, samples) => {
-    //   const groupBy = (xs, key) => {
-    //     return xs.reduce((rv, x) => {
-    //       (rv[x[key]] = rv[x[key]] || []).push(x)
-    //       return rv
-    //     }, []).filter(Boolean)
-    //   }
-    //   const groupedSamples = groupBy(samples, 'moof_number')
-    //   for (const group of groupedSamples) {
-    //     const firstSample = group[0]
-    //     const lastSample = group.slice(-1)[0]
+    mp4boxfile.onSamples = (id, user, samples) => {
+      const groupBy = (xs, key) => {
+        return xs.reduce((rv, x) => {
+          (rv[x[key]] = rv[x[key]] || []).push(x)
+          return rv
+        }, []).filter(Boolean)
+      }
+      const groupedSamples = groupBy(samples, 'moof_number')
+      for (const group of groupedSamples) {
+        const firstSample = group[0]
+        const lastSample = group.slice(-1)[0]
 
-    //     if (chunks[firstSample.moof_number - 1]) continue
+        if (chunks[firstSample.moof_number - 1]) continue
 
-    //     // chunks[firstSample.moof_number - 1] = {
-    //     //   firstSample,
-    //     //   lastSample,
-    //     //   keyframeIndex: firstSample.moof_number - 1,
-    //     //   // id: firstSample.moof_number - 1,
-    //     //   startTime: firstSample.cts / firstSample.timescale,
-    //     //   endTime: lastSample.cts / lastSample.timescale,
-    //     //   // start: firstSample.cts / firstSample.timescale,
-    //     //   // end: lastSample.cts / lastSample.timescale,
-    //     //   buffered: false
-    //     // }
-    //   }
-    // }
+        chunks[firstSample.moof_number - 1] = {
+          firstSample,
+          lastSample,
+          keyframeIndex: firstSample.moof_number - 1,
+          // id: firstSample.moof_number - 1,
+          startTime: firstSample.cts / firstSample.timescale,
+          endTime: lastSample.cts / lastSample.timescale,
+          // start: firstSample.cts / firstSample.timescale,
+          // end: lastSample.cts / lastSample.timescale,
+          buffered: false
+        }
+      }
+    }
 
     let mime = 'video/mp4; codecs=\"'
     let info
@@ -235,7 +235,7 @@ fetch('./video2.mkv')
         mime += info.tracks[i].codec
       }
       mime += '\"'
-      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
+      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 100 })
       mp4boxfile.start()
     }
 
@@ -246,9 +246,9 @@ fetch('./video2.mkv')
       const { value: arrayBuffer } = await reader.read()
       // const { value: arrayBuffer, done } = await reader.read()
       // console.log('arrayBuffer', arrayBuffer)
-      if (i > 5) done = true
+      // if (i > 5) done = true
       if (done) {
-        // resultBuffer = resultBuffer.slice(0, processedBytes)
+        resultBuffer = resultBuffer.slice(0, processedBytes)
         const el = document.createElement('div')
         el.innerText = 'Done'
         document.body.appendChild(el)
@@ -258,13 +258,13 @@ fetch('./video2.mkv')
       }
 
       i++
-
-      const buffer = arrayBuffer.slice(0).buffer
+      const buffer = arrayBuffer.buffer
+      // const buffer = arrayBuffer.slice(0).buffer
       // @ts-ignore
       buffer.fileStart = processedBytes
       mp4boxfile.appendBuffer(buffer)
 
-      // resultBuffer.set(arrayBuffer, processedBytes)
+      resultBuffer.set(arrayBuffer, processedBytes)
       processedBytes += arrayBuffer.byteLength
       if (!first) {
         first = true
@@ -522,28 +522,7 @@ fetch('./video2.mkv')
           )
         ) continue
         try {
-          const buffer =
-            [
-              chunk.keyframeIndex,
-              chunk.keyframeIndex + 1,
-              chunk.keyframeIndex + 2
-            ]
-              .map(index => chunks[index])
-              .filter(Boolean)
-              .reduce((accBuffer, chunk) => {
-                chunk.buffered = true
-                const newAccBuffer = new Uint8Array(accBuffer.byteLength + chunk.arrayBuffer.byteLength);
-                newAccBuffer.set(new Uint8Array(accBuffer), 0);
-                newAccBuffer.set(new Uint8Array(chunk.arrayBuffer), accBuffer.byteLength);
-                return newAccBuffer
-              }, new ArrayBuffer(0))
-
-
-          // const headerBuffer = new Uint8Array(headerChunks[0].arrayBuffer.byteLength + headerChunks[1].arrayBuffer.byteLength);
-          // headerBuffer.set(new Uint8Array(headerChunks[0].arrayBuffer), 0);
-          // headerBuffer.set(new Uint8Array(headerChunks[1].arrayBuffer), headerChunks[0].arrayBuffer.byteLength);
-          await appendBuffer(buffer)
-          // await appendChunk(chunk)
+          await appendChunk(chunk)
         } catch (err) {
           if (!(err instanceof Event)) throw err
           // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
@@ -555,9 +534,6 @@ fetch('./video2.mkv')
     video.addEventListener('waiting', (...args) => {
       console.log('waiting', chunks)
       setTimeout(async () => {
-        for (const range of getTimeRanges()) {
-          await removeRange(range)
-        }
         myEfficientFn(...args)
       }, updateBufferTime)
     })
@@ -577,8 +553,8 @@ fetch('./video2.mkv')
     // })
 
     await appendChunk(chunks[0])
-    await appendChunk(chunks[1])
-    await appendChunk(chunks[2])
+    // await appendChunk(chunks[1])
+    // await appendChunk(chunks[2])
     // await appendChunk(chunks[0])
     // await appendChunk(chunks[1])
   })
