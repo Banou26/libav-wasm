@@ -1,6 +1,7 @@
 import { createFile } from 'mp4box'
 // const {  } = Stream
 interface Chunk {
+  arrayBuffer: ArrayBuffer
   keyframeIndex: number
   // id: number
   startTime: number
@@ -51,27 +52,28 @@ const remux =
         let previousTimes
         let correctedFirstChunk
         remuxer.init(BUFFER_SIZE, (type, keyframeIndex, startTime, endTime, size, offset, arrayBuffer, ended) => {
-          // if (keyframeIndex < 0) {
-          //   const buffer = arrayBuffer.slice()
-          //   headerChunks.push({ keyframeIndex, startTime, endTime, size, offset, arrayBuffer: buffer, ended })
-          //   return controller.enqueue(new Uint8Array(arrayBuffer))
-          // }
+          if (keyframeIndex < 0) {
+            const buffer = new Uint8Array(arrayBuffer.slice())
+            headerChunks.push({ keyframeIndex, startTime, endTime, size, offset, arrayBuffer: buffer, ended })
+            return controller.enqueue(buffer)
+          }
           if (type === 'keyframeTimestampCorrection') {
             correctedFirstChunk = { startTime, endTime }
             return
           }
-          // const buffer = arrayBuffer.slice()
-          // // const buffer = new ArrayBuffer(arrayBuffer.byteLength)
-          // // new Uint8Array(buffer).set(new Uint8Array(arrayBuffer))
-          // const newChunk =
-          //   !keyframeIndex
-          //     ? { keyframeIndex, ...correctedFirstChunk, size, offset, arrayBuffer: buffer, ended }
-          //     : { keyframeIndex, ...previousTimes ?? {}, size, offset, arrayBuffer: buffer, ended }
+          const buffer = new Uint8Array(arrayBuffer.slice())
+          // const buffer = new ArrayBuffer(arrayBuffer.byteLength)
+          // new Uint8Array(buffer).set(new Uint8Array(arrayBuffer))
+          const newChunk =
+            !keyframeIndex
+              ? { keyframeIndex, ...correctedFirstChunk, size, offset, arrayBuffer: buffer, ended }
+              : { keyframeIndex, ...previousTimes ?? {}, size, offset, arrayBuffer: buffer, ended }
 
-          // chunks.push(newChunk)
-          // // console.log('new chunk', newChunk)
-          // previousTimes = { startTime, endTime }
-          controller.enqueue(new Uint8Array(buffer.slice()))
+          chunks.push(newChunk)
+          // console.log('new chunk', newChunk)
+          previousTimes = { startTime, endTime }
+          controller.enqueue(buffer)
+          // controller.enqueue(new Uint8Array(buffer.slice()))
         })
         if (initOnly) {
           isInitialized = true
@@ -159,7 +161,8 @@ const remux =
 
 fetch('./video2.mkv')
   .then(async ({ headers, body }) => {
-    const [stream1, stream2] = body.tee()
+    const stream2 = body
+    // const [stream1, stream2] = body.tee()
 
     // const parser = new MatroskaSubtitles.SubtitleParser()
     
@@ -185,11 +188,11 @@ fetch('./video2.mkv')
     // console.log(parser)
     
     const fileSize = Number(headers.get('Content-Length'))
-    const { headerChunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
-    // const { headerChunks, chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    // const { headerChunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    const { headerChunks, chunks: _chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
     const reader = stream.getReader()
     console.log('fileSize', fileSize)
-    let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
+    // let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
     let processedBytes = 0
 
     let mp4boxfile = createFile()
@@ -210,7 +213,6 @@ fetch('./video2.mkv')
         const lastSample = group.slice(-1)[0]
 
         if (chunks[firstSample.moof_number - 1]) continue
-
         chunks[firstSample.moof_number - 1] = {
           firstSample,
           lastSample,
@@ -229,13 +231,14 @@ fetch('./video2.mkv')
     let info
 
     mp4boxfile.onReady = (_info) => {
+      console.log('mp4box ready info', _info)
       info = _info
       for (let i = 0; i < info.tracks.length; i++) {
         if (i !== 0) mime += ','
         mime += info.tracks[i].codec
       }
       mime += '\"'
-      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 100 })
+      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
       mp4boxfile.start()
     }
 
@@ -243,12 +246,12 @@ fetch('./video2.mkv')
     let i = 0
     let done = false
     const read = async () => {
-      const { value: arrayBuffer } = await reader.read()
-      // const { value: arrayBuffer, done } = await reader.read()
+      // const { value: arrayBuffer } = await reader.read()
+      const { value: arrayBuffer, done } = await reader.read()
       // console.log('arrayBuffer', arrayBuffer)
       // if (i > 5) done = true
       if (done) {
-        resultBuffer = resultBuffer.slice(0, processedBytes)
+        // resultBuffer = resultBuffer.slice(0, processedBytes)
         const el = document.createElement('div')
         el.innerText = 'Done'
         document.body.appendChild(el)
@@ -263,8 +266,7 @@ fetch('./video2.mkv')
       // @ts-ignore
       buffer.fileStart = processedBytes
       mp4boxfile.appendBuffer(buffer)
-
-      resultBuffer.set(arrayBuffer, processedBytes)
+      // resultBuffer.set(arrayBuffer, processedBytes)
       processedBytes += arrayBuffer.byteLength
       if (!first) {
         first = true
@@ -345,12 +347,12 @@ fetch('./video2.mkv')
     const appendChunk = async (chunk: Chunk) => {
       // console.log('appendChunk', chunks[chunk.keyframeIndex + 2])
       // console.log('appendChunk', chunk)
-      await appendBuffer(chunks[chunk.keyframeIndex].arrayBuffer.buffer)
+      await appendBuffer(_chunks[chunk.keyframeIndex].arrayBuffer.buffer)
       
       console.log('appendChunk',
         chunks[chunk.keyframeIndex],
         chunk.keyframeIndex,
-        chunks[chunk.keyframeIndex].arrayBuffer.buffer,
+        _chunks[chunk.keyframeIndex].arrayBuffer.buffer,
         // resultBuffer.buffer.slice(
         //   chunks[chunk.keyframeIndex + 2].offset,
         //   chunks[chunk.keyframeIndex + 2].offset + chunks[chunk.keyframeIndex + 2].size,
