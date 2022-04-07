@@ -201,6 +201,7 @@ fetch('./video2.mkv')
     console.log('mp4box chunks', chunks)
     console.log('mp4boxfile', mp4boxfile)
     mp4boxfile.onSamples = (id, user, samples) => {
+      // console.log('onSamples', id, user, samples)
       const groupBy = (xs, key) => {
         return xs.reduce((rv, x) => {
           (rv[x[key]] = rv[x[key]] || []).push(x)
@@ -213,6 +214,7 @@ fetch('./video2.mkv')
         const lastSample = group.slice(-1)[0]
 
         if (chunks[firstSample.moof_number - 1]) continue
+        if (firstSample.cts / firstSample.timescale === lastSample.cts / lastSample.timescale) continue
         chunks[firstSample.moof_number - 1] = {
           firstSample,
           lastSample,
@@ -224,6 +226,7 @@ fetch('./video2.mkv')
           // end: lastSample.cts / lastSample.timescale,
           buffered: false
         }
+        mp4boxfile.releaseUsedSamples(1, lastSample.number)
       }
     }
 
