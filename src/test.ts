@@ -126,7 +126,7 @@ const remux =
         }
       }
       // if (!paused && !done) readData(autoProcess)
-      if (!paused && !done) requestAnimationFrame(() => readData(autoProcess))
+      if (!paused && !done) setTimeout(() => readData(autoProcess), 1)
     }
 
     if (autoStart) readData(autoProcess)
@@ -522,7 +522,28 @@ fetch('./video2.mkv')
           )
         ) continue
         try {
-          await appendChunk(chunk)
+          const buffer =
+            [
+              chunk.keyframeIndex,
+              chunk.keyframeIndex + 1,
+              chunk.keyframeIndex + 2
+            ]
+              .map(index => chunks[index])
+              .filter(Boolean)
+              .reduce((accBuffer, chunk) => {
+                chunk.buffered = true
+                const newAccBuffer = new Uint8Array(accBuffer.byteLength + chunk.arrayBuffer.byteLength);
+                newAccBuffer.set(new Uint8Array(accBuffer), 0);
+                newAccBuffer.set(new Uint8Array(chunk.arrayBuffer), accBuffer.byteLength);
+                return newAccBuffer
+              }, new ArrayBuffer(0))
+
+
+          // const headerBuffer = new Uint8Array(headerChunks[0].arrayBuffer.byteLength + headerChunks[1].arrayBuffer.byteLength);
+          // headerBuffer.set(new Uint8Array(headerChunks[0].arrayBuffer), 0);
+          // headerBuffer.set(new Uint8Array(headerChunks[1].arrayBuffer), headerChunks[0].arrayBuffer.byteLength);
+          await appendBuffer(buffer)
+          // await appendChunk(chunk)
         } catch (err) {
           if (!(err instanceof Event)) throw err
           // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
@@ -532,8 +553,11 @@ fetch('./video2.mkv')
     }, updateBufferTime)
 
     video.addEventListener('waiting', (...args) => {
-      console.log('waiting')
-      setTimeout(() => {
+      console.log('waiting', chunks)
+      setTimeout(async () => {
+        for (const range of getTimeRanges()) {
+          await removeRange(range)
+        }
         myEfficientFn(...args)
       }, updateBufferTime)
     })
@@ -553,6 +577,8 @@ fetch('./video2.mkv')
     // })
 
     await appendChunk(chunks[0])
+    await appendChunk(chunks[1])
+    await appendChunk(chunks[2])
     // await appendChunk(chunks[0])
     // await appendChunk(chunks[1])
   })
