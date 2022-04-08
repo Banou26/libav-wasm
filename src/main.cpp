@@ -81,8 +81,6 @@ extern "C" {
     int used_output_input;
     val callback = val::undefined();
     int keyframe_index;
-    double keyframe_start_time;
-    double keyframe_end_time;
     int ret, i;
     int stream_index;
     int *streams_list;
@@ -92,7 +90,6 @@ extern "C" {
     int processed_bytes;
     int input_size;
     int buffer_size;
-    uint64_t previous_packet_pts;
 
     Remuxer(int _input_size) {
       input_size = _input_size;
@@ -193,92 +190,18 @@ extern "C" {
       }
 
       pCodec = NULL;
-      // subtitleCodec = NULL;
       pCodecParameters = NULL;
-      // subtitleCodecParameters = NULL;
       video_stream_index = -1;
-
-      printf("av_dump_format\n");
-
-      av_dump_format(input_format_context, 0, "", 1);
-
-      printf("dump_metadata input_format_context\n");
-
-      dump_metadata(NULL, input_format_context->metadata, "    ");
-  
-    //  if (st->sample_aspect_ratio.num &&
-    //     av_cmp_q(st->sample_aspect_ratio, st->codecpar->sample_aspect_ratio)) {
-    //     AVRational display_aspect_ratio;
-    //     av_reduce(&display_aspect_ratio.num, &display_aspect_ratio.den,
-    //               st->codecpar->width  * (int64_t)st->sample_aspect_ratio.num,
-    //               st->codecpar->height * (int64_t)st->sample_aspect_ratio.den,
-    //               1024 * 1024);
-    //     printf(", SAR %d:%d DAR %d:%d",
-    //           st->sample_aspect_ratio.num, st->sample_aspect_ratio.den,
-    //           display_aspect_ratio.num, display_aspect_ratio.den);
-    //  }
-
 
       for (i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
         AVStream *out_in_stream;
         AVCodecParameters *in_codecpar = in_stream->codecpar;
-        // dump_metadata(in_stream, 0, "", 1);
-
-        char buf[256];
-        char buf2[256];
-        AVCodecContext *avctx;
-        AVCodecContext *avctx2;
-
-        avctx = avcodec_alloc_context3(NULL);
-        avctx2 = avcodec_alloc_context3(NULL);
-        avcodec_parameters_to_context(avctx, in_stream->codecpar);
-        avcodec_parameters_to_context(avctx2, out_stream->codecpar);
-        avcodec_string(buf, sizeof(buf), avctx, false);
-        avcodec_string(buf2, sizeof(buf2), avctx, true);
-        // avcodec_profile_name(buf2, sizeof(buf2), avctx, true);
-          /* the pid is an important information, so we display it */
-        /* XXX: add a generic system */
-        if (input_format_context->flags & AVFMT_SHOW_IDS)
-          printf("[0x%x] \n", in_stream->id);
-        if (av_dict_get(in_stream->metadata, "language", NULL, 0))
-          printf("(%s) \n", av_dict_get(in_stream->metadata, "language", NULL, 0)->value);
-          // printf(", %d, %d/%d", in_streami->codec_info_nb_frames,
-          //         in_stream->time_base.num, in_stream->time_base.den);
-          printf(": %s \n", buf);
-          printf(": %s \n", buf2);
-
-
-        printf("dump_metadata in_stream\n");
-        dump_metadata(NULL, in_stream->metadata, "    ");
-
-        printf("Codec type: %s \n", av_get_media_type_string(in_codecpar->codec_type));
-        // printf("Codec: %s\n", av_fourcc2str(in_codecpar->codec_tag));
-        // unsigned char* buffer = (unsigned char*)av_malloc(1000);
-        // av_get_codec_tag_string(buffer, 1000, in_codecpar->codec_tag);
-        printf("Codec: %s | %u \n", av_fourcc2str(in_codecpar->codec_tag), in_codecpar->codec_tag);
-        // print_str("codec_tag_string",    av_fourcc2str(in_codecpar->codec_tag));
-        // print_fmt("codec_tag", "0x%04"PRIx32, in_codecpar->codec_tag);
-        // printf("Codec: %d | %d | %d \n", av_fourcc2str(in_codecpar->codec_tag) in_codecpar->profile, output_format_context->flags, output_format_context->video_codec_id);
-        // printf("Codec type: %s \n", av_get(in_codecpar->codec_type));
-
-        // av_dump_format(output_format_context, 0, "", 1);
-
-        printf("CODEC test: %s | %s | %s\n", avcodec_descriptor_get(output_format_context->oformat->audio_codec)->name, avcodec_descriptor_get(output_format_context->oformat->video_codec)->long_name, avcodec_descriptor_get(output_format_context->oformat->next->video_codec)->name);
-        // printf("CODEC: %s | %s\n", output_format_context->oformat->mime_type, avcodec_descriptor_get(output_format_context->oformat->video_codec)->name);
-
-        // if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        //   streams_list[i] = -1;
-        //   subtitleCodec = avcodec_find_decoder(in_codecpar->codec_id);
-        //   subtitleCodecParameters = in_codecpar;
-        //   continue;
-        // }
 
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
-          in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO // &&
-          // in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
+          in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO
         ) {
           streams_list[i] = -1;
           continue;
@@ -322,64 +245,14 @@ extern "C" {
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVCodecContext* pCodecContext;
-      // AVCodecContext* subtitleCodecContext;
-
-      if (should_decode) {
-        pFrame = av_frame_alloc();
-        pCodecContext = avcodec_alloc_context3(pCodec);
-        avcodec_parameters_to_context(pCodecContext, pCodecParameters);
-        avcodec_open2(pCodecContext, pCodec, NULL);
-      }
-      // else {
-      //   printf("codec name subtitle %s\n", subtitleCodec->long_name);
-      //   subtitleCodecContext = avcodec_alloc_context3(subtitleCodec);
-      //   avcodec_parameters_to_context(subtitleCodecContext, subtitleCodecParameters);
-      //   avcodec_open2(subtitleCodecContext, subtitleCodec, NULL);
-      // }
-
-      // av_dump_format(input_format_context, 0, "", 1);
-      // av_dump_format(output_format_context, 0, "", 1);
-
-      // printf("CODEC test: %s | %s | %s\n", avcodec_descriptor_get(output_format_context->oformat->audio_codec)->name, avcodec_descriptor_get(output_format_context->oformat->video_codec)->long_name, avcodec_descriptor_get(output_format_context->oformat->next->video_codec)->name);
-      // printf("CODEC: %s | %s\n", output_format_context->oformat->mime_type, avcodec_descriptor_get(output_format_context->oformat->video_codec)->name);
 
       bool is_first_chunk = used_input == buffer_size;
       bool is_last_chunk = used_input + avio_ctx_buffer_size >= input_size;
       bool output_input_init_done = false;
       int packetIndex = 0;
-
-      // int got_sub;
-      // AVSubtitle* subtitle;
-      // AVSubtitleRect** rects;
-      // AVSubtitleRect* rect;
-      // AVStream *subtitle_stream  = input_format_context->streams[packet->stream_index];
       AVStream *in_stream, *out_stream;
 
-      int64_t keyframe_duration = 0;
-
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
-        // if (input_format_context->streams[packet->stream_index]->codec->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        // if (input_format_context->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        //   subtitle_stream = input_format_context->streams[packet->stream_index];
-        //   res = avcodec_send_packet(pCodecContext, packet);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-        //   if ((res = avcodec_decode_subtitle2(pCodecContext, subtitle, &got_sub, packet)) < 0) {
-        //     printf("Error decoding subtitle %s \n", av_err2str(res));
-        //     break;
-        //   }
-        //   rects = subtitle->rects;
-        //   for (i = 0; i < subtitle->num_rects; i++) {
-        //     rect = rects[i];
-        //     if (rect->type == SUBTITLE_ASS) {
-        //       printf("%s \n", rect->ass);
-        //     } else if (rect->type == SUBTITLE_TEXT) {
-        //       printf("%s \n", rect->text);
-        //     }
-        //   }
-        //   continue;
-        // }
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
@@ -387,149 +260,21 @@ extern "C" {
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
 
-        // if (should_decode && packet->stream_index == video_stream_index) {
-        //   res = avcodec_send_packet(pCodecContext, packet);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-        //   res = avcodec_receive_frame(pCodecContext, pFrame);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-
-        //   if (pFrame->key_frame == 1) {
-        //     // printf("===\n");
-        //     // printf("KEYFRAME: true\n");
-        //     // printf("STREAM INDEX: %d \n", packet->stream_index);
-        //     // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        //     // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        //     // printf("POS: %d \n", packet->pos);
-        //     // printf("===\n");
-        //   }
-        // }
-
-        // if (should_decode && packet->stream_index == video_stream_index) {
-        //   res = avcodec_send_packet(pCodecContext, packet);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-        //   res = avcodec_receive_frame(pCodecContext, pFrame);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-
-        //   if (pFrame->key_frame == 1) {
-        //     // printf("KEYFRAME %d PTS: %f\n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
-        //     // printf("KEYFRAME2 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
-        //     // printf("KEYFRAME3 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pkt_pts) / in_stream->time_base.den));
-        //     // printf("KEYFRAME4 %d PTS: %f \n", keyframe_index, (static_cast<double>(packet->pts) / in_stream->time_base.den));
-            
-        //     // printf("===\n");
-        //     // printf("KEYFRAME: true\n");
-        //     // printf("STREAM INDEX: %d \n", packet->stream_index);
-        //     // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        //     // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        //     // printf("POS: %d \n", packet->pos);
-        //     // printf("===\n");
-        //   }
-        // }
-
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-
-          if (should_decode) {
-            // res = avcodec_send_packet(pCodecContext, packet);
-            // if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-            //   continue;
-            // }
-            // res = avcodec_receive_frame(pCodecContext, pFrame);
-            // if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-            //   continue;
-            // }
-            // pFrame = av_frame_alloc();
-            res = avcodec_send_packet(pCodecContext, packet);
-            if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {}
-            else {
-              res = avcodec_receive_frame(pCodecContext, pFrame);
-              if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {}
-              else {
-                if (pFrame->key_frame == 1) {
-                  printf("KEYFRAME %d PTS: %f\n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
-                  // printf("KEYFRAME2 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pts) / in_stream->time_base.den));
-                  // printf("KEYFRAME3 %d PTS: %f \n", keyframe_index, (static_cast<double>(pFrame->pkt_pts) / in_stream->time_base.den));
-                  printf("KEYFRAME4 %d PTS: %f \n", keyframe_index, (static_cast<double>(packet->pts) / in_stream->time_base.den));
-                  
-                  // printf("===\n");
-                  // printf("KEYFRAME: true\n");
-                  // printf("STREAM INDEX: %d \n", packet->stream_index);
-                  // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-                  // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-                  // printf("POS: %d \n", packet->pos);
-                  // printf("===\n");
-                }
-              }
-              // av_freep(&pFrame->data[0]);
-              // av_frame_unref(pFrame);
-            }
-            // av_frame_unref(pFrame);
-            // av_frame_free(&pFrame);
-            // av_free(pFrame);
-            // av_freep(pFrame);
-          }
-
-          keyframe_duration += packet->duration;
-          if (previous_packet_pts != -1 && keyframe_index - 1 == 0) {
-            callback(
-              static_cast<std::string>("keyframeTimestampCorrection"),
-              keyframe_index - 1,
-              keyframe_start_time,
-              keyframe_start_time + (static_cast<double>(keyframe_duration) / in_stream->time_base.den)
-            );
-            // printf("packet %d duration: %lld, %f, %f-%f\n", keyframe_index - 1, keyframe_duration, (static_cast<double>(keyframe_duration) / in_stream->time_base.den), keyframe_start_time, keyframe_start_time + (static_cast<double>(keyframe_duration) / in_stream->time_base.den));
-          }
-          keyframe_start_time = static_cast<double>(packet->pts) / in_stream->time_base.den;
-          if (previous_packet_pts != -1) {
-            // printf("packet %d duration: %lld, %f, %f-%f\n", keyframe_index - 1, keyframe_duration, (static_cast<double>(keyframe_duration) / in_stream->time_base.den), keyframe_start_time, keyframe_start_time + (static_cast<double>(keyframe_duration) / in_stream->time_base.den));
-            // printf("packet %d end at %f, duration: %f\n", keyframe_index - 1, static_cast<double>(previous_packet_pts) / in_stream->time_base.den, static_cast<double>(keyframe_duration) / in_stream->time_base.den);
-            // keyframe_end_time = static_cast<double>(previous_packet_pts) / in_stream->time_base.den;
-            keyframe_end_time = keyframe_start_time + (static_cast<double>(keyframe_duration) / in_stream->time_base.den);
-          }
-          keyframe_duration = 0;
-          // printf("packet %d start duration: %f\n", keyframe_index, static_cast<double>(packet->duration) / in_stream->time_base.den);
-          printf("packet %d start at %f, size: %d, %d, %lld\n", keyframe_index, static_cast<double>(packet->pts) / in_stream->time_base.den, packet->size, packet->buf->size, packet->pos);
           keyframe_index += 1;
         }
 
-        if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(packet->flags & AV_PKT_FLAG_KEY)) {
-          keyframe_duration += packet->duration;
-        }
-
-
-        if (packet->pts == AV_NOPTS_VALUE) {
-          printf("pts is AV_NOPTS_VALUE");
-          packet->pts = 0;
-        }
-
-
         // todo: check if https://stackoverflow.com/questions/64547604/libavformat-ffmpeg-muxing-into-mp4-with-avformatcontext-drops-the-final-frame could help with the last frames
         packet->pos = -1;
-        previous_packet_pts = packet->pts;
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          // printf("Error muxing packet \n");
+          printf("Error muxing packet\n");
           break;
-        }
-        if (should_decode) {
-          av_frame_unref(pFrame);
         }
         av_packet_unref(packet);
 
-        // av_frame_unref(pFrame);
-        // av_free(frame);
-        // av_freep(frame);
-
         if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
-          // printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_size);
           break;
         }
       }
@@ -542,10 +287,6 @@ extern "C" {
 
       if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
         keyframe_index -= 1;
-        // printf("packet %d duration: %lld, %f, %f-%f\n", keyframe_index, keyframe_duration, (static_cast<double>(keyframe_duration) / in_stream->time_base.den), keyframe_start_time, keyframe_start_time + (static_cast<double>(keyframe_duration) / in_stream->time_base.den));
-        // printf("packet %d end %f\n", keyframe_index, static_cast<double>(previous_packet_pts) / in_stream->time_base.den);
-        keyframe_end_time = keyframe_start_time + (static_cast<double>(keyframe_duration) / in_stream->time_base.den);
-        // keyframe_end_time = static_cast<double>(previous_packet_pts) / in_stream->time_base.den;
         av_write_trailer(output_format_context);
         av_packet_free(&packet);
         avformat_free_context(input_format_context);
@@ -626,12 +367,9 @@ extern "C" {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& callback = remuxObject.callback;
     if (callback.as<bool>()) {
-      bool ended = remuxObject.used_input + remuxObject.avio_ctx_buffer_size >= remuxObject.input_size && remuxObject.processed_bytes + remuxObject.avio_ctx_buffer_size > remuxObject.processed_bytes;
       callback(
         static_cast<std::string>("data"),
         remuxObject.keyframe_index - 2,
-        remuxObject.keyframe_start_time,
-        remuxObject.keyframe_end_time,
         buf_size,
         remuxObject.written_output, 
         emscripten::val(
@@ -639,11 +377,9 @@ extern "C" {
             buf_size,
             buf
           )
-        ),
-        ended
+        )
       );
     }
-    // printf("writeFunction %d | %d | %d | %f-%f \n", remuxObject.keyframe_index - 2, buf_size, remuxObject.written_output, remuxObject.keyframe_start_time, remuxObject.keyframe_end_time);
     remuxObject.written_output += buf_size;
     return 0;
   }

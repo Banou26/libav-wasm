@@ -49,31 +49,20 @@ const remux =
     // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
     const processData = (initOnly = false) => {
       if (!isInitialized) {
-        let previousTimes
-        let correctedFirstChunk
-        remuxer.init(BUFFER_SIZE, (type, keyframeIndex, startTime, endTime, size, offset, arrayBuffer, ended) => {
+        remuxer.init(BUFFER_SIZE, (type, keyframeIndex, size, offset, arrayBuffer) => {
           if (keyframeIndex < 0) {
             const buffer = new Uint8Array(arrayBuffer.slice())
-            headerChunks.push({ keyframeIndex, startTime, endTime, size, offset, arrayBuffer: buffer, ended })
+            headerChunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
             return controller.enqueue(buffer)
           }
-          if (type === 'keyframeTimestampCorrection') {
-            correctedFirstChunk = { startTime, endTime }
-            return
-          }
           const buffer = new Uint8Array(arrayBuffer.slice())
-          // const buffer = new ArrayBuffer(arrayBuffer.byteLength)
-          // new Uint8Array(buffer).set(new Uint8Array(arrayBuffer))
           const newChunk =
             !keyframeIndex
-              ? { keyframeIndex, ...correctedFirstChunk, size, offset, arrayBuffer: buffer, ended }
-              : { keyframeIndex, ...previousTimes ?? {}, size, offset, arrayBuffer: buffer, ended }
+              ? { keyframeIndex, size, offset, arrayBuffer: buffer }
+              : { keyframeIndex, size, offset, arrayBuffer: buffer }
 
           chunks.push(newChunk)
-          // console.log('new chunk', newChunk)
-          previousTimes = { startTime, endTime }
           controller.enqueue(buffer)
-          // controller.enqueue(new Uint8Array(buffer.slice()))
         })
         if (initOnly) {
           isInitialized = true
@@ -214,17 +203,14 @@ fetch('./video2.mkv')
         const lastSample = group.slice(-1)[0]
 
         if (chunks[firstSample.moof_number - 1]) continue
-        if (firstSample.cts / firstSample.timescale === lastSample.cts / lastSample.timescale) {
-          console.log('BRUHHHHHHHHHHHHHHHHHHHHHHHHHH', firstSample.cts / firstSample.timescale, lastSample.cts / lastSample.timescale, firstSample, lastSample)
-          continue
-        }
+
         chunks[firstSample.moof_number - 1] = {
           firstSample,
           lastSample,
           keyframeIndex: firstSample.moof_number - 1,
           // id: firstSample.moof_number - 1,
           startTime: firstSample.cts / firstSample.timescale,
-          endTime: lastSample.cts / lastSample.timescale,
+          endTime: firstSample.cts / firstSample.timescale === lastSample.cts / lastSample.timescale ? lastSample.cts / lastSample.timescale + 0.02 : lastSample.cts / lastSample.timescale,
           // start: firstSample.cts / firstSample.timescale,
           // end: lastSample.cts / lastSample.timescale,
           buffered: false
@@ -261,19 +247,6 @@ fetch('./video2.mkv')
         const el = document.createElement('div')
         el.innerText = 'Done'
         document.body.appendChild(el)
-        // console.log('mp4box chunks', chunks)
-        console.log('mp4boxfile', mp4boxfile)
-        console.log('libav', _chunks)
-        // for (const _chunk of _chunks) {
-        //   const chunk = chunks[_chunk.keyframeIndex]
-        //   let startWrong = false
-        //   let endWrong = false
-        //   if (_chunk.startTime !== chunk.startTime) startWrong = true
-        //   if (_chunk.endTime !== chunk.endTime) endWrong = true
-        //   console.log(`chunk[${chunk.keyframeIndex}] ${_chunk.startTime}!=${chunk.startTime} ||| ${_chunk.endTime}!=${chunk.endTime}`)
-        // }
-        console.log('mp4boxfile', mp4boxfile)
-        console.log('libav', _chunks)
         return
       }
 
