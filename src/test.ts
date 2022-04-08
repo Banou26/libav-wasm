@@ -16,12 +16,25 @@ const PUSH_ARRAY_SIZE = 10_000_000
 
 let libavInstance
 
+/** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
+enum SEEK_FLAG {
+  /** seek backward */
+  AVSEEK_FLAG_BACKWARD = 1,
+  /** seeking based on position in bytes */
+  AVSEEK_FLAG_BYTE = 2,
+  /** seek to any frame, even non-keyframes */
+  AVSEEK_FLAG_ANY = 4,
+  /** seeking based on frame number */
+  AVSEEK_FLAG_FRAME = 8
+}
+
 const remux =
   async (
     { size, stream, autoStart = false, autoProcess = true }:
     { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
-    const remuxer = libavInstance ?? new (libavInstance = await (await import('../dist/libav.js'))()).Remuxer(size)
+    const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
+    const remuxer = new libav.Remuxer({ length: size, bufferSize: BUFFER_SIZE })
     const reader = stream.getReader()
 
     const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
@@ -49,11 +62,7 @@ const remux =
     // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
     const processData = (initOnly = false) => {
       if (!isInitialized) {
-        remuxer.init(BUFFER_SIZE, (type, keyframeIndex, size, offset, arrayBuffer) => {
-          if (type !== 'data') {
-            console.log('args', type, keyframeIndex, size, offset, arrayBuffer)
-            return
-          }
+        remuxer.init((type, keyframeIndex, size, offset, arrayBuffer) => {
           if (keyframeIndex < 0) {
             const buffer = new Uint8Array(arrayBuffer.slice())
             headerChunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
@@ -130,6 +139,9 @@ const remux =
       headerChunks,
       chunks,
       stream: resultStream,
+      seek: (timestamp: number, flag: SEEK_FLAG) => {
+        remuxer.seek(timestamp, flag)
+      },
       pause: () => {
         paused = true
       },
@@ -152,7 +164,7 @@ const remux =
     }
   }
 
-fetch('./video2.mkv')
+fetch('./video.mkv')
   .then(async ({ headers, body }) => {
     const stream2 = body
     // const [stream1, stream2] = body.tee()
@@ -182,7 +194,7 @@ fetch('./video2.mkv')
     
     const fileSize = Number(headers.get('Content-Length'))
     // const { headerChunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
-    const { headerChunks, chunks: _chunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    const { headerChunks, chunks: _chunks, stream, getInfo, seek } = await remux({ size: fileSize, stream: stream2, autoStart: true })
     const reader = stream.getReader()
     console.log('fileSize', fileSize)
     // let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))

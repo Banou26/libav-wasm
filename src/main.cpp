@@ -60,16 +60,8 @@ extern "C" {
   private:
     AVIOContext* avioContext;
     AVIOContext* avioContext2;
-    AVIOContext* avioContext3;
     AVFormatContext* output_format_context;
-    AVFormatContext* output_input_format_context;
     AVFormatContext* input_format_context;
-
-    AVCodec* pCodec;
-    // AVCodec* subtitleCodec;
-    // AVCodecParameters* subtitleCodecParameters;
-    AVCodecParameters* pCodecParameters;
-    int video_stream_index;
 
   public:
     size_t avio_ctx_buffer_size;
@@ -88,42 +80,16 @@ extern "C" {
     bool should_decode;
     bool should_demux;
     int processed_bytes;
-    int input_size;
+    int length;
     int buffer_size;
 
-    Remuxer(int _input_size) {
-      input_size = _input_size;
+    Remuxer(val options) {
+      length = options["length"].as<int>();
+      buffer_size = options["bufferSize"].as<int>();
     }
 
-  void dump_metadata(void *ctx, const AVDictionary *m, const char *indent)
-  {
-     if (m && !(av_dict_count(m) == 1 && av_dict_get(m, "language", NULL, 0))) {
-         const AVDictionaryEntry *tag = NULL;
-  
-         av_log(ctx, AV_LOG_INFO, "%sMetadata:\n", indent);
-         while ((tag = av_dict_get(m, "", tag, AV_DICT_IGNORE_SUFFIX)))
-             if (strcmp("language", tag->key)) {
-                 const char *p = tag->value;
-                 av_log(ctx, AV_LOG_INFO,
-                        "%s  %-16s: ", indent, tag->key);
-                 while (*p) {
-                     char tmp[256];
-                     size_t len = strcspn(p, "\x8\xa\xb\xc\xd");
-                     av_strlcpy(tmp, p, FFMIN(sizeof(tmp), len+1));
-                     av_log(ctx, AV_LOG_INFO, "%s", tmp);
-                     p += len;
-                     if (*p == 0xd) av_log(ctx, AV_LOG_INFO, " ");
-                     if (*p == 0xa) av_log(ctx, AV_LOG_INFO, "\n%s  %-16s: ", indent, "");
-                     if (*p) p++;
-                 }
-                 av_log(ctx, AV_LOG_INFO, "\n");
-             }
-     }
-  }
-
-    void init(int _buffer_size, val cb) {
+    void init(val cb) {
       callback = cb;
-      buffer_size = _buffer_size;
       const char* str = getValue("location.host", ".");
       std::string hostStdString(str);
       std::string sdbxAppHost("sdbx.app");
@@ -141,7 +107,7 @@ extern "C" {
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      avio_ctx_buffer_size = _buffer_size; // 100000000; // 4096; // 8192;
+      avio_ctx_buffer_size = buffer_size; // 100000000; // 4096; // 8192;
 
       unsigned char* buffer = (unsigned char*)av_malloc(avio_ctx_buffer_size);
       avioContext = avio_alloc_context(
@@ -189,10 +155,6 @@ extern "C" {
         return;
       }
 
-      pCodec = NULL;
-      pCodecParameters = NULL;
-      video_stream_index = -1;
-
       for (i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
@@ -203,24 +165,12 @@ extern "C" {
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO
         ) {
-          AVDictionary *d = in_stream->metadata;
-          AVDictionaryEntry *t = NULL;
-          while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
-            printf("stream %d %d dic %s | %s \n", i, in_stream->codecpar->codec_type, t->key, t->value);
-          }
           streams_list[i] = -1;
           continue;
         }
 
-        if (should_decode && in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          video_stream_index = i;
-          pCodec = avcodec_find_decoder(in_codecpar->codec_id);
-          pCodecParameters = in_codecpar;
-        }
-
         streams_list[i] = stream_index++;
         out_stream = avformat_new_stream(output_format_context, NULL);
-        out_in_stream = avformat_new_stream(output_input_format_context, NULL);
         if (!out_stream) {
           // printf("Failed allocating output stream \n");
           res = AVERROR_UNKNOWN;
@@ -252,140 +202,13 @@ extern "C" {
       AVCodecContext* pCodecContext;
 
       bool is_first_chunk = used_input == buffer_size;
-      bool is_last_chunk = used_input + avio_ctx_buffer_size >= input_size;
+      bool is_last_chunk = used_input + avio_ctx_buffer_size >= length;
       bool output_input_init_done = false;
       int packetIndex = 0;
       AVStream *in_stream, *out_stream;
 
-      // if (should_decode) {
-      //   pFrame = av_frame_alloc();
-      //   pCodecContext = avcodec_alloc_context3(pCodec);
-      //   avcodec_parameters_to_context(pCodecContext, pCodecParameters);
-      //   avcodec_open2(pCodecContext, pCodec, NULL);
-      // }
-
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
-        // if (input_format_context->streams[packet->stream_index]->codec->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-        //   input_format_context->streams[packet->stream_index]->metadata
-        //   while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
-        //       <....>                             // iterate over all entries in d
-        //   }
-        // }
-
-        // if (input_format_context->streams[packet->stream_index]->codec->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-        //   res = avcodec_send_packet(pCodecContext, packet);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-        //   res = avcodec_receive_frame(pCodecContext, pFrame);
-        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
-        //     continue;
-        //   }
-
-        //   pFrame->
-
-        //   if (pFrame->key_frame == 1) {
-        //     // printf("===\n");
-        //     // printf("KEYFRAME: true\n");
-        //     // printf("STREAM INDEX: %d \n", packet->stream_index);
-        //     // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        //     // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
-        //     // printf("POS: %d \n", packet->pos);
-        //     // printf("===\n");
-        //   }
-        // }
-        in_stream  = input_format_context->streams[packet->stream_index];
-        out_stream = output_format_context->streams[packet->stream_index];
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE || in_stream->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          AVDictionary *d = in_stream->metadata;
-          AVDictionaryEntry *t = NULL;
-          while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
-            printf("stream %d %d dic %s | %s \n", i, in_stream->codecpar->codec_type, t->key, t->value);
-          }
-        // if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
-          // in_stream  = input_format_context->streams[packet->stream_index];
-          // out_stream = output_format_context->streams[packet->stream_index];
-          // AVDictionary *d = in_stream->metadata;
-          // AVDictionaryEntry *t = NULL;
-          // while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
-          //   printf("stream %d dic %s | %s \n", i, t->key, t->value);
-          // }
-
-          // callback(
-          //   static_cast<std::string>("data"),
-          //   remuxObject.keyframe_index - 2,
-          //   buf_size,
-          //   remuxObject.written_output,
-          //   emscripten::val(
-          //     emscripten::typed_memory_view(
-          //       buf_size,
-          //       buf
-          //     )
-          //   )
-          // );
-          
-          // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          //   AVDictionaryEntry *filename = NULL;
-          //   av_dict_get(d, "filename", filename, AV_DICT_MATCH_CASE);
-          //   AVDictionaryEntry *mimetype = NULL;
-          //   av_dict_get(d, "mimetype", mimetype, AV_DICT_MATCH_CASE);
-          //   printf("ATTACHMENT %s %s \n", filename, mimetype);
-
-          //   // callback(
-          //   //   static_cast<std::string>("attachment"),
-          //   //   emscripten::val(std::string(filename->value).c_str()),
-          //   //   emscripten::val(std::string(mimetype->value).c_str()),
-          //   //   written_output,
-          //   //   emscripten::val(
-          //   //     emscripten::typed_memory_view(
-          //   //       packet->buf->size,
-          //   //       packet->buf->data
-          //   //     )
-          //   //   )
-          //   // );
-          // }
-
-          // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-          //   AVDictionaryEntry *language = NULL;
-          //   av_dict_get(d, "language", language, AV_DICT_MATCH_CASE);
-          //   AVDictionaryEntry *title = NULL;
-          //   av_dict_get(d, "title", title, AV_DICT_MATCH_CASE);
-
-          //   // callback(
-          //   //   static_cast<std::string>("subtitle"),
-          //   //   emscripten::val(std::string(language->value).c_str()),
-          //   //   emscripten::val(std::string(title->value).c_str()),
-          //   //   written_output,
-          //   //   emscripten::val(
-          //   //     emscripten::typed_memory_view(
-          //   //       packet->buf->size,
-          //   //       packet->buf->data
-          //   //     )
-          //   //   )
-          //   // );
-          // }
-
-          // 2 language | eng
-          // 2 title = English(US)
-          // 3 language = spa
-          // 3 title = Espanol
-          // 4 language = por
-          // 4 title = Portugues
-          // 5 filename = OpenSans-ExtraBold.ttf
-          // 5 mimetype = application/x-truetype-font
-          // 6 filename = OpenSans-Italic.ttf
-          // 6 mimetype = application/x-truetype-font
-          // 7 filename = OpenSans-Light.ttf
-          // 7 mimetype = application/x-truetype-font
-          // 8 filename = OpenSans-Regular.ttf
-          // 8 mimetype = application/x-truetype-font
-          // 9 filename = OpenSans-Semibold.ttf
-          // 9 mimetype = application/x-truetype-font
-          // 10 filename = MIAMA.OTF
-          // 10 mimetype = application/x-truetype-font
-
-
-          // av_dict_free(&d);
+        if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
         }
@@ -425,7 +248,6 @@ extern "C" {
         avformat_free_context(output_format_context);
         // avio_close(avioContext);
         // avio_close(avioContext2);
-        // avio_close(avioContext3);
       }
     }
 
@@ -458,8 +280,9 @@ extern "C" {
       output_stream.seekg(0);
     }
 
-    void seek() {
-      printf("seek");
+    int seek(int timestamp, int flags) {
+      printf("seek %d %d", timestamp, flags);
+      return av_seek_frame(input_format_context, -1, timestamp, flags);
     }
 
     void close () {
@@ -482,7 +305,7 @@ extern "C" {
   };
 
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
+    printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     remuxObject.used_input += buf_size;
@@ -517,7 +340,7 @@ extern "C" {
   }
 
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
-    // printf("seekFunction %d | %d \n", offset, whence);
+    printf("seekFunction %d | %d \n", offset, whence);
     // printf("seekFunction %#x | %d \n", offset, whence);
     return -1;
   }
@@ -534,7 +357,7 @@ extern "C" {
       .field("output", &InfoObject::output);
 
     class_<Remuxer>("Remuxer")
-      .constructor<int>()
+      .constructor<emscripten::val>()
       .function("init", &Remuxer::init)
       .function("push", &Remuxer::push)
       .function("process", &Remuxer::process)
