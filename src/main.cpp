@@ -82,20 +82,23 @@ extern "C" {
     int processed_bytes;
     int length;
     int buffer_size;
+    val read = val::undefined();
 
     Remuxer(val options) {
-      length = options["length"].as<int>();
-      buffer_size = options["bufferSize"].as<int>();
-    }
-
-    void init(val cb) {
-      callback = cb;
       const char* str = getValue("location.host", ".");
       std::string hostStdString(str);
       std::string sdbxAppHost("sdbx.app");
       std::string localhostProxyHost("localhost:2345");
       if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) && strcmp(str, "localhost:1234") != 0 && !strstr(hostStdString.c_str(), localhostProxyHost.c_str())) return;
       free(&str);
+
+      length = options["length"].as<int>();
+      buffer_size = options["bufferSize"].as<int>();
+      read = options["read"];
+      callback = options["callback"];
+    }
+
+    void init() {
       input_format_context = avformat_alloc_context();
       
       avioContext = NULL;
@@ -305,13 +308,27 @@ extern "C" {
   };
 
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
+    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+
+
+    // auto& read = remuxObject.read;
+    // if (read.as<bool>()) {
+    //   val res = read(remuxObject.used_input).await();
+    //   std::string buffer = res["buffer"].as<std::string>();
+    //   printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
+    //   buf = (uint8_t*)buffer.c_str();
+    //   // emscripten::typed_memory_view buffer = res["buffer"].as<emscripten::typed_memory_view>();
+    //   // memcpy(&destination[position], temp, strlen(temp))
+    //   return res["size"].as<int>();
+    // }
+
     remuxObject.used_input += buf_size;
     auto& stream = remuxObject.input_stream;
     stream.read(reinterpret_cast<char*>(buf), buf_size);
     auto gcount = stream.gcount();
+    printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
     if (gcount == 0) {
       return AVERROR_EOF;
     }

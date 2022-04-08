@@ -34,16 +34,7 @@ const remux =
     { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
     const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
-    const remuxer = new libav.Remuxer({ length: size, bufferSize: BUFFER_SIZE })
     const reader = stream.getReader()
-
-    const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
-    let processedBytes = 0
-    let currentBufferBytes = 0
-    let leftOverData
-    let isInitialized = false
-    let paused = false
-
     const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
       let controller
       resolve([
@@ -55,6 +46,59 @@ const remux =
         controller
       ])
     })
+    let leftover
+    const remuxer = new libav.Remuxer({
+      length: size,
+      bufferSize: BUFFER_SIZE,
+      read: async (...args) => {
+        const accumulate = async ({ buffer = new Uint8Array(BUFFER_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number }> => {
+          const { value: newBuffer, done } = await reader.read()
+          
+          if (done) return { buffer, currentSize }
+
+          let newSize
+          if (newBuffer.byteLength + currentSize > BUFFER_SIZE) {
+            const slicedBuffer = newBuffer.slice(0, BUFFER_SIZE - currentSize)
+            leftover = newBuffer.slice(BUFFER_SIZE - currentSize)
+            newSize = currentSize + slicedBuffer.byteLength
+            buffer.set(slicedBuffer, currentSize)
+          } else {
+            newSize = currentSize + newBuffer.byteLength
+            buffer.set(newBuffer, currentSize)
+          }
+          
+          return accumulate({ buffer, currentSize: newSize })
+        }
+        const { buffer, currentSize: size } = await accumulate()
+        console.log('reading', size)
+        return {
+          buffer,
+          size: size
+        }
+      },
+      callback: (type, keyframeIndex, size, offset, arrayBuffer) => {
+        if (keyframeIndex < 0) {
+          const buffer = new Uint8Array(arrayBuffer.slice())
+          headerChunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
+          return controller.enqueue(buffer)
+        }
+        const buffer = new Uint8Array(arrayBuffer.slice())
+        const newChunk =
+          !keyframeIndex
+            ? { keyframeIndex, size, offset, arrayBuffer: buffer }
+            : { keyframeIndex, size, offset, arrayBuffer: buffer }
+
+        chunks.push(newChunk)
+        controller.enqueue(buffer)
+      }
+    })
+
+    const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
+    let processedBytes = 0
+    let currentBufferBytes = 0
+    let leftOverData
+    let isInitialized = false
+    let paused = false
 
     const chunks = []
     const headerChunks = []
@@ -62,21 +106,7 @@ const remux =
     // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
     const processData = (initOnly = false) => {
       if (!isInitialized) {
-        remuxer.init((type, keyframeIndex, size, offset, arrayBuffer) => {
-          if (keyframeIndex < 0) {
-            const buffer = new Uint8Array(arrayBuffer.slice())
-            headerChunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
-            return controller.enqueue(buffer)
-          }
-          const buffer = new Uint8Array(arrayBuffer.slice())
-          const newChunk =
-            !keyframeIndex
-              ? { keyframeIndex, size, offset, arrayBuffer: buffer }
-              : { keyframeIndex, size, offset, arrayBuffer: buffer }
-
-          chunks.push(newChunk)
-          controller.enqueue(buffer)
-        })
+        remuxer.init()
         if (initOnly) {
           isInitialized = true
           return
