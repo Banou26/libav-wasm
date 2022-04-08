@@ -203,6 +203,11 @@ extern "C" {
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO
         ) {
+          AVDictionary *d = in_stream->metadata;
+          AVDictionaryEntry *t = NULL;
+          while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
+            printf("stream %d %d dic %s | %s \n", i, in_stream->codecpar->codec_type, t->key, t->value);
+          }
           streams_list[i] = -1;
           continue;
         }
@@ -252,8 +257,135 @@ extern "C" {
       int packetIndex = 0;
       AVStream *in_stream, *out_stream;
 
+      // if (should_decode) {
+      //   pFrame = av_frame_alloc();
+      //   pCodecContext = avcodec_alloc_context3(pCodec);
+      //   avcodec_parameters_to_context(pCodecContext, pCodecParameters);
+      //   avcodec_open2(pCodecContext, pCodec, NULL);
+      // }
+
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
-        if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
+        // if (input_format_context->streams[packet->stream_index]->codec->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+        //   input_format_context->streams[packet->stream_index]->metadata
+        //   while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
+        //       <....>                             // iterate over all entries in d
+        //   }
+        // }
+
+        // if (input_format_context->streams[packet->stream_index]->codec->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+        //   res = avcodec_send_packet(pCodecContext, packet);
+        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
+        //     continue;
+        //   }
+        //   res = avcodec_receive_frame(pCodecContext, pFrame);
+        //   if (res == AVERROR(EAGAIN) || res == AVERROR_EOF) {
+        //     continue;
+        //   }
+
+        //   pFrame->
+
+        //   if (pFrame->key_frame == 1) {
+        //     // printf("===\n");
+        //     // printf("KEYFRAME: true\n");
+        //     // printf("STREAM INDEX: %d \n", packet->stream_index);
+        //     // printf("PTS: %d \n", av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        //     // printf("DTS: %d \n", av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX)));
+        //     // printf("POS: %d \n", packet->pos);
+        //     // printf("===\n");
+        //   }
+        // }
+        in_stream  = input_format_context->streams[packet->stream_index];
+        out_stream = output_format_context->streams[packet->stream_index];
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE || in_stream->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+          AVDictionary *d = in_stream->metadata;
+          AVDictionaryEntry *t = NULL;
+          while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
+            printf("stream %d %d dic %s | %s \n", i, in_stream->codecpar->codec_type, t->key, t->value);
+          }
+        // if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
+          // in_stream  = input_format_context->streams[packet->stream_index];
+          // out_stream = output_format_context->streams[packet->stream_index];
+          // AVDictionary *d = in_stream->metadata;
+          // AVDictionaryEntry *t = NULL;
+          // while (t = av_dict_get(d, "", t, AV_DICT_IGNORE_SUFFIX)) {
+          //   printf("stream %d dic %s | %s \n", i, t->key, t->value);
+          // }
+
+          // callback(
+          //   static_cast<std::string>("data"),
+          //   remuxObject.keyframe_index - 2,
+          //   buf_size,
+          //   remuxObject.written_output,
+          //   emscripten::val(
+          //     emscripten::typed_memory_view(
+          //       buf_size,
+          //       buf
+          //     )
+          //   )
+          // );
+          
+          // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+          //   AVDictionaryEntry *filename = NULL;
+          //   av_dict_get(d, "filename", filename, AV_DICT_MATCH_CASE);
+          //   AVDictionaryEntry *mimetype = NULL;
+          //   av_dict_get(d, "mimetype", mimetype, AV_DICT_MATCH_CASE);
+          //   printf("ATTACHMENT %s %s \n", filename, mimetype);
+
+          //   // callback(
+          //   //   static_cast<std::string>("attachment"),
+          //   //   emscripten::val(std::string(filename->value).c_str()),
+          //   //   emscripten::val(std::string(mimetype->value).c_str()),
+          //   //   written_output,
+          //   //   emscripten::val(
+          //   //     emscripten::typed_memory_view(
+          //   //       packet->buf->size,
+          //   //       packet->buf->data
+          //   //     )
+          //   //   )
+          //   // );
+          // }
+
+          // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+          //   AVDictionaryEntry *language = NULL;
+          //   av_dict_get(d, "language", language, AV_DICT_MATCH_CASE);
+          //   AVDictionaryEntry *title = NULL;
+          //   av_dict_get(d, "title", title, AV_DICT_MATCH_CASE);
+
+          //   // callback(
+          //   //   static_cast<std::string>("subtitle"),
+          //   //   emscripten::val(std::string(language->value).c_str()),
+          //   //   emscripten::val(std::string(title->value).c_str()),
+          //   //   written_output,
+          //   //   emscripten::val(
+          //   //     emscripten::typed_memory_view(
+          //   //       packet->buf->size,
+          //   //       packet->buf->data
+          //   //     )
+          //   //   )
+          //   // );
+          // }
+
+          // 2 language | eng
+          // 2 title = English(US)
+          // 3 language = spa
+          // 3 title = Espanol
+          // 4 language = por
+          // 4 title = Portugues
+          // 5 filename = OpenSans-ExtraBold.ttf
+          // 5 mimetype = application/x-truetype-font
+          // 6 filename = OpenSans-Italic.ttf
+          // 6 mimetype = application/x-truetype-font
+          // 7 filename = OpenSans-Light.ttf
+          // 7 mimetype = application/x-truetype-font
+          // 8 filename = OpenSans-Regular.ttf
+          // 8 mimetype = application/x-truetype-font
+          // 9 filename = OpenSans-Semibold.ttf
+          // 9 mimetype = application/x-truetype-font
+          // 10 filename = MIAMA.OTF
+          // 10 mimetype = application/x-truetype-font
+
+
+          // av_dict_free(&d);
           av_packet_unref(packet);
           continue;
         }
@@ -371,7 +503,7 @@ extern "C" {
         static_cast<std::string>("data"),
         remuxObject.keyframe_index - 2,
         buf_size,
-        remuxObject.written_output, 
+        remuxObject.written_output,
         emscripten::val(
           emscripten::typed_memory_view(
             buf_size,

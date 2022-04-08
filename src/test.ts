@@ -50,6 +50,10 @@ const remux =
     const processData = (initOnly = false) => {
       if (!isInitialized) {
         remuxer.init(BUFFER_SIZE, (type, keyframeIndex, size, offset, arrayBuffer) => {
+          if (type !== 'data') {
+            console.log('args', type, keyframeIndex, size, offset, arrayBuffer)
+            return
+          }
           if (keyframeIndex < 0) {
             const buffer = new Uint8Array(arrayBuffer.slice())
             headerChunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
