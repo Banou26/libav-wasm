@@ -64,7 +64,7 @@ extern "C" {
     int *streams_list;
     int number_of_streams;
     bool should_demux;
-    int processed_bytes;
+    int processed_bytes = 0;
     int input_length;
     int buffer_size;
     val read = val::undefined();
@@ -181,8 +181,8 @@ extern "C" {
     }
 
     void process(int size) {
-      printf("processFunction\n");
-      // processed_bytes += size;
+      processed_bytes += size;
+      printf("processFunction %d \n", processed_bytes);
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
@@ -295,30 +295,29 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
-    // auto& read = remuxObject.read;
+    auto& read = remuxObject.read;
 
     // // val resPromise = read(remuxObject.used_input);
     // // val res = resPromise.await();
     // // printf("res %d \n", read().await().as<int>());
-    // val res = read(remuxObject.used_input);
-    // std::string buffer = res["buffer"].as<std::string>();
-    // // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
-    // remuxObject.used_input += buf_size;
-    // printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
-    // memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());
-    // printf("readFunction return %d \n", res["size"].as<int>());
-    // return res["size"].as<int>();
+    val res = read(remuxObject.used_input);
+    std::string buffer = res["buffer"].as<std::string>();
+    // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
+    remuxObject.used_input += buf_size;
+    printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
+    memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());
+    return res["size"].as<int>();
 
     // return 0;
-    remuxObject.used_input += buf_size;
-    auto& stream = remuxObject.input_stream;
-    stream.read(reinterpret_cast<char*>(buf), buf_size);
-    auto gcount = stream.gcount();
-    printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
-    if (gcount == 0) {
-      return AVERROR_EOF;
-    }
-    return stream.gcount();
+    // remuxObject.used_input += buf_size;
+    // auto& stream = remuxObject.input_stream;
+    // stream.read(reinterpret_cast<char*>(buf), buf_size);
+    // auto gcount = stream.gcount();
+    // printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
+    // if (gcount == 0) {
+    //   return AVERROR_EOF;
+    // }
+    // return stream.gcount();
   }
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
