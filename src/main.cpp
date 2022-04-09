@@ -19,21 +19,8 @@ extern "C" {
   #include <libavutil/imgutils.h>
 };
 
-EM_JS(const char*, getValue, (const char* s, const char* s2), {
-  var r =
-    UTF8ToString(s)
-      .split(UTF8ToString(s2))
-      .reduce(
-        (v, c) => v && v[c],
-        globalThis
-      );
-  var l = lengthBytesUTF8(r)+1;
-  var rs = _malloc(l);
-  stringToUTF8(r, rs, l);
-  return rs;
-});
-
 int main() {
+  // EM_ASM({ Module.wasmTable = wasmTable; });
   // printf("Oz LibAV transmuxer init\n");
   return 0;
 }
@@ -64,7 +51,6 @@ extern "C" {
     AVFormatContext* input_format_context;
 
   public:
-    size_t avio_ctx_buffer_size;
     std::stringstream input_stream;
     std::stringstream output_stream;
     std::stringstream output_input_stream;
@@ -77,45 +63,41 @@ extern "C" {
     int stream_index;
     int *streams_list;
     int number_of_streams;
-    bool should_decode;
     bool should_demux;
     int processed_bytes;
-    int length;
+    int input_length;
     int buffer_size;
     val read = val::undefined();
 
     Remuxer(val options) {
-      const char* str = getValue("location.host", ".");
+      std::string hostStr = val::global("location")["host"].as<std::string>();
+      const char* str = hostStr.c_str();
       std::string hostStdString(str);
       std::string sdbxAppHost("sdbx.app");
       std::string localhostProxyHost("localhost:2345");
       if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) && strcmp(str, "localhost:1234") != 0 && !strstr(hostStdString.c_str(), localhostProxyHost.c_str())) return;
-      free(&str);
 
-      length = options["length"].as<int>();
+      input_length = options["length"].as<int>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
       callback = options["callback"];
     }
 
-    void init() {
-      input_format_context = avformat_alloc_context();
-      
+    void init () {
       avioContext = NULL;
+      input_format_context = avformat_alloc_context();
       output_format_context = avformat_alloc_context();
 
-      should_decode = false;
       should_demux = false;
       written_output = 0;
       stream_index = 0;
       streams_list = NULL;
       number_of_streams = 0;
-      avio_ctx_buffer_size = buffer_size; // 100000000; // 4096; // 8192;
 
-      unsigned char* buffer = (unsigned char*)av_malloc(avio_ctx_buffer_size);
+      unsigned char* buffer = (unsigned char*)av_malloc(buffer_size);
       avioContext = avio_alloc_context(
         buffer,
-        avio_ctx_buffer_size,
+        buffer_size,
         0,
         reinterpret_cast<void*>(this),
         &readFunction,
@@ -135,10 +117,10 @@ extern "C" {
         return;
       }
 
-      unsigned char* buffer2 = (unsigned char*)av_malloc(avio_ctx_buffer_size);
+      unsigned char* buffer2 = (unsigned char*)av_malloc(buffer_size);
       avioContext2 = avio_alloc_context(
         buffer2,
-        avio_ctx_buffer_size,
+        buffer_size,
         1,
         reinterpret_cast<void*>(this),
         nullptr,
@@ -198,14 +180,18 @@ extern "C" {
       }
     }
 
-    void process() {
+    void process(int size) {
+      // processed_bytes += size;
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVCodecContext* pCodecContext;
 
-      bool is_first_chunk = used_input == buffer_size;
-      bool is_last_chunk = used_input + avio_ctx_buffer_size >= length;
+      int current_used_input = used_input;
+      printf("current_used_input %d \n", current_used_input);
+
+      bool is_first_chunk = current_used_input == buffer_size;
+      bool is_last_chunk = current_used_input + buffer_size >= input_length;
       bool output_input_init_done = false;
       int packetIndex = 0;
       AVStream *in_stream, *out_stream;
@@ -220,6 +206,7 @@ extern "C" {
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           keyframe_index += 1;
+          printf("keyframe index %d \n", keyframe_index);
         }
 
         // todo: check if https://stackoverflow.com/questions/64547604/libavformat-ffmpeg-muxing-into-mp4-with-avformatcontext-drops-the-final-frame could help with the last frames
@@ -232,18 +219,14 @@ extern "C" {
         }
         av_packet_unref(packet);
 
-        if (!is_last_chunk && used_input + avio_ctx_buffer_size > processed_bytes) {
+        if (!is_last_chunk && current_used_input + buffer_size > processed_bytes) {
+          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", current_used_input, processed_bytes, input_length);
           break;
         }
       }
+      printf("current_used_input2 %d \n", current_used_input);
 
-      if (should_decode) {
-        av_frame_free(&pFrame);
-        avcodec_flush_buffers(pCodecContext);
-        avcodec_free_context(&pCodecContext);
-      }
-
-      if (is_last_chunk && processed_bytes + avio_ctx_buffer_size > processed_bytes) {
+      if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
         keyframe_index -= 1;
         av_write_trailer(output_format_context);
         av_packet_free(&packet);
@@ -309,49 +292,49 @@ extern "C" {
 
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
-    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    auto& read = remuxObject.read;
 
-
-    // auto& read = remuxObject.read;
-    // if (read.as<bool>()) {
-    //   val res = read(remuxObject.used_input).await();
-    //   std::string buffer = res["buffer"].as<std::string>();
-    //   printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
-    //   buf = (uint8_t*)buffer.c_str();
-    //   // emscripten::typed_memory_view buffer = res["buffer"].as<emscripten::typed_memory_view>();
-    //   // memcpy(&destination[position], temp, strlen(temp))
-    //   return res["size"].as<int>();
-    // }
-
+    // val resPromise = read(remuxObject.used_input);
+    // val res = resPromise.await();
+    // printf("res %d \n", read().await().as<int>());
+    val res = read(remuxObject.used_input);
+    std::string buffer = res["buffer"].as<std::string>();
+    // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
+    remuxObject.processed_bytes += (res["size"].as<int>() * 2);
     remuxObject.used_input += buf_size;
-    auto& stream = remuxObject.input_stream;
-    stream.read(reinterpret_cast<char*>(buf), buf_size);
-    auto gcount = stream.gcount();
-    printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
-    if (gcount == 0) {
-      return AVERROR_EOF;
-    }
-    return stream.gcount();
+    printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
+    memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());
+    return res["size"].as<int>();
+
+    return 0;
+    // remuxObject.used_input += buf_size;
+    // auto& stream = remuxObject.input_stream;
+    // stream.read(reinterpret_cast<char*>(buf), buf_size);
+    // auto gcount = stream.gcount();
+    // printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
+    // if (gcount == 0) {
+    //   return AVERROR_EOF;
+    // }
+    // return stream.gcount();
   }
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
+    printf("writeFunction\n");
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& callback = remuxObject.callback;
-    if (callback.as<bool>()) {
-      callback(
-        static_cast<std::string>("data"),
-        remuxObject.keyframe_index - 2,
-        buf_size,
-        remuxObject.written_output,
-        emscripten::val(
-          emscripten::typed_memory_view(
-            buf_size,
-            buf
-          )
+    callback(
+      static_cast<std::string>("data"),
+      remuxObject.keyframe_index - 2,
+      buf_size,
+      remuxObject.written_output,
+      emscripten::val(
+        emscripten::typed_memory_view(
+          buf_size,
+          buf
         )
-      );
-    }
+      )
+    );
     remuxObject.written_output += buf_size;
     return 0;
   }
@@ -364,6 +347,7 @@ extern "C" {
 
   // Binding code
   EMSCRIPTEN_BINDINGS(my_class_example) {
+
     emscripten::value_object<MediaInfoObject>("MediaInfoObject")
       .field("formatName", &MediaInfoObject::formatName)
       .field("duration", &MediaInfoObject::duration)
