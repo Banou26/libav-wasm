@@ -181,7 +181,7 @@ extern "C" {
     }
 
     void process(int size) {
-      // processed_bytes += size;
+      processed_bytes += size;
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
@@ -203,7 +203,6 @@ extern "C" {
         }
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
-
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           keyframe_index += 1;
           printf("keyframe index %d \n", keyframe_index);
@@ -268,6 +267,9 @@ extern "C" {
 
     int seek(int timestamp, int flags) {
       printf("seek %d %d", timestamp, flags);
+      // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
+      // avio_flush(s->pb)
+      // avformat_flush()
       return av_seek_frame(input_format_context, -1, timestamp, flags);
     }
 
@@ -301,7 +303,6 @@ extern "C" {
     val res = read(remuxObject.used_input);
     std::string buffer = res["buffer"].as<std::string>();
     // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
-    remuxObject.processed_bytes += (res["size"].as<int>() * 2);
     remuxObject.used_input += buf_size;
     printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
     memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());

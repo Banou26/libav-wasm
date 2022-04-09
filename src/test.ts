@@ -12,7 +12,7 @@ interface Chunk {
 }
 
 const BUFFER_SIZE = 5_000_000
-const PUSH_ARRAY_SIZE = 10_000_000
+const PUSH_ARRAY_SIZE = BUFFER_SIZE * 2 // 10_000_000
 
 let libavInstance
 
@@ -27,6 +27,35 @@ enum SEEK_FLAG {
   /** seeking based on frame number */
   AVSEEK_FLAG_FRAME = 8
 }
+
+function equal (buf1, buf2)
+{
+    if (buf1.byteLength != buf2.byteLength) {
+      console.log('wrong byteLength value', buf1.byteLength, buf2.byteLength)
+      return false;
+    }
+    var dv1 = new Int8Array(buf1);
+    var dv2 = new Int8Array(buf2);
+    for (var i = 0 ; i != buf1.byteLength ; i++)
+    {
+      
+        if (dv1[i] != dv2[i]) {
+          console.log('wrong value at offset', i)
+          return false;
+        }
+    }
+    return true;
+}
+
+
+var _appendBuffer = function(buffer1, buffer2) {
+  var tmp = new Uint8Array(buffer1.byteLength + buffer2.byteLength);
+  tmp.set(new Uint8Array(buffer1), 0);
+  tmp.set(new Uint8Array(buffer2), buffer1.byteLength);
+  return tmp.buffer;
+};
+
+// console.log('BUFFER EQ', equal)
 
 const remux =
   async (
@@ -47,36 +76,146 @@ const remux =
       ])
     })
     const chunks = []
-    let leftOverData
-    const accumulate = async ({ buffer = new Uint8Array(BUFFER_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
+
+    let leftOverData: Uint8Array
+    const accumulate = async ({ buffer = new Uint8Array(PUSH_ARRAY_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
       const { value: newBuffer, done } = await reader.read()
-      console.log('accumulate', newBuffer, done)
 
-      if (done) return { buffer, currentSize, done }
-
-      let newSize
-      if (newBuffer.byteLength + currentSize > BUFFER_SIZE) {
-        const slicedBuffer = newBuffer.slice(0, BUFFER_SIZE - currentSize)
-        leftOverData = newBuffer.slice(BUFFER_SIZE - currentSize)
-        newSize = currentSize + slicedBuffer.byteLength
-        buffer.set(slicedBuffer, currentSize)
-      } else {
-        newSize = currentSize + newBuffer.byteLength
-        buffer.set(newBuffer, currentSize)
+      if (currentSize === 0 && leftOverData) {
+        buffer.set(leftOverData)
+        currentSize += leftOverData.byteLength
+        leftOverData = undefined
       }
 
-      if (newSize === BUFFER_SIZE) return { buffer, currentSize: newSize, done: false }
+      if (done) {
+        return { buffer: buffer.slice(0, currentSize), currentSize, done }
+      }
+
+      let newSize
+      const slicedBuffer = newBuffer.slice(0, PUSH_ARRAY_SIZE - currentSize)
+      newSize = currentSize + slicedBuffer.byteLength
+      buffer.set(slicedBuffer, currentSize)
+
+      if (newSize === PUSH_ARRAY_SIZE) {
+        leftOverData = newBuffer.slice(PUSH_ARRAY_SIZE - currentSize)
+        return { buffer, currentSize: newSize, done: false }
+      }
       
       return accumulate({ buffer, currentSize: newSize })
     }
 
-    let { buffer: currentBuffer, done: initDone } = await accumulate()
+    const fullBuffer = await (await fetch('./video.mkv')).arrayBuffer()
+    const getFullBufferOffsets = (i) => [i * BUFFER_SIZE, (i * BUFFER_SIZE) + BUFFER_SIZE] as const
+    const getOffsets = (i) => [(i % 2) * BUFFER_SIZE, ((i % 2) * BUFFER_SIZE) + BUFFER_SIZE] as const
+    const compareOffsetBuffer = (i, buffer) => equal((buffer).slice(...getOffsets(i)), fullBuffer.slice(...getFullBufferOffsets(i)))
+    const buffers = []
 
+    // let i = 0
+    // while(true) {
+    //   const { buffer, done } = await accumulate()
+    //   if (done) {
+    //     buffers.push(_appendBuffer(buffer, new ArrayBuffer(0)))
+    //     // console.log('buffer', buffer)
+    //     break
+    //   }
+    //   buffers.push(_appendBuffer(buffer, new ArrayBuffer(0)))
+    //   // if (!compareOffsetBuffer(i, buffer)) {
+    //   //   console.log(`${i}`)
+    //   //   console.log(`buffer ${i}`, buffer)
+    //   //   console.log(`buffer sliced ${i}`, buffer.slice(...getOffsets(i)))
+    //   //   console.log(`fullBuffer ${i}`, new Uint8Array(fullBuffer.slice(...getFullBufferOffsets(i))))
+    //   //   console.log(`offset test ${i}`, getOffsets(i), getFullBufferOffsets(i))
+    //   //   console.log(`eq ${i}`, compareOffsetBuffer(i, buffer))
+    //   //   // break
+    //   // } else {
+    //   //   console.log(`${i}`)
+    //   // }
+    //   i++
+    // }
+    // const finalBuffer = buffers.reduce((acc, buf) => _appendBuffer(acc, buf), new ArrayBuffer(0))
+    // console.log('fullbuffer', fullBuffer)
+    // console.log('finalBuffer', finalBuffer)
+    // console.log(`finalBuffer EQ`, equal(finalBuffer, fullBuffer))
+
+
+
+
+    // let i2 = 0
+    // const buffer = new Uint8Array(PUSH_ARRAY_SIZE)
+    // let processedBytes = 0
+    // let currentBufferBytes = 0
+    // let leftOverData2
+    // let isInitialized = false
+    // let paused = false
+
+    // // todo: (THIS IS A REALLY UNLIKELY CASE OF IT ACTUALLY HAPPENING) change the way leftOverData2 works to handle if arrayBuffers read are bigger than PUSH_ARRAY_SIZE
+    // const processData = (initOnly = false) => {
+    //   if (leftOverData2) {
+    //     buffer.set(leftOverData2, 0)
+    //     currentBufferBytes += leftOverData2.byteLength
+    //     leftOverData2 = undefined
+    //   }
+    // }
+
+    // const readData = async (process = true) => {
+    //   if (leftOverData2 || paused) return
+    //   const { value: arrayBuffer, done } = await reader.read()
+    //   if (done || !arrayBuffer) {
+    //     const lastChunk = buffer.slice(0, size - processedBytes)
+    //     processedBytes += lastChunk.byteLength
+    //     buffers.push(lastChunk)
+    //     processData()
+    //     const finalBuffer = buffers.reduce((acc, buf) => _appendBuffer(acc, buf), new ArrayBuffer(0))
+    //     console.log('finalBuffer', finalBuffer)
+    //     console.log(`finalBuffer EQ ${i2}`, equal(finalBuffer, fullBuffer))
+    //     i2++
+    //     return
+    //   }
+    //   const _currentBufferBytes = currentBufferBytes
+    //   const slicedArrayBuffer = arrayBuffer.slice(0, PUSH_ARRAY_SIZE - currentBufferBytes)
+    //   buffer.set(slicedArrayBuffer, currentBufferBytes)
+    //   currentBufferBytes += slicedArrayBuffer.byteLength
+    //   if (currentBufferBytes === PUSH_ARRAY_SIZE) {
+    //     leftOverData2 = arrayBuffer.slice(PUSH_ARRAY_SIZE - _currentBufferBytes)
+    //     processedBytes += currentBufferBytes
+    //     currentBufferBytes = 0
+    //     if (process) {
+    //       buffers.push(_appendBuffer(buffer, new ArrayBuffer(0)))
+    //       // console.log(`eq ${i2}`, compareOffsetBuffer(i2, buffer), buffer)
+    //       processData()
+    //     }
+    //   }
+    //   i2++
+    //   readData(autoProcess)
+    // }
+
+    // readData()
+
+    
+    // console.log('buffer', buffer)
+    // console.log('eq1', compareOffsetBuffer(0, buffer))
+    // console.log('eq2', compareOffsetBuffer(1, buffer))
+    // const { buffer: buffer2 } = await accumulate()
+    // console.log('buffer2', buffer2)
+    // console.log('eq3', compareOffsetBuffer(2, buffer2))
+    // console.log('eq4', compareOffsetBuffer(3, buffer2))
+
+    // await new Promise(resolve => {})
+
+    let { buffer: currentBuffer, done: initDone } = await accumulate()
+    let readCount = 0
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
       read: () => {
-        const buffer = currentBuffer
+        const buffer =
+          readCount === 0
+            ? currentBuffer.slice(0, BUFFER_SIZE)
+            : currentBuffer.slice(BUFFER_SIZE)
+        readCount++
+        if (readCount === 1) {
+          readCount = 0
+        }
         return {
           buffer,
           size: buffer.byteLength
@@ -100,6 +239,7 @@ const remux =
     console.log('LIBAV headerChunks', headerChunks)
 
     const process = async () => {
+      readCount = 0
       if (!chunks.length) {
         console.log('process')
         remuxer.process(currentBuffer.byteLength)
