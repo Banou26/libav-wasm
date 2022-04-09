@@ -181,17 +181,17 @@ extern "C" {
     }
 
     void process(int size) {
-      processed_bytes += size;
+      printf("processFunction\n");
+      // processed_bytes += size;
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVCodecContext* pCodecContext;
 
-      int current_used_input = used_input;
-      printf("current_used_input %d \n", current_used_input);
+      printf("used_input %d \n", used_input);
 
-      bool is_first_chunk = current_used_input == buffer_size;
-      bool is_last_chunk = current_used_input + buffer_size >= input_length;
+      bool is_first_chunk = used_input == buffer_size;
+      bool is_last_chunk = used_input + buffer_size >= input_length;
       bool output_input_init_done = false;
       int packetIndex = 0;
       AVStream *in_stream, *out_stream;
@@ -218,12 +218,12 @@ extern "C" {
         }
         av_packet_unref(packet);
 
-        if (!is_last_chunk && current_used_input + buffer_size > processed_bytes) {
-          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", current_used_input, processed_bytes, input_length);
+        if (!is_last_chunk && used_input + buffer_size > processed_bytes) {
+          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_length);
           break;
         }
       }
-      printf("current_used_input2 %d \n", current_used_input);
+      printf("used_input2 %d \n", used_input);
 
       if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
         keyframe_index -= 1;
@@ -295,29 +295,30 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
-    auto& read = remuxObject.read;
+    // auto& read = remuxObject.read;
 
-    // val resPromise = read(remuxObject.used_input);
-    // val res = resPromise.await();
-    // printf("res %d \n", read().await().as<int>());
-    val res = read(remuxObject.used_input);
-    std::string buffer = res["buffer"].as<std::string>();
-    // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
-    remuxObject.used_input += buf_size;
-    printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
-    memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());
-    return res["size"].as<int>();
-
-    return 0;
+    // // val resPromise = read(remuxObject.used_input);
+    // // val res = resPromise.await();
+    // // printf("res %d \n", read().await().as<int>());
+    // val res = read(remuxObject.used_input);
+    // std::string buffer = res["buffer"].as<std::string>();
+    // // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
     // remuxObject.used_input += buf_size;
-    // auto& stream = remuxObject.input_stream;
-    // stream.read(reinterpret_cast<char*>(buf), buf_size);
-    // auto gcount = stream.gcount();
-    // printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
-    // if (gcount == 0) {
-    //   return AVERROR_EOF;
-    // }
-    // return stream.gcount();
+    // printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
+    // memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());
+    // printf("readFunction return %d \n", res["size"].as<int>());
+    // return res["size"].as<int>();
+
+    // return 0;
+    remuxObject.used_input += buf_size;
+    auto& stream = remuxObject.input_stream;
+    stream.read(reinterpret_cast<char*>(buf), buf_size);
+    auto gcount = stream.gcount();
+    printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
+    if (gcount == 0) {
+      return AVERROR_EOF;
+    }
+    return stream.gcount();
   }
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {

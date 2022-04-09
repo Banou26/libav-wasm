@@ -202,7 +202,9 @@ const remux =
 
     // await new Promise(resolve => {})
 
+    console.log('fullbuffer', fullBuffer)
     let { buffer: currentBuffer, done: initDone } = await accumulate()
+    let setCurrentBuffer = 0
     let readCount = 0
     const remuxer = new libav.Remuxer({
       length: size,
@@ -212,6 +214,8 @@ const remux =
           readCount === 0
             ? currentBuffer.slice(0, BUFFER_SIZE)
             : currentBuffer.slice(BUFFER_SIZE)
+        console.log('setCurrentBuffer', setCurrentBuffer, buffer)
+        buffers.push(_appendBuffer(buffer, new ArrayBuffer(0)))
         readCount++
         if (readCount === 1) {
           readCount = 0
@@ -234,6 +238,7 @@ const remux =
       }
     })
     console.log('remuxer', remuxer)
+    remuxer.push(currentBuffer)
     remuxer.init()
     const headerChunks = chunks.splice(0, chunks.length)
     console.log('LIBAV headerChunks', headerChunks)
@@ -241,21 +246,32 @@ const remux =
     const process = async () => {
       readCount = 0
       if (!chunks.length) {
-        console.log('process')
+        readCount = 1
+        console.log('FIRST process')
         remuxer.process(currentBuffer.byteLength)
+        remuxer.clearInput()
         if (!initDone) process()
         return
       }
+      console.log('NON FIRST process')
       const { buffer, done } = await accumulate()
       currentBuffer = buffer
+      setCurrentBuffer++
+      buffers.push(_appendBuffer(buffer, new ArrayBuffer(0)))
       console.log('process', buffer, done)
+      remuxer.push(buffer)
       remuxer.process(currentBuffer.byteLength)
+      remuxer.clearInput()
       if (!done) process()
     }
 
     await process()
 
-    console.log('LIBAV chunks', chunks)
+    // const finalBuffer = buffers.reduce((acc, buf) => _appendBuffer(acc, buf), new ArrayBuffer(0))
+    // console.log('fullbuffer', fullBuffer)
+    // console.log('finalBuffer', finalBuffer)
+    // console.log(`finalBuffer EQ`, equal(finalBuffer, fullBuffer.slice(0, 10000000)))
+    // console.log('LIBAV chunks', chunks)
 
     return {
       headerChunks,
