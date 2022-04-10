@@ -20,7 +20,7 @@ extern "C" {
 };
 
 int main() {
-  // EM_ASM({ Module.wasmTable = wasmTable; });
+  EM_ASM({ Module.wasmTable = wasmTable; });
   // printf("Oz LibAV transmuxer init\n");
   return 0;
 }
@@ -67,6 +67,9 @@ extern "C" {
     int processed_bytes = 0;
     int input_length;
     int buffer_size;
+    int video_stream_index;
+    bool seeking;
+    int64_t seeking_timestamp;
     val read = val::undefined();
 
     Remuxer(val options) {
@@ -84,6 +87,7 @@ extern "C" {
     }
 
     void init () {
+      seeking = false;
       avioContext = NULL;
       input_format_context = avformat_alloc_context();
       output_format_context = avformat_alloc_context();
@@ -154,6 +158,10 @@ extern "C" {
           continue;
         }
 
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          video_stream_index = i;
+        }
+
         streams_list[i] = stream_index++;
         out_stream = avformat_new_stream(output_format_context, NULL);
         if (!out_stream) {
@@ -182,13 +190,10 @@ extern "C" {
 
     void process(int size) {
       processed_bytes += size;
-      printf("processFunction %d \n", processed_bytes);
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVCodecContext* pCodecContext;
-
-      printf("used_input %d \n", used_input);
 
       bool is_first_chunk = used_input == buffer_size;
       bool is_last_chunk = used_input + buffer_size >= input_length;
@@ -205,25 +210,27 @@ extern "C" {
         out_stream = output_format_context->streams[packet->stream_index];
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           keyframe_index += 1;
-          printf("keyframe index %d \n", keyframe_index);
         }
 
+        // todo: try using av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base)
+
         // todo: check if https://stackoverflow.com/questions/64547604/libavformat-ffmpeg-muxing-into-mp4-with-avformatcontext-drops-the-final-frame could help with the last frames
-        packet->pos = -1;
+        // packet->pos = -1;
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
+        if (input_length <= packet->pos) {
+          break;
+        }
+
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          printf("Error muxing packet\n");
           break;
         }
         av_packet_unref(packet);
 
         if (!is_last_chunk && used_input + buffer_size > processed_bytes) {
-          printf("STOPPED TRYING TO READ FRAMES AS THERE IS NOT ENOUGH DATA ANYMORE %d/%d:%d \n", used_input, processed_bytes, input_length);
           break;
         }
       }
-      printf("used_input2 %d \n", used_input);
 
       if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
         keyframe_index -= 1;
@@ -266,11 +273,21 @@ extern "C" {
     }
 
     int seek(int timestamp, int flags) {
-      printf("seek %d %d", timestamp, flags);
+      printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), flags);
       // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
-      // avio_flush(s->pb)
-      // avformat_flush()
-      return av_seek_frame(input_format_context, -1, timestamp, flags);
+      avio_flush(input_format_context->pb);
+      avformat_flush(input_format_context);
+      seeking = true;
+      seeking_timestamp = (int64_t)timestamp;
+      int res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE);
+      printf("av_seek_frame res %d \n", res);
+      seeking = false;
+
+      // int res = av_seek_frame(input_format_context, video_stream_index, (int64_t)(timestamp), AVSEEK_FLAG_BYTE);
+      // seeking = true;
+      return res;
+      // return av_seek_frame(input_format_context, -1, timestamp, flags);
+      // return 0;
     }
 
     void close () {
@@ -292,36 +309,40 @@ extern "C" {
     }
   };
 
+  static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
+    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    printf("seekFunction %d | %d, isSeeking: %d \n", offset, whence, remuxObject.seeking);
+    if (remuxObject.seeking) {
+      printf("seekFunction INNNNNNN %d | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
+      // remuxObject.seeking = false;
+      // return remuxObject.seeking_timestamp;
+      return -1;
+    }
+    return -1;
+  }
+
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    // printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
+    printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& read = remuxObject.read;
 
-    // // val resPromise = read(remuxObject.used_input);
-    // // val res = resPromise.await();
-    // // printf("res %d \n", read().await().as<int>());
+    // todo: re-implement this when https://github.com/emscripten-core/emscripten/issues/16686 is fixed
+    // val resPromise = read(remuxObject.used_input);
+    // val res = resPromise.await();
+    // printf("res %d \n", read().await().as<int>());
+
     val res = read(remuxObject.used_input);
     std::string buffer = res["buffer"].as<std::string>();
-    // i still dont understand why this shit works bruh, this might be the issue with the ending being cropped too
+    int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
-    printf("readFunction %lu %d \n", buffer.length(), res["size"].as<int>());
-    memcpy(buf, (uint8_t*)buffer.c_str(), res["size"].as<int>());
-    return res["size"].as<int>();
-
-    // return 0;
-    // remuxObject.used_input += buf_size;
-    // auto& stream = remuxObject.input_stream;
-    // stream.read(reinterpret_cast<char*>(buf), buf_size);
-    // auto gcount = stream.gcount();
-    // printf("readFunction %#x | %s | %d, %d \n", buf, &buf, buf_size, gcount);
-    // if (gcount == 0) {
-    //   return AVERROR_EOF;
-    // }
-    // return stream.gcount();
+    memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
+    if (buffer_size == 0) {
+      return AVERROR_EOF;
+    }
+    return buffer_size;
   }
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("writeFunction\n");
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& callback = remuxObject.callback;
     callback(
@@ -337,13 +358,7 @@ extern "C" {
       )
     );
     remuxObject.written_output += buf_size;
-    return 0;
-  }
-
-  static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
-    printf("seekFunction %d | %d \n", offset, whence);
-    // printf("seekFunction %#x | %d \n", offset, whence);
-    return -1;
+    return buf_size;
   }
 
   // Binding code
