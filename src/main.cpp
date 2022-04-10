@@ -190,6 +190,7 @@ extern "C" {
 
     void process(int size) {
       processed_bytes += size;
+      printf("process call, processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
@@ -208,6 +209,7 @@ extern "C" {
         }
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
+
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           keyframe_index += 1;
         }
@@ -221,7 +223,6 @@ extern "C" {
         if (input_length <= packet->pos) {
           break;
         }
-
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           break;
         }
@@ -232,12 +233,16 @@ extern "C" {
         }
       }
 
+      char buf[1024];
+      av_strerror(res, buf, sizeof(buf));
+      printf("av_read_frame res %d %s \n", res, buf);
+
       if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
         keyframe_index -= 1;
         av_write_trailer(output_format_context);
-        av_packet_free(&packet);
-        avformat_free_context(input_format_context);
-        avformat_free_context(output_format_context);
+        // av_packet_free(&packet);
+        // avformat_free_context(input_format_context);
+        // avformat_free_context(output_format_context);
         // avio_close(avioContext);
         // avio_close(avioContext2);
       }
@@ -272,20 +277,54 @@ extern "C" {
       output_stream.seekg(0);
     }
 
-    int seek(int timestamp, int flags) {
-      printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), flags);
+    int seek(int timestamp, int _flags) {
+      printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), _flags);
       // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
       avio_flush(input_format_context->pb);
       avformat_flush(input_format_context);
+      avio_flush(output_format_context->pb);
+      avformat_flush(output_format_context);
+      int flags = AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE;
+      int64_t offset = 5000000;
+      printf("av_seek_frame ???????? %d %lld %d \n", video_stream_index, offset, flags);
       seeking = true;
       seeking_timestamp = (int64_t)timestamp;
-      int res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE);
+      used_input = (int)seeking_timestamp;
+      processed_bytes = (int)seeking_timestamp;
+      int res;
+      // if ((res = avio_seek(input_format_context->pb, seeking_timestamp, 0)) < 0) {
+      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("avio_seek errored\n");
+      // }
+      // printf("avio_seek res %d \n", res);
+
+      if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+        printf("av_seek_frame errored\n");
+      }
+
+      // if ((res = av_seek_frame(input_format_context, -1, offset, 0)) < 0) {
+      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("av_seek_frame errored\n");
+      // }
+
+      // if ((res = av_seek_frame(input_format_context, -1, offset, AVSEEK_FLAG_BYTE)) < 0) {
+      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("av_seek_frame errored\n");
+      // }
+
+      // if ((res = av_seek_frame(input_format_context, -1, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("av_seek_frame errored\n");
+      // }
+
       printf("av_seek_frame res %d \n", res);
       seeking = false;
 
+      return 0;
       // int res = av_seek_frame(input_format_context, video_stream_index, (int64_t)(timestamp), AVSEEK_FLAG_BYTE);
       // seeking = true;
-      return res;
+      // return res;
       // return av_seek_frame(input_format_context, -1, timestamp, flags);
       // return 0;
     }
@@ -315,8 +354,10 @@ extern "C" {
     if (remuxObject.seeking) {
       printf("seekFunction INNNNNNN %d | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
       // remuxObject.seeking = false;
+      // return offset;
       // return remuxObject.seeking_timestamp;
-      return -1;
+      // return 0;
+      return offset;
     }
     return -1;
   }

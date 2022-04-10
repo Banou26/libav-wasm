@@ -62,6 +62,7 @@ const remux =
     { size, stream, autoStart = false, autoProcess = true }:
     { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
+    console.log('size', size)
     const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
     const reader = stream.getReader()
     const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
@@ -109,6 +110,7 @@ const remux =
     let readCount = 0
     let done = false
     let closed = false
+    let seeking = false
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
@@ -128,6 +130,7 @@ const remux =
             size: 0
           }
         }
+        if (seeking) console.log('read', buffer)
         return {
           buffer,
           size: buffer.byteLength
@@ -139,6 +142,7 @@ const remux =
         // }
       },
       callback: (type, keyframeIndex, size, offset, arrayBuffer) => {
+        if (seeking) console.log('callback', offset, size, arrayBuffer)
         const buffer = new Uint8Array(arrayBuffer.slice())
         chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
         if (done && !closed) {
@@ -171,9 +175,15 @@ const remux =
 
     await process()
 
+    const fullBuffer = await (await fetch('./video.mkv')).arrayBuffer()
+
     return {
       seek: (timestamp: number, flags: SEEK_FLAG) => {
+        seeking = true
+        done = false
+        currentBuffer = new Uint8Array(fullBuffer.slice(timestamp, timestamp + PUSH_ARRAY_SIZE))
         remuxer.seek(timestamp, flags)
+        remuxer.process(currentBuffer.byteLength)
       },
       headerChunks,
       chunks,
