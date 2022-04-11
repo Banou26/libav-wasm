@@ -279,17 +279,14 @@ extern "C" {
       output_stream.seekg(0);
     }
 
-    int _seek(int timestamp, int _flags) {
-      printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), _flags);
+    int _seek(int timestamp, int flags) {
+      printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), flags);
       // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
       avio_flush(input_format_context->pb);
       avformat_flush(input_format_context);
       avio_flush(output_format_context->pb);
       avformat_flush(output_format_context);
-      int flags = AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE;
-      // int64_t offset = 0;
       int64_t offset = timestamp;
-      // int64_t offset = timestamp * input_format_context->streams[video_stream_index]->time_base.den;
       printf("av_seek_frame ???????? stream index: %d, offset: %lld, flags %d, timebase.den %d \n", video_stream_index, offset, flags, input_format_context->streams[video_stream_index]->time_base.den);
       seeking = true;
       seeking_timestamp = (int64_t)offset;
@@ -297,54 +294,11 @@ extern "C" {
       used_input = (int)seeking_timestamp;
       processed_bytes = (int)seeking_timestamp;
       int res;
-      // if ((res = avio_seek(input_format_context->pb, seeking_timestamp, 0)) < 0) {
-      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("avio_seek errored\n");
-      // }
-      // printf("avio_seek res %d \n", res);
-
       if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BYTE)) < 0) {
         printf("av_seek_frame errored\n");
       }
-
-      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("av_seek_frame errored\n");
-      // }
-
-      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD)) < 0) {
-      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("av_seek_frame errored\n");
-      // }
-
-      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("av_seek_frame errored\n");
-      // }
-
-      // if ((res = av_seek_frame(input_format_context, -1, offset, 0)) < 0) {
-      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("av_seek_frame errored\n");
-      // }
-
-      // if ((res = av_seek_frame(input_format_context, -1, offset, AVSEEK_FLAG_BYTE)) < 0) {
-      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("av_seek_frame errored\n");
-      // }
-
-      // if ((res = av_seek_frame(input_format_context, -1, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      //   printf("av_seek_frame errored\n");
-      // }
-
       printf("av_seek_frame res %d \n", res);
-      seeking = false;
-
       return 0;
-      // int res = av_seek_frame(input_format_context, video_stream_index, (int64_t)(timestamp), AVSEEK_FLAG_BYTE);
-      // seeking = true;
-      // return res;
-      // return av_seek_frame(input_format_context, -1, timestamp, flags);
-      // return 0;
     }
 
     void close () {
@@ -367,42 +321,24 @@ extern "C" {
   };
 
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
-    printf("seekFunction %lld | %d \n", offset, whence);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& seek = remuxObject.seek;
-    int result = seek((int)offset, whence).as<int>();
-    printf("seekFunction %lld | %d, isSeeking: %d, seekingTimestamp: %lld, result: %d \n", offset, whence, remuxObject.seeking, result);
-    return (int64_t)result;
-
-    // printf("seekFunction %lld | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
-    // // if (remuxObject.seeking) {
-    // if (remuxObject.seeking && remuxObject.seeking_timestamp == offset) {
-    //   printf("seekFunction INNNNNNN %lld | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
-    //   // remuxObject.seeking = false;
-    //   // return offset;
-    //   // return remuxObject.seeking_timestamp;
-    //   // return 0;
-    //   return offset;
-    // }
-    // return offset;
-    // return -1;
+    auto result = seek((int)offset, whence).as<long>();
+    printf("seekFunction offset: %lld, flags: %d, result: %d\n", offset, whence, result);
+    return result;
   }
 
+  // todo: re-implement this when https://github.com/emscripten-core/emscripten/issues/16686 is fixed
+
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("readFunction %#x | %s | %d \n", buf, &buf, buf_size);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& read = remuxObject.read;
-
-    // todo: re-implement this when https://github.com/emscripten-core/emscripten/issues/16686 is fixed
-    // val resPromise = read(remuxObject.used_input);
-    // val res = resPromise.await();
-    // printf("res %d \n", read().await().as<int>());
-
-    val res = read(remuxObject.used_input);
+    val res = read(buf_size, remuxObject.used_input);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
+    printf("readFunction buf_size: %d, buffer_size: %d \n", buf_size, buffer_size);
     if (buffer_size == 0) {
       return AVERROR_EOF;
     }
@@ -412,6 +348,7 @@ extern "C" {
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& write = remuxObject.write;
+    printf("writeFunction buf_size: %d \n", buf_size);
     write(
       static_cast<std::string>("data"),
       remuxObject.keyframe_index - 2,

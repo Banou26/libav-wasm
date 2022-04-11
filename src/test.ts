@@ -18,14 +18,15 @@ let libavInstance
 
 /** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
 enum SEEK_FLAG {
+  NONE = 0,
   /** seek backward */
-  AVSEEK_FLAG_BACKWARD = 1,
+  AVSEEK_FLAG_BACKWARD = 1 << 0,
   /** seeking based on position in bytes */
-  AVSEEK_FLAG_BYTE = 2,
+  AVSEEK_FLAG_BYTE = 1 << 1,
   /** seek to any frame, even non-keyframes */
-  AVSEEK_FLAG_ANY = 4,
+  AVSEEK_FLAG_ANY = 1 << 2,
   /** seeking based on frame number */
-  AVSEEK_FLAG_FRAME = 8
+  AVSEEK_FLAG_FRAME = 1 << 3
 }
 
 function equal (buf1, buf2)
@@ -106,27 +107,37 @@ const remux =
       return accumulate({ buffer, currentSize: newSize })
     }
 
+    const fullBuffer = await (await fetch('./video.mkv')).arrayBuffer()
     let { buffer: currentBuffer, done: initDone } = await accumulate()
     let readCount = 0
     let done = false
     let closed = false
     let seeking = false
+    let currentOffset = 0
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
       seek: (offset: number, flags: number) => {
-        console.log('JS seek', offset, flags)
-        return -1
+        // const result = -1
+        currentOffset = offset
+        const result = currentOffset
+        currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
+        readCount = 0
+        console.log(`JS seek offset:${offset} flags:${flags}, result:${result}`)
+        return result
       },
-      read: () => {
+      read: (bufferSize: number) => {
         const buffer =
           readCount === 0
             ? currentBuffer.slice(0, BUFFER_SIZE)
             : currentBuffer.slice(BUFFER_SIZE)
+        currentOffset += BUFFER_SIZE
         readCount++
         if (readCount === 2) {
+          currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
           readCount = 0
         }
+        console.log(`JS read bufferSize: ${bufferSize}, buffer:`, buffer)
         if (done || buffer.byteLength === 0) {
           done = true
           return {
@@ -134,19 +145,12 @@ const remux =
             size: 0
           }
         }
-        if (seeking) console.log('read', buffer)
         return {
           buffer,
           size: buffer.byteLength
         }
-        // const { buffer, currentSize: size } = await accumulate()
-        // return {
-        //   buffer,
-        //   size: size
-        // }
       },
       write: (type, keyframeIndex, size, offset, arrayBuffer) => {
-        if (seeking) console.log('callback', offset, size, arrayBuffer)
         const buffer = new Uint8Array(arrayBuffer.slice())
         chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
         if (done && !closed) {
@@ -171,21 +175,17 @@ const remux =
         if (!initDone) process()
         return
       }
-      const { buffer, done } = await accumulate()
-      currentBuffer = buffer
+      // currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset))
       remuxer.process(currentBuffer.byteLength)
       if (!done) process()
     }
 
     await process()
 
-    const fullBuffer = await (await fetch('./video.mkv')).arrayBuffer()
-
     return {
       seek: (timestamp: number, flags: SEEK_FLAG) => {
-        seeking = true
-        done = false
         currentBuffer = new Uint8Array(fullBuffer.slice(timestamp, timestamp + PUSH_ARRAY_SIZE))
+        console.log('JS SEEK TIMESTAMP', timestamp)
         remuxer.seek(timestamp, flags)
         remuxer.process(currentBuffer.byteLength)
       },
