@@ -114,6 +114,10 @@ const remux =
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
+      seek: (offset: number, flags: number) => {
+        console.log('JS seek', offset, flags)
+        return -1
+      },
       read: () => {
         const buffer =
           readCount === 0
@@ -141,7 +145,7 @@ const remux =
         //   size: size
         // }
       },
-      callback: (type, keyframeIndex, size, offset, arrayBuffer) => {
+      write: (type, keyframeIndex, size, offset, arrayBuffer) => {
         if (seeking) console.log('callback', offset, size, arrayBuffer)
         const buffer = new Uint8Array(arrayBuffer.slice())
         chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
@@ -388,8 +392,11 @@ fetch('./video.mkv')
       // if (i > 5) done = true
       if (done) {
 
-        console.log('set time')
-        seek(_chunks[150].offset, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+        console.log('set time', _chunks[150], chunks[150])
+        // seek(0, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+        seek(_chunks[10].offset, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+        // seek(_chunks[150].offset, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+        // seek(chunks[150].startTime, SEEK_FLAG.AVSEEK_FLAG_BYTE)
         // video.currentTime = 600
 
         // resultBuffer = resultBuffer.slice(0, processedBytes)

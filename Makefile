@@ -1,5 +1,6 @@
 	# -pthread \
 	# -s EXPORTED_FUNCTIONS="['_main', '_demux', '_initTransmux']" \
+	# -g4 --source-map-base http://localhost:1234/ \
 
 dist/libav-wasm.js:
 	mkdir -p dist && \

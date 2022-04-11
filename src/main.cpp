@@ -57,7 +57,6 @@ extern "C" {
     int used_input;
     int written_output = 0;
     int used_output_input;
-    val callback = val::undefined();
     int keyframe_index;
     int ret, i;
     int stream_index;
@@ -69,8 +68,10 @@ extern "C" {
     int buffer_size;
     int video_stream_index;
     bool seeking;
-    int64_t seeking_timestamp;
+    int64_t seeking_timestamp = -2;
     val read = val::undefined();
+    val write = val::undefined();
+    val seek = val::undefined();
 
     Remuxer(val options) {
       std::string hostStr = val::global("location")["host"].as<std::string>();
@@ -83,7 +84,8 @@ extern "C" {
       input_length = options["length"].as<int>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
-      callback = options["callback"];
+      write = options["write"];
+      seek = options["seek"];
     }
 
     void init () {
@@ -277,7 +279,7 @@ extern "C" {
       output_stream.seekg(0);
     }
 
-    int seek(int timestamp, int _flags) {
+    int _seek(int timestamp, int _flags) {
       printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), _flags);
       // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
       avio_flush(input_format_context->pb);
@@ -285,10 +287,13 @@ extern "C" {
       avio_flush(output_format_context->pb);
       avformat_flush(output_format_context);
       int flags = AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE;
-      int64_t offset = 5000000;
-      printf("av_seek_frame ???????? %d %lld %d \n", video_stream_index, offset, flags);
+      // int64_t offset = 0;
+      int64_t offset = timestamp;
+      // int64_t offset = timestamp * input_format_context->streams[video_stream_index]->time_base.den;
+      printf("av_seek_frame ???????? stream index: %d, offset: %lld, flags %d, timebase.den %d \n", video_stream_index, offset, flags, input_format_context->streams[video_stream_index]->time_base.den);
       seeking = true;
-      seeking_timestamp = (int64_t)timestamp;
+      seeking_timestamp = (int64_t)offset;
+      // seeking_timestamp = (int64_t)timestamp;
       used_input = (int)seeking_timestamp;
       processed_bytes = (int)seeking_timestamp;
       int res;
@@ -298,10 +303,23 @@ extern "C" {
       // }
       // printf("avio_seek res %d \n", res);
 
-      if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
-      // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BYTE)) < 0) {
         printf("av_seek_frame errored\n");
       }
+
+      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("av_seek_frame errored\n");
+      // }
+
+      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD)) < 0) {
+      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("av_seek_frame errored\n");
+      // }
+
+      // if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
+      //   printf("av_seek_frame errored\n");
+      // }
 
       // if ((res = av_seek_frame(input_format_context, -1, offset, 0)) < 0) {
       // // if ((res = av_seek_frame(input_format_context, video_stream_index, (int64_t)timestamp, AVSEEK_FLAG_BACKWARD & AVSEEK_FLAG_BYTE)) < 0) {
@@ -349,17 +367,25 @@ extern "C" {
   };
 
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
+    printf("seekFunction %lld | %d \n", offset, whence);
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
-    printf("seekFunction %d | %d, isSeeking: %d \n", offset, whence, remuxObject.seeking);
-    if (remuxObject.seeking) {
-      printf("seekFunction INNNNNNN %d | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
-      // remuxObject.seeking = false;
-      // return offset;
-      // return remuxObject.seeking_timestamp;
-      // return 0;
-      return offset;
-    }
-    return -1;
+    auto& seek = remuxObject.seek;
+    int result = seek((int)offset, whence).as<int>();
+    printf("seekFunction %lld | %d, isSeeking: %d, seekingTimestamp: %lld, result: %d \n", offset, whence, remuxObject.seeking, result);
+    return (int64_t)result;
+
+    // printf("seekFunction %lld | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
+    // // if (remuxObject.seeking) {
+    // if (remuxObject.seeking && remuxObject.seeking_timestamp == offset) {
+    //   printf("seekFunction INNNNNNN %lld | %d, isSeeking: %d, seekingTimestamp: %lld \n", offset, whence, remuxObject.seeking, remuxObject.seeking_timestamp);
+    //   // remuxObject.seeking = false;
+    //   // return offset;
+    //   // return remuxObject.seeking_timestamp;
+    //   // return 0;
+    //   return offset;
+    // }
+    // return offset;
+    // return -1;
   }
 
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
@@ -385,8 +411,8 @@ extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
-    auto& callback = remuxObject.callback;
-    callback(
+    auto& write = remuxObject.write;
+    write(
       static_cast<std::string>("data"),
       remuxObject.keyframe_index - 2,
       buf_size,
@@ -422,7 +448,7 @@ extern "C" {
       .function("close", &Remuxer::close)
       .function("clearInput", &Remuxer::clearInput)
       .function("clearOutput", &Remuxer::clearOutput)
-      .function("seek", &Remuxer::seek)
+      .function("seek", &Remuxer::_seek)
       .function("getInfo", &Remuxer::getInfo)
       .function("getInt8Array", &Remuxer::getInt8Array)
       ;
