@@ -72,6 +72,7 @@ extern "C" {
     val read = val::undefined();
     val write = val::undefined();
     val seek = val::undefined();
+    bool done = false;
 
     Remuxer(val options) {
       std::string hostStr = val::global("location")["host"].as<std::string>();
@@ -196,7 +197,6 @@ extern "C" {
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
-      AVCodecContext* pCodecContext;
 
       bool is_first_chunk = used_input == buffer_size;
       bool is_last_chunk = used_input + buffer_size >= input_length;
@@ -217,32 +217,27 @@ extern "C" {
           keyframe_pts = packet->pts;
           keyframe_pos = packet->pos;
         }
-
+        if (input_length <= packet->pos) {
+          break;
+        }
         // todo: try using av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base)
-
-        // todo: check if https://stackoverflow.com/questions/64547604/libavformat-ffmpeg-muxing-into-mp4-with-avformatcontext-drops-the-final-frame could help with the last frames
-        // packet->pos = -1;
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           break;
         }
         av_packet_unref(packet);
+        if (!is_last_chunk && used_input + buffer_size > processed_bytes) {
+          break;
+        }
       }
 
-      char buf[1024];
-      av_strerror(res, buf, sizeof(buf));
-      printf("av_read_frame res %d %s \n", res, buf);
-
-      if (res == AVERROR_EOF) {
-      // if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
+      // if (res == AVERROR_EOF) {
+      if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
+        printf("process call, GONNA WRITE TRAILER processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
         keyframe_index -= 1;
+        done = true;
         av_write_trailer(output_format_context);
-        // av_packet_free(&packet);
-        printf("process av_write_trailer \n");
-        // avformat_free_context(input_format_context);
-        // avformat_free_context(output_format_context);
-        // avio_close(avioContext);
-        // avio_close(avioContext2);
+        printf("process call, WRITE TRAILER processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
       }
     }
 
@@ -276,49 +271,24 @@ extern "C" {
     }
 
     int _seek(int timestamp, int flags) {
-      printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), flags);
-      // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
-      // avio_flush(input_format_context->pb);
-      // avformat_flush(input_format_context);
-      // avio_flush(output_format_context->pb);
-      // avformat_flush(output_format_context);
-      int64_t offset = timestamp;
-      printf("av_seek_frame ???????? stream index: %d, offset: %lld, flags %d, timebase.den %d \n", video_stream_index, offset, flags, input_format_context->streams[video_stream_index]->time_base.den);
-      // seeking = true;
-      // seeking_timestamp = (int64_t)offset;
-      // // seeking_timestamp = (int64_t)timestamp;
-      // used_input = (int)seeking_timestamp;
-      // processed_bytes = (int)seeking_timestamp;
-      // close();
-      // init();
       int res;
-      if ((res = av_seek_frame(input_format_context, video_stream_index, offset, flags)) < 0) {
+      if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("av_seek_frame errored\n");
       }
-      // avio_flush(input_format_context->pb);
-      // avformat_flush(input_format_context);
-      // avio_flush(output_format_context->pb);
-      // avformat_flush(output_format_context);
-      // avcodec_flush_buffers()
-      printf("av_seek_frame res %d \n", res);
       AVPacket* packet = av_packet_alloc();
       res = av_read_frame(input_format_context, packet);
       char buf[1024];
       av_strerror(res, buf, sizeof(buf));
       printf("av_read_frame res %d %s \n", res, buf);
-      printf("av_read_frame packet->pos %lld \n", packet->pos);
       av_packet_unref(packet);
       return 0;
     }
 
     void close () {
-      printf("CLOSE\n");
-      avformat_free_context(input_format_context);
-      avformat_free_context(output_format_context);
+      // avformat_free_context(input_format_context);
+      // avformat_free_context(output_format_context);
       // avio_close(avioContext);
       // avio_close(avioContext2);
-      printf("CLOSE LASTCHUNK END FREE CONTEXTS \n");
-      // av_write_trailer(output_format_context);
     }
 
     void push(std::string buf) {
@@ -350,7 +320,6 @@ extern "C" {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& read = remuxObject.read;
     val res = read(buf_size, remuxObject.used_input);
-    // emscripten_sleep(200);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
@@ -378,7 +347,8 @@ extern "C" {
         )
       ),
       remuxObject.keyframe_pts,
-      remuxObject.keyframe_pos
+      remuxObject.keyframe_pos,
+      remuxObject.done
     );
     remuxObject.written_output += buf_size;
     return buf_size;
