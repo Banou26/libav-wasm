@@ -29,6 +29,13 @@ enum SEEK_FLAG {
   AVSEEK_FLAG_FRAME = 1 << 3
 }
 
+enum SEEK_WHENCE_FLAG {
+  SEEK_SET = 0,
+  SEEK_CUR = 1 << 0,
+  SEEK_END = 1 << 1,
+  AVSEEK_SIZE = 1 << 16 //0x10000,
+}
+
 function equal (buf1, buf2)
 {
     if (buf1.byteLength != buf2.byteLength) {
@@ -79,7 +86,7 @@ const remux =
     })
     const chunks = []
     console.log('libav', libav)
-
+    const view = new Int32Array(libav.HEAP32.buffer);
     let leftOverData: Uint8Array
     const accumulate = async ({ buffer = new Uint8Array(PUSH_ARRAY_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
       const { value: newBuffer, done } = await reader.read()
@@ -114,30 +121,53 @@ const remux =
     let closed = false
     let seeking = false
     let currentOffset = 0
+    let inited = false
+    let lastKeyframeIndex
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
-      seek: (offset: number, flags: number) => {
+      // https://gist.github.com/AlexVestin/15b90d72f51ff7521cd7ce4b70056dff#file-avio_write-c-L51
+      seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
+        // if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
+        //   bd->ptr = bd->buf + offset;
+        //   return bd->ptr;
+        // }
+        // if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
+        //   bd->ptr += offset;
+        //   return 1
+        // }
+        // if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
+        //   bd->ptr = (bd->buf + bd->size) + offset;
+        //   return bd->ptr;
+        // }
+        if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
+          console.log(`JS seek offset:${offset} whence:${whence}, result:${size}`)
+          return size;
+        }
+        // return -1
+
+        // if (!inited) return -1
         // const result = -1
         currentOffset = offset
         const result = currentOffset
         currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
         readCount = 0
-        console.log(`JS seek offset:${offset} flags:${flags}, result:${result}`)
+        console.log(`JS seek offset:${offset} whence:${whence}, result:${result}`)
         return result
       },
       read: (bufferSize: number) => {
-        const buffer =
-          readCount === 0
-            ? currentBuffer.slice(0, BUFFER_SIZE)
-            : currentBuffer.slice(BUFFER_SIZE)
+        // const buffer =
+        //   readCount === 0
+        //     ? currentBuffer.slice(0, BUFFER_SIZE)
+        //     : currentBuffer.slice(BUFFER_SIZE)
+        const buffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + BUFFER_SIZE))
+        console.log(`JS read currentOffset: ${currentOffset}, bufferSize: ${bufferSize}, buffer:`, buffer)
         currentOffset += BUFFER_SIZE
         readCount++
-        if (readCount === 2) {
-          currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
-          readCount = 0
-        }
-        console.log(`JS read bufferSize: ${bufferSize}, buffer:`, buffer)
+        // if (readCount === 2) {
+        //   currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
+        //   readCount = 0
+        // }
         if (done || buffer.byteLength === 0) {
           done = true
           return {
@@ -150,9 +180,19 @@ const remux =
           size: buffer.byteLength
         }
       },
-      write: (type, keyframeIndex, size, offset, arrayBuffer) => {
+      write: (type, keyframeIndex, size, offset, arrayBuffer, keyframePts, keyframePos) => {
         const buffer = new Uint8Array(arrayBuffer.slice())
-        chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer })
+        chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer, pts: keyframePts, pos: keyframePos })
+        if (keyframeIndex === 185) {
+          closed = true
+          controller.enqueue(buffer)
+          controller.close()
+        }
+        // if (keyframeIndex <= lastKeyframeIndex) {
+        //   console.log('END')
+        // }
+        console.log('write', lastKeyframeIndex, keyframeIndex)
+        lastKeyframeIndex = keyframeIndex
         if (done && !closed) {
           closed = true
           controller.enqueue(buffer)
@@ -166,20 +206,33 @@ const remux =
     const headerChunks = chunks.splice(0, chunks.length)
     console.log('LIBAV headerChunks', headerChunks)
     console.log('LIBAV chunks', chunks)
-
+    let initialProcess = true
     const process = async () => {
       readCount = 0
-      if (!chunks.length) {
-        readCount = 1
-        remuxer.process(currentBuffer.byteLength)
-        if (!initDone) process()
-        return
-      }
-      // currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset))
+      // if (initialProcess) {
+      //   initialProcess = false
+      // if (!chunks.length) {
+      //   readCount = 1
+      //   console.log(`initial JS process currentOffset:${currentOffset} currentBuffer:`, currentBuffer)
+      //   remuxer.process(currentBuffer.byteLength)
+      //   if (!initDone) process()
+      //   inited = true
+      //   return
+      // }
+      currentBuffer = new Uint8Array(fullBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
+      console.log(`JS process currentOffset:${currentOffset} currentBuffer:`, currentBuffer)
       remuxer.process(currentBuffer.byteLength)
-      if (!done) process()
+      // if (!done) process()
     }
 
+    // await process()
+    currentOffset = 12023460
+    remuxer.seek(41334, 0)
+    // keyframeIndex: 10
+    // offset: 12023460
+    // pos: 13429699
+    // pts: 41334
+    // size: 1195321
     await process()
 
     return {
@@ -187,7 +240,7 @@ const remux =
         currentBuffer = new Uint8Array(fullBuffer.slice(timestamp, timestamp + PUSH_ARRAY_SIZE))
         console.log('JS SEEK TIMESTAMP', timestamp)
         remuxer.seek(timestamp, flags)
-        remuxer.process(currentBuffer.byteLength)
+        // remuxer.process(currentBuffer.byteLength)
       },
       headerChunks,
       chunks,
@@ -391,13 +444,16 @@ fetch('./video.mkv')
       // console.log('arrayBuffer', arrayBuffer)
       // if (i > 5) done = true
       if (done) {
-
-        console.log('set time', _chunks[150], chunks[150])
-        // seek(0, SEEK_FLAG.AVSEEK_FLAG_BYTE)
-        seek(_chunks[10].offset, SEEK_FLAG.AVSEEK_FLAG_BYTE)
-        // seek(_chunks[150].offset, SEEK_FLAG.AVSEEK_FLAG_BYTE)
-        // seek(chunks[150].startTime, SEEK_FLAG.AVSEEK_FLAG_BYTE)
-        // video.currentTime = 600
+        setTimeout(() => {
+          const i = 10
+          console.log('set time', _chunks[i], chunks[i])
+          // seek(0, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+          // seek(_chunks[10].pos, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+          seek(_chunks[i].pos, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+          // seek(_chunks[150].offset, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+          // seek(chunks[150].startTime, SEEK_FLAG.AVSEEK_FLAG_BYTE)
+          // video.currentTime = 600
+        }, 1000)
 
         // resultBuffer = resultBuffer.slice(0, processedBytes)
         const el = document.createElement('div')

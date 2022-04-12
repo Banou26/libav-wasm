@@ -44,13 +44,11 @@ extern "C" {
   static int64_t seekFunction(void* opaque, int64_t offset, int whence);
 
   class Remuxer {
-  private:
+  public:
     AVIOContext* avioContext;
     AVIOContext* avioContext2;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
-
-  public:
     std::stringstream input_stream;
     std::stringstream output_stream;
     std::stringstream output_input_stream;
@@ -58,6 +56,8 @@ extern "C" {
     int written_output = 0;
     int used_output_input;
     int keyframe_index;
+    int keyframe_pts;
+    int keyframe_pos;
     int ret, i;
     int stream_index;
     int *streams_list;
@@ -214,6 +214,8 @@ extern "C" {
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           keyframe_index += 1;
+          keyframe_pts = packet->pts;
+          keyframe_pos = packet->pos;
         }
 
         // todo: try using av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base)
@@ -221,28 +223,22 @@ extern "C" {
         // todo: check if https://stackoverflow.com/questions/64547604/libavformat-ffmpeg-muxing-into-mp4-with-avformatcontext-drops-the-final-frame could help with the last frames
         // packet->pos = -1;
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-
-        if (input_length <= packet->pos) {
-          break;
-        }
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           break;
         }
         av_packet_unref(packet);
-
-        if (!is_last_chunk && used_input + buffer_size > processed_bytes) {
-          break;
-        }
       }
 
       char buf[1024];
       av_strerror(res, buf, sizeof(buf));
       printf("av_read_frame res %d %s \n", res, buf);
 
-      if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
+      if (res == AVERROR_EOF) {
+      // if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
         keyframe_index -= 1;
         av_write_trailer(output_format_context);
         // av_packet_free(&packet);
+        printf("process av_write_trailer \n");
         // avformat_free_context(input_format_context);
         // avformat_free_context(output_format_context);
         // avio_close(avioContext);
@@ -282,26 +278,46 @@ extern "C" {
     int _seek(int timestamp, int flags) {
       printf("seek %d %lld %d \n", timestamp, (int64_t)(timestamp), flags);
       // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gaa03a82c5fd4fe3af312d229ca94cd6f3
-      avio_flush(input_format_context->pb);
-      avformat_flush(input_format_context);
-      avio_flush(output_format_context->pb);
-      avformat_flush(output_format_context);
+      // avio_flush(input_format_context->pb);
+      // avformat_flush(input_format_context);
+      // avio_flush(output_format_context->pb);
+      // avformat_flush(output_format_context);
       int64_t offset = timestamp;
       printf("av_seek_frame ???????? stream index: %d, offset: %lld, flags %d, timebase.den %d \n", video_stream_index, offset, flags, input_format_context->streams[video_stream_index]->time_base.den);
-      seeking = true;
-      seeking_timestamp = (int64_t)offset;
-      // seeking_timestamp = (int64_t)timestamp;
-      used_input = (int)seeking_timestamp;
-      processed_bytes = (int)seeking_timestamp;
+      // seeking = true;
+      // seeking_timestamp = (int64_t)offset;
+      // // seeking_timestamp = (int64_t)timestamp;
+      // used_input = (int)seeking_timestamp;
+      // processed_bytes = (int)seeking_timestamp;
+      // close();
+      // init();
       int res;
-      if ((res = av_seek_frame(input_format_context, video_stream_index, offset, AVSEEK_FLAG_BYTE)) < 0) {
+      if ((res = av_seek_frame(input_format_context, video_stream_index, offset, flags)) < 0) {
         printf("av_seek_frame errored\n");
       }
+      // avio_flush(input_format_context->pb);
+      // avformat_flush(input_format_context);
+      // avio_flush(output_format_context->pb);
+      // avformat_flush(output_format_context);
+      // avcodec_flush_buffers()
       printf("av_seek_frame res %d \n", res);
+      AVPacket* packet = av_packet_alloc();
+      res = av_read_frame(input_format_context, packet);
+      char buf[1024];
+      av_strerror(res, buf, sizeof(buf));
+      printf("av_read_frame res %d %s \n", res, buf);
+      printf("av_read_frame packet->pos %lld \n", packet->pos);
+      av_packet_unref(packet);
       return 0;
     }
 
     void close () {
+      printf("CLOSE\n");
+      avformat_free_context(input_format_context);
+      avformat_free_context(output_format_context);
+      // avio_close(avioContext);
+      // avio_close(avioContext2);
+      printf("CLOSE LASTCHUNK END FREE CONTEXTS \n");
       // av_write_trailer(output_format_context);
     }
 
@@ -324,7 +340,7 @@ extern "C" {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& seek = remuxObject.seek;
     auto result = seek((int)offset, whence).as<long>();
-    printf("seekFunction offset: %lld, flags: %d, result: %d\n", offset, whence, result);
+    // printf("seekFunction offset: %lld, flags: %d, result: %d\n", offset, whence, result);
     return result;
   }
 
@@ -334,11 +350,12 @@ extern "C" {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& read = remuxObject.read;
     val res = read(buf_size, remuxObject.used_input);
+    // emscripten_sleep(200);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
-    printf("readFunction buf_size: %d, buffer_size: %d \n", buf_size, buffer_size);
+    // printf("readFunction buf_size: %d, buffer_size: %d \n", buf_size, buffer_size);
     if (buffer_size == 0) {
       return AVERROR_EOF;
     }
@@ -348,7 +365,7 @@ extern "C" {
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     auto& write = remuxObject.write;
-    printf("writeFunction buf_size: %d \n", buf_size);
+    // printf("writeFunction buf_size: %d \n", buf_size);
     write(
       static_cast<std::string>("data"),
       remuxObject.keyframe_index - 2,
@@ -359,7 +376,9 @@ extern "C" {
           buf_size,
           buf
         )
-      )
+      ),
+      remuxObject.keyframe_pts,
+      remuxObject.keyframe_pos
     );
     remuxObject.written_output += buf_size;
     return buf_size;
