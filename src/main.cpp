@@ -28,7 +28,7 @@ int main() {
 typedef struct MediaInfoObject {
   std::string formatName;
   std::string mimeType;
-  int duration;
+  double duration;
 } MediaInfoObject;
 
 typedef struct InfoObject {
@@ -193,7 +193,7 @@ extern "C" {
 
     void process(int size) {
       processed_bytes += size;
-      printf("process call, processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
+      // printf("process call, processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
@@ -233,11 +233,9 @@ extern "C" {
 
       // if (res == AVERROR_EOF) {
       if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
-        printf("process call, GONNA WRITE TRAILER processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
         keyframe_index -= 1;
         done = true;
         av_write_trailer(output_format_context);
-        printf("process call, WRITE TRAILER processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
       }
     }
 
@@ -246,12 +244,12 @@ extern "C" {
         .input = {
           .formatName = input_format_context->iformat->name,
           .mimeType = input_format_context->iformat->mime_type,
-          .duration = (int)input_format_context->duration
+          .duration = static_cast<double>(input_format_context->duration)
         },
         .output = {
           .formatName = output_format_context->oformat->name,
           .mimeType = output_format_context->oformat->mime_type,
-          .duration = (int)output_format_context->duration
+          .duration = static_cast<double>(output_format_context->duration)
         }
       };
     }
@@ -376,7 +374,6 @@ extern "C" {
       .function("clearOutput", &Remuxer::clearOutput)
       .function("seek", &Remuxer::_seek)
       .function("getInfo", &Remuxer::getInfo)
-      .function("getInt8Array", &Remuxer::getInt8Array)
-      ;
+      .function("getInt8Array", &Remuxer::getInt8Array);
   }
 }
