@@ -50,8 +50,8 @@ export type Info = {
 }
 
 export type RemuxResponse = {
-  headerChunks,
-  chunks,
+  // headerChunks,
+  // chunks,
   stream: ReadableStream<Uint8Array>,
   info: Info
 }
@@ -76,7 +76,6 @@ export const remux =
         controller
       ])
     })
-    const chunks = []
     let leftOverData: Uint8Array
     const accumulate = async ({ buffer = new Uint8Array(PUSH_ARRAY_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
       const { value: newBuffer, done } = await reader.read()
@@ -108,6 +107,9 @@ export const remux =
     let readCount = 0
     let closed = false
     let currentOffset = 0
+    const headerChunks = []
+    const chunks = []
+    let headerChunkEnqueued = false
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
@@ -154,22 +156,39 @@ export const remux =
       },
       write: (type, keyframeIndex, size, offset, arrayBuffer, keyframePts, keyframePos, done) => {
         const buffer = new Uint8Array(arrayBuffer.slice())
-        chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer, pts: keyframePts, pos: keyframePos, done })
+        if (keyframeIndex < 0) {
+          headerChunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer, pts: keyframePts, pos: keyframePos, done })
+          return
+        } else {
+          // chunks.push({ keyframeIndex, size, offset, arrayBuffer: undefined, pts: keyframePts, pos: keyframePos, done })
+        }
         if (closed) return
         if (done) {
           closed = true
           if (buffer.byteLength) controller.enqueue(buffer)
           controller.close()
         } else {
+          if (!headerChunkEnqueued) {
+            const headerChunk = new Uint8Array(headerChunks.map(chunk => chunk.arrayBuffer.byteLength).reduce((acc, length) => acc + length, 0))
+            let currentSize = 0
+            for (const chunk of headerChunks) {
+              headerChunk.set(chunk.arrayBuffer, currentSize)
+              currentSize += chunk.arrayBuffer.byteLength
+            }
+            controller.enqueue(headerChunk)
+            headerChunkEnqueued = true
+            headerChunks.splice(0, headerChunks.length)
+          }
           controller.enqueue(buffer)
         }
       }
     })
     remuxer.init()
-    const headerChunks = chunks.splice(0, chunks.length)
+    
+    // const headerChunks = chunks.splice(0, chunks.length).map((chunk, i) => ({ ...chunk, keyframeIndex: i }))
     const process = async () => {
       readCount = 0
-      if (!chunks.length) {
+      if (!headerChunkEnqueued) {
         readCount = 1
         remuxer.process(currentBuffer.byteLength)
         if (!initDone) process()
@@ -192,8 +211,9 @@ export const remux =
       //   // remuxer.seek(timestamp, flags)
       //   // remuxer.process(currentBuffer.byteLength)
       // },
-      headerChunks,
-      chunks,
+      // headerChunk,
+      // headerChunks,
+      // chunks,
       stream: resultStream,
       info: {
         input: {
