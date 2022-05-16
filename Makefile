@@ -9,8 +9,8 @@ dist/libav-wasm.js:
 	-O3 \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
-	-s INITIAL_MEMORY=40mb \
-	-s TOTAL_MEMORY=45mb \
+	-s INITIAL_MEMORY=150mb \
+	-s TOTAL_MEMORY=125mb \
 	-s TOTAL_STACK=5mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
