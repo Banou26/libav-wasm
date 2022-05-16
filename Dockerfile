@@ -1,6 +1,6 @@
 FROM emscripten/emsdk:3.1.8 as build
 
-ARG FFMPEG_VERSION=4.3.1
+ARG FFMPEG_VERSION=5.0.1
 ARG X264_VERSION=20170226-2245-stable
 
 ARG PREFIX=/opt/ffmpeg

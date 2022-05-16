@@ -139,7 +139,7 @@ extern "C" {
       output_format_context->pb = avioContext2;
 
       number_of_streams = input_format_context->nb_streams;
-      streams_list = (int *)av_mallocz_array(number_of_streams, sizeof(*streams_list));
+      streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
 
       if (!streams_list) {
         res = AVERROR(ENOMEM);

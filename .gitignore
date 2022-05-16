@@ -1,6 +1,6 @@
 .parcel-cache
 dist
 emscripten
-ffmpeg-4.3.1
+FFmpeg
 node_modules
 video.mkv
