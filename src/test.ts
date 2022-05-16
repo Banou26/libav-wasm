@@ -11,7 +11,7 @@ interface Chunk {
   buffered: boolean
 }
 
-const BUFFER_SIZE = 5_000_000
+const BUFFER_SIZE = 10_000_000
 const PUSH_ARRAY_SIZE = BUFFER_SIZE * 2 // 10_000_000
 
 let libavInstance
