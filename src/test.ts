@@ -74,6 +74,7 @@ const remux =
   ) => {
     const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
     const reader = stream.getReader()
+    // todo: replace this with a stream that handles backpressure
     const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
       let controller
       resolve([
