@@ -56,6 +56,8 @@ export type RemuxResponse = {
   info: Info
 }
 
+// todo: currently fix issue with wrong DTS: happening on https://dev.fkn.app/app/616331fa7b57db93f0957a18/watch/mal:50265/mal:50265-1/nyaa:1512518
+
 // todo: reimplement this into a ReadableByteStream https://web.dev/streams/ once FF gets support
 // todo: impl the mime generator from https://developer.mozilla.org/en-US/docs/Web/Media/Formats/codecs_parameter | https://superuser.com/questions/1494831/extract-mime-type-codecs-for-mediasource-using-ffprobe#comment2431440_1494831
 export const remux =
