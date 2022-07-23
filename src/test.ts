@@ -125,6 +125,7 @@ const remux =
       seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
         // prevent seeking for now, once i wanna retry re-implementing seeking i can remove it then
         // maybe https://stackoverflow.com/a/17213878 could be of big help if i manage to unstuck libav from the end of file status
+        console.log('seek', offset, whence)
         return -1
 
         // if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
@@ -178,6 +179,7 @@ const remux =
     remuxer.init()
     const headerChunks = chunks.splice(0, chunks.length)
     const process = async () => {
+      console.log('process')
       readCount = 0
       if (!chunks.length) {
         readCount = 1
@@ -207,7 +209,8 @@ const remux =
     }
   }
 
-fetch('./video2.mkv')
+fetch('./wrong-dts-2.mkv')
+// fetch('./video15.mkv')
   .then(async ({ headers, body }) => {
     const stream2 = body
     // const [stream1, stream2] = body.tee()
@@ -528,7 +531,7 @@ fetch('./video2.mkv')
     // }, 10)
 
     const updateBufferTime = 250
-
+    console.log('sourceBuffer', sourceBuffer)
     let currentSeek
     const myEfficientFn = throttle(async () => {
       const { currentTime } = video
@@ -583,8 +586,30 @@ fetch('./video2.mkv')
       }
     }, updateBufferTime)
 
-    video.addEventListener('waiting', (...args) => {
-      console.log('waiting', chunks)
+    video.addEventListener('waiting', async (...args) => {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      console.log('waiting', chunks, sourceBuffer)
+      const { currentTime } = video
+      const getBufferedRanges = async () => {
+        const ranges = getTimeRanges()
+        const filteredRanges = ranges
+          .filter(({ start, end }) =>
+              currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > start && currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > end ||
+              currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < start && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < end
+            )
+        console.log('getBufferedRanges ranges', ranges, currentTime, filteredRanges)
+        if (ranges.length) {
+          return ranges
+        }
+        await new Promise(resolve => setTimeout(resolve, 250))
+        return getBufferedRanges()
+      }
+      const bufferedRanges = await getBufferedRanges()
+      console.log('waiting', bufferedRanges, removeRange)
+      for (const range of bufferedRanges.slice(1)) {
+        console.log('REMOVING RANGE', range)
+        await removeRange(range)
+      }
       setTimeout(async () => {
         myEfficientFn(...args)
       }, updateBufferTime)
