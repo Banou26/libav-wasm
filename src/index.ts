@@ -66,9 +66,17 @@ function bufferStreamChunksToSize(stream: ReadableStream<Uint8Array>, DEFAULT_CH
       let position = 0
       const buffer = new Uint8Array(DEFAULT_CHUNK_SIZE)
       if (bufferLeft) {
-        buffer.set(bufferLeft, 0)
-        position = position + bufferLeft.byteLength
-        bufferLeft = undefined
+        if (bufferLeft.byteLength > buffer.byteLength) {
+          buffer.set(bufferLeft.slice(0, buffer.byteLength))
+          position += buffer.byteLength
+          bufferLeft = bufferLeft.slice(buffer.byteLength)
+          controller.enqueue(buffer)
+          return
+        } else {
+          buffer.set(bufferLeft)
+          position += bufferLeft.byteLength
+          bufferLeft = undefined
+        }
       }
       while (position !== DEFAULT_CHUNK_SIZE) {
         const { value, done } = await reader.read()
@@ -80,7 +88,7 @@ function bufferStreamChunksToSize(stream: ReadableStream<Uint8Array>, DEFAULT_CH
           buffer.set(value.slice(0, neededLength), position)
           if (value.byteLength > neededLength) bufferLeft = value.slice(neededLength)
           else bufferLeft = undefined
-          position = position + neededLength
+          position += neededLength
         }
       }
       controller.enqueue(buffer)
