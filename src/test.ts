@@ -63,8 +63,79 @@ var _appendBuffer = function(buffer1, buffer2) {
   return tmp.buffer;
 };
 
-// console.log('BUFFER EQ', equal)
+// function readableDefaultStreamToReadableByteStream(stream: ReadableStream<Uint8Array>, DEFAULT_CHUNK_SIZE = BUFFER_SIZE) {
+//   let reader: ReadableStreamReader<Uint8Array> = stream.getReader()
+//   return new ReadableStream({
+//     type: 'bytes',
+//     start(controller) {
+//       console.log('controller', controller.desiredSize)
+//     },
+//     async pull(controller) {
+//       let position = 0
+//       let bufferLeft
+//       const view = controller.byobRequest.view as unknown as DataView;
+//       const buffer = view.buffer
+//       while (position !== DEFAULT_CHUNK_SIZE) {
+//         const { value, done } = await reader.read()
 
+//         if (done) {
+//           controller.close()
+//           if (bufferLeft) {
+//             controller.byobRequest.respond(bufferLeft.byteLength)
+//           }
+//           controller.byobRequest.respond(0)
+//         } else {
+//           const neededLength = position - Math.min(position + value.byteLength, DEFAULT_CHUNK_SIZE)
+//           view.
+//           buffer.set(value.slice(0, neededLength))
+//           if (value.byteLength > bufferLeft) bufferLeft = value.slice(bufferLeft)
+//           else bufferLeft = undefined
+//           position = position + neededLength
+//         }
+//       }
+//       controller.byobRequest.respond(buffer.byteLength)
+//     },
+//     cancel(reason) {
+//       return stream.cancel(reason)
+//     },
+//     autoAllocateChunkSize: DEFAULT_CHUNK_SIZE
+//   })
+// }
+
+// todo: update types once typescript supports bytestreams again https://github.com/microsoft/TypeScript-DOM-lib-generator/pull/1362
+// todo: make this a BYOB stream to improve perf
+function bufferStreamChunksToSize(stream: ReadableStream<Uint8Array>, DEFAULT_CHUNK_SIZE = PUSH_ARRAY_SIZE) {
+  let reader: ReadableStreamReader<Uint8Array> = stream.getReader()
+  let bufferLeft: Uint8Array | undefined
+  return new ReadableStream({
+    async pull(controller) {
+      let position = 0
+      const buffer = new Uint8Array(DEFAULT_CHUNK_SIZE)
+      if (bufferLeft) {
+        buffer.set(bufferLeft, 0)
+        position = position + bufferLeft.byteLength
+        bufferLeft = undefined
+      }
+      while (position !== DEFAULT_CHUNK_SIZE) {
+        const { value, done } = await reader.read()
+        if (done) {
+          if (bufferLeft) controller.enqueue(bufferLeft)
+          controller.close()
+        } else {
+          const neededLength = Math.min(DEFAULT_CHUNK_SIZE - position, value.byteLength)
+          buffer.set(value.slice(0, neededLength), position)
+          if (value.byteLength > neededLength) bufferLeft = value.slice(neededLength)
+          else bufferLeft = undefined
+          position = position + neededLength
+        }
+      }
+      controller.enqueue(buffer)
+    },
+    cancel(reason) {
+      return stream.cancel(reason)
+    }
+  })
+}
 
 // todo: impl the mime generator from https://developer.mozilla.org/en-US/docs/Web/Media/Formats/codecs_parameter | https://superuser.com/questions/1494831/extract-mime-type-codecs-for-mediasource-using-ffprobe#comment2431440_1494831
 const remux =
@@ -73,7 +144,8 @@ const remux =
     { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
     const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
-    const reader = stream.getReader()
+    const sizedChunksStream = bufferStreamChunksToSize(stream, PUSH_ARRAY_SIZE)
+    const reader = sizedChunksStream.getReader()
     // todo: replace this with a stream that handles backpressure
     const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
       let controller
@@ -87,34 +159,7 @@ const remux =
       ])
     })
     const chunks = []
-    let leftOverData: Uint8Array
-    const accumulate = async ({ buffer = new Uint8Array(PUSH_ARRAY_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
-      const { value: newBuffer, done } = await reader.read()
-
-      if (currentSize === 0 && leftOverData) {
-        buffer.set(leftOverData)
-        currentSize += leftOverData.byteLength
-        leftOverData = undefined
-      }
-
-      if (done) {
-        return { buffer: buffer.slice(0, currentSize), currentSize, done }
-      }
-
-      let newSize
-      const slicedBuffer = newBuffer.slice(0, PUSH_ARRAY_SIZE - currentSize)
-      newSize = currentSize + slicedBuffer.byteLength
-      buffer.set(slicedBuffer, currentSize)
-
-      if (newSize === PUSH_ARRAY_SIZE) {
-        leftOverData = newBuffer.slice(PUSH_ARRAY_SIZE - currentSize)
-        return { buffer, currentSize: newSize, done: false }
-      }
-      
-      return accumulate({ buffer, currentSize: newSize })
-    }
-
-    let { buffer: currentBuffer, done: initDone } = await accumulate()
+    let { value: currentBuffer, done: initDone } = await reader.read()
     let readCount = 0
     let closed = false
     let currentOffset = 0
@@ -187,7 +232,7 @@ const remux =
         if (!initDone) process()
         return
       }
-      const { buffer, done } = await accumulate()
+      const { value: buffer, done } = await reader.read()
       currentBuffer = new Uint8Array(buffer)
       remuxer.process(currentBuffer.byteLength)
       if (!done) process()
@@ -209,7 +254,8 @@ const remux =
     }
   }
 
-fetch('./wrong-dts-2.mkv')
+fetch('./fucked-subtitles-and-FF-playback.mkv')
+// fetch('./wrong-dts-2.mkv')
 // fetch('./video15.mkv')
   .then(async ({ headers, body }) => {
     const stream2 = body

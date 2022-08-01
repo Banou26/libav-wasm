@@ -56,6 +56,41 @@ export type RemuxResponse = {
   info: Info
 }
 
+// todo: update types once typescript supports bytestreams again https://github.com/microsoft/TypeScript-DOM-lib-generator/pull/1362
+// todo: make this a BYOB stream to improve perf
+function bufferStreamChunksToSize(stream: ReadableStream<Uint8Array>, DEFAULT_CHUNK_SIZE = PUSH_ARRAY_SIZE) {
+  let reader: ReadableStreamReader<Uint8Array> = stream.getReader()
+  let bufferLeft: Uint8Array | undefined
+  return new ReadableStream({
+    async pull(controller) {
+      let position = 0
+      const buffer = new Uint8Array(DEFAULT_CHUNK_SIZE)
+      if (bufferLeft) {
+        buffer.set(bufferLeft, 0)
+        position = position + bufferLeft.byteLength
+        bufferLeft = undefined
+      }
+      while (position !== DEFAULT_CHUNK_SIZE) {
+        const { value, done } = await reader.read()
+        if (done) {
+          if (bufferLeft) controller.enqueue(bufferLeft)
+          controller.close()
+        } else {
+          const neededLength = Math.min(DEFAULT_CHUNK_SIZE - position, value.byteLength)
+          buffer.set(value.slice(0, neededLength), position)
+          if (value.byteLength > neededLength) bufferLeft = value.slice(neededLength)
+          else bufferLeft = undefined
+          position = position + neededLength
+        }
+      }
+      controller.enqueue(buffer)
+    },
+    cancel(reason) {
+      return stream.cancel(reason)
+    }
+  })
+}
+
 // todo: currently fix issue with wrong DTS: happening on https://dev.fkn.app/app/616331fa7b57db93f0957a18/watch/mal:50265/mal:50265-1/nyaa:1512518 or http://localhost:1234/app/616331fa7b57db93f0957a18/title/mal:48895/mal:48895-3
 // for this issue, looking at the timestamp correction code in https://github.com/FFmpeg/FFmpeg/blob/master/fftools/ffmpeg.c#L1858 & https://github.com/FFmpeg/FFmpeg/blob/master/fftools/ffmpeg.c#L3914 could be useful
 // also maybe https://github.com/mpv-player/mpv/issues/7524
@@ -68,7 +103,8 @@ export const remux =
     { size: number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ): Promise<RemuxResponse> => {
     const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
-    const reader = stream.getReader()
+    const sizedChunksStream = bufferStreamChunksToSize(stream, PUSH_ARRAY_SIZE)
+    const reader = sizedChunksStream.getReader()
     const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
       let controller
       resolve([
@@ -80,34 +116,8 @@ export const remux =
         controller
       ])
     })
-    let leftOverData: Uint8Array
-    const accumulate = async ({ buffer = new Uint8Array(PUSH_ARRAY_SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
-      const { value: newBuffer, done } = await reader.read()
 
-      if (currentSize === 0 && leftOverData) {
-        buffer.set(leftOverData)
-        currentSize += leftOverData.byteLength
-        leftOverData = undefined
-      }
-
-      if (done) {
-        return { buffer: buffer.slice(0, currentSize), currentSize, done }
-      }
-
-      let newSize
-      const slicedBuffer = newBuffer.slice(0, PUSH_ARRAY_SIZE - currentSize)
-      newSize = currentSize + slicedBuffer.byteLength
-      buffer.set(slicedBuffer, currentSize)
-
-      if (newSize === PUSH_ARRAY_SIZE) {
-        leftOverData = newBuffer.slice(PUSH_ARRAY_SIZE - currentSize)
-        return { buffer, currentSize: newSize, done: false }
-      }
-      
-      return accumulate({ buffer, currentSize: newSize })
-    }
-
-    let { buffer: currentBuffer, done: initDone } = await accumulate()
+    let { value: currentBuffer, done: initDone } = await reader.read()
     let readCount = 0
     let closed = false
     let currentOffset = 0
@@ -198,7 +208,7 @@ export const remux =
         if (!initDone) process()
         return
       }
-      const { buffer, done } = await accumulate()
+      const { value: buffer, done } = await reader.read()
       currentBuffer = new Uint8Array(buffer)
       remuxer.process(currentBuffer.byteLength)
       if (!done) process()
