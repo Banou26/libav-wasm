@@ -16,8 +16,8 @@ jobs:
         node-version: 16.x
     - run: npm ci
     
-    - uses: satackey/action-docker-layer-caching@v0.0.11
-      continue-on-error: true
+    # - uses: satackey/action-docker-layer-caching@v0.0.11
+    #   continue-on-error: true
 
     - run: sudo npm run build
 
