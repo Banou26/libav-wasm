@@ -61,6 +61,7 @@ extern "C" {
     int ret, i;
     int stream_index;
     int *streams_list;
+    int64_t *last_mux_dts_list;
     int number_of_streams;
     bool should_demux;
     int processed_bytes = 0;
@@ -99,6 +100,7 @@ extern "C" {
       written_output = 0;
       stream_index = 0;
       streams_list = NULL;
+      last_mux_dts_list = NULL;
       number_of_streams = 0;
 
       // Initialize the input avio context
@@ -145,6 +147,9 @@ extern "C" {
 
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
+      if (!(last_mux_dts_list = (int64_t *)av_calloc(number_of_streams, sizeof(int64_t)))) {
+        return;
+      }
 
       if (!streams_list) {
         res = AVERROR(ENOMEM);
@@ -239,6 +244,41 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
+        int64_t last_mux_dts = last_mux_dts_list[out_stream->index];
+
+
+        // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
+        // This only fixes data for 1 process call and breaks afterwards, need to find fix
+        if (!(output_format_context->flags & AVFMT_NOTIMESTAMPS)) {
+            if (packet->dts != AV_NOPTS_VALUE &&
+                packet->pts != AV_NOPTS_VALUE &&
+                packet->dts > packet->pts) {
+                // printf("Invalid DTS: %lld PTS: %lld in output stream :%d, replacing by guess\n",
+                //       packet->dts, packet->pts, out_stream->index);
+                packet->pts =
+                packet->dts = packet->pts + packet->dts + last_mux_dts + 1
+                        - FFMIN3(packet->pts, packet->dts, last_mux_dts + 1)
+                        - FFMAX3(packet->pts, packet->dts, last_mux_dts + 1);
+            }
+            if ((in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) &&
+                packet->dts != AV_NOPTS_VALUE &&
+                last_mux_dts != AV_NOPTS_VALUE) {
+                int64_t max = last_mux_dts + !(output_format_context->flags & AVFMT_TS_NONSTRICT);
+                if (packet->dts < max) {
+                    // int loglevel = max - packet->dts > 2 || in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ? AV_LOG_WARNING : AV_LOG_DEBUG;
+                    // printf("Non-monotonous DTS in output stream "
+                    //       "%d; previous: %lld, current: %lld; \n", out_stream->index, last_mux_dts, packet->dts);
+                    // printf("changing to %lld. This may result "
+                    //       "in incorrect timestamps in the output file.\n",
+                    //       max);
+                    if (packet->pts >= packet->dts)
+                        packet->pts = FFMAX(packet->pts, max);
+                    packet->dts = max;
+                }
+            }
+        }
+
+        last_mux_dts_list[out_stream->index] = packet->dts;
         // todo: check if AVOption {"igndts", "ignore dts", 0, AV_OPT_TYPE_CONST, could fix the non incrementally increasing DTS
 
         // Write the frames to the output context
