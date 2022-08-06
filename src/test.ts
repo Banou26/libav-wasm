@@ -166,6 +166,9 @@ const remux =
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
+      error: (critical, message) => {
+        console.log('error', critical, message)
+      },
       // https://gist.github.com/AlexVestin/15b90d72f51ff7521cd7ce4b70056dff#file-avio_write-c-L51
       seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
         // prevent seeking for now, once i wanna retry re-implementing seeking i can remove it then
@@ -254,7 +257,9 @@ const remux =
     }
   }
 
-fetch('./fucked-subtitles-and-FF-playback.mkv')
+fetch('./wrong-dts-3-3.mkv')
+// fetch('./wrong-dts-3.mkv')
+// fetch('./fucked-subtitles-and-FF-playback.mkv')
 // fetch('./wrong-dts-2.mkv')
 // fetch('./video15.mkv')
   .then(async ({ headers, body }) => {

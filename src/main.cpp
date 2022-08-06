@@ -73,6 +73,7 @@ extern "C" {
     val read = val::undefined();
     val write = val::undefined();
     val seek = val::undefined();
+    val error = val::undefined();
     bool done = false;
 
     Remuxer(val options) {
@@ -88,6 +89,7 @@ extern "C" {
       read = options["read"];
       write = options["write"];
       seek = options["seek"];
+      error = options["error"];
     }
 
     void init () {
@@ -257,6 +259,9 @@ extern "C" {
               packet->pts = FFMAX(packet->pts, max);
             }
             packet->dts = max;
+            if (!error.isUndefined()) {
+              error(false, static_cast<std::string>("non monotonicaly increasing DTS values"));
+            }
         }
         last_mux_dts_list[in_stream->index] = packet->dts;
 
