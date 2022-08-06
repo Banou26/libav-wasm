@@ -240,9 +240,11 @@ extern "C" {
           break;
         }
 
+        // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
+        // this fixes unplayable output files but skips frames, need to find a way to properly correct so no frames are skipped
         int64_t last_mux_dts = last_mux_dts_list[in_stream->index];
         packet->pts =
         packet->dts = packet->pts + packet->dts + last_mux_dts + 1
