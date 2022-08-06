@@ -222,6 +222,9 @@ extern "C" {
         }
         // todo: try using av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base)
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+
+        // todo: check if AVOption {"igndts", "ignore dts", 0, AV_OPT_TYPE_CONST, could fix the non incrementally increasing DTS
+
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           break;
         }
@@ -268,6 +271,9 @@ extern "C" {
       output_stream.seekg(0);
     }
 
+    // todo: check if using any of these might help
+    // input_format_context->av_class, this has AVOption, which has {"seek2any", "allow seeking to non-keyframes on demuxer level when supported"
+    // avformat_seek_file, maybe this could be used instead of av_seek_frame ?
     int _seek(int timestamp, int flags) {
       int res;
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
