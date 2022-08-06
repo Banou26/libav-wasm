@@ -45,8 +45,8 @@ extern "C" {
 
   class Remuxer {
   public:
-    AVIOContext* avioContext;
-    AVIOContext* avioContext2;
+    AVIOContext* input_avio_context;
+    AVIOContext* output_avio_context;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
     std::stringstream input_stream;
@@ -91,7 +91,7 @@ extern "C" {
 
     void init () {
       seeking = false;
-      avioContext = NULL;
+      input_avio_context = NULL;
       input_format_context = avformat_alloc_context();
       output_format_context = avformat_alloc_context();
 
@@ -101,8 +101,9 @@ extern "C" {
       streams_list = NULL;
       number_of_streams = 0;
 
+      // Initialize the input avio context
       unsigned char* buffer = (unsigned char*)av_malloc(buffer_size);
-      avioContext = avio_alloc_context(
+      input_avio_context = avio_alloc_context(
         buffer,
         buffer_size,
         0,
@@ -112,8 +113,9 @@ extern "C" {
         &seekFunction
       );
 
-      input_format_context->pb = avioContext;
+      input_format_context->pb = input_avio_context;
 
+      // Open the input stream and automatically recognise format
       int res;
       if ((res = avformat_open_input(&input_format_context, NULL, nullptr, nullptr)) < 0) {
         // printf("ERROR: %s \n", av_err2str(res));
@@ -124,8 +126,9 @@ extern "C" {
         return;
       }
 
+      // Initialize the output avio context
       unsigned char* buffer2 = (unsigned char*)av_malloc(buffer_size);
-      avioContext2 = avio_alloc_context(
+      output_avio_context = avio_alloc_context(
         buffer2,
         buffer_size,
         1,
@@ -135,8 +138,10 @@ extern "C" {
         nullptr
       );
 
+      // Initialize the output format stream context as an mp4 file
       avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
-      output_format_context->pb = avioContext2;
+      // Set the avio context to the output format context
+      output_format_context->pb = output_avio_context;
 
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
@@ -147,12 +152,14 @@ extern "C" {
         return;
       }
 
+      // Loop through all of the input streams
       for (i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
         AVStream *out_in_stream;
         AVCodecParameters *in_codecpar = in_stream->codecpar;
 
+        // Filter out all non video/audio streams
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO
@@ -161,17 +168,20 @@ extern "C" {
           continue;
         }
 
+        // Assign the video stream index to a global variable (potentially used to seek)
         if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
           video_stream_index = i;
         }
 
         streams_list[i] = stream_index++;
+        // Open the output stream
         out_stream = avformat_new_stream(output_format_context, NULL);
         if (!out_stream) {
           // printf("Failed allocating output stream \n");
           res = AVERROR_UNKNOWN;
           return;
         }
+        // Copy all of the input file codecs to the output file codecs
         if ((res = avcodec_parameters_copy(out_stream->codecpar, in_codecpar)) < 0) {
           // printf("Failed to copy codec parameters \n");
           return;
@@ -180,11 +190,14 @@ extern "C" {
 
       AVDictionary* opts = NULL;
 
-      // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
+      // Force transmuxing instead of re-encoding by copying the codecs
       av_dict_set(&opts, "c", "copy", 0);
+      // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
+      // Fragment the MP4 output
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
 
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
+      // Writes the header of the output
       if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
         // printf("Error occurred when opening output file \n");
         return;
@@ -204,6 +217,7 @@ extern "C" {
       int packetIndex = 0;
       AVStream *in_stream, *out_stream;
 
+      // Read through all buffered frames
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
@@ -221,10 +235,13 @@ extern "C" {
           break;
         }
         // todo: try using av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base)
+        
+        // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         // todo: check if AVOption {"igndts", "ignore dts", 0, AV_OPT_TYPE_CONST, could fix the non incrementally increasing DTS
 
+        // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           break;
         }
@@ -292,7 +309,7 @@ extern "C" {
       // avformat_free_context(input_format_context);
       // avformat_free_context(output_format_context);
       // avio_close(avioContext);
-      // avio_close(avioContext2);
+      // avio_close(output_avio_context);
     }
 
     void push(std::string buf) {
