@@ -107,8 +107,8 @@ function bufferStreamChunksToSize(stream: ReadableStream<Uint8Array>, DEFAULT_CH
 // todo: impl the mime generator from https://developer.mozilla.org/en-US/docs/Web/Media/Formats/codecs_parameter | https://superuser.com/questions/1494831/extract-mime-type-codecs-for-mediasource-using-ffprobe#comment2431440_1494831
 export const remux =
   async (
-    { size, stream, autoStart = false, autoProcess = true }:
-    { size: number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
+    { size, stream, autoStart = false, autoProcess = true, error }:
+    { size: number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean, error?: (critical: boolean, message: string) => any}
   ): Promise<RemuxResponse> => {
     const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
     const sizedChunksStream = bufferStreamChunksToSize(stream, PUSH_ARRAY_SIZE)
@@ -135,6 +135,7 @@ export const remux =
     const remuxer = new libav.Remuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
+      error,
       // https://gist.github.com/AlexVestin/15b90d72f51ff7521cd7ce4b70056dff#file-avio_write-c-L51
       seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
         // prevent seeking for now, once i wanna retry re-implementing seeking i can remove it then
