@@ -247,21 +247,33 @@ extern "C" {
 
         // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
         // this fixes unplayable output files but skips frames, need to find a way to properly correct so no frames are skipped
-        int64_t last_mux_dts = last_mux_dts_list[in_stream->index];
-        packet->pts =
-        packet->dts = packet->pts + packet->dts + last_mux_dts + 1
-                - FFMIN3(packet->pts, packet->dts, last_mux_dts + 1)
-                - FFMAX3(packet->pts, packet->dts, last_mux_dts + 1);
+        if (!(output_format_context->flags & AVFMT_NOTIMESTAMPS)) {
+          int64_t last_mux_dts = last_mux_dts_list[in_stream->index];
+          if (packet->dts != AV_NOPTS_VALUE &&
+              packet->pts != AV_NOPTS_VALUE &&
+              packet->dts > packet->pts) {
+            packet->pts =
+            packet->dts = packet->pts + packet->dts + last_mux_dts + 1
+                    - FFMIN3(packet->pts, packet->dts, last_mux_dts + 1)
+                    - FFMAX3(packet->pts, packet->dts, last_mux_dts + 1);
+          }
 
-        int64_t max = last_mux_dts + !(output_format_context->flags & AVFMT_TS_NONSTRICT);
-        if (packet->dts < max) {
-            if (packet->pts >= packet->dts) {
-              packet->pts = FFMAX(packet->pts, max);
-            }
-            packet->dts = max;
-            if (!error.isUndefined()) {
-              error(false, static_cast<std::string>("non monotonicaly increasing DTS values"));
-            }
+          if ((in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) &&
+              packet->dts != AV_NOPTS_VALUE &&
+              last_mux_dts != AV_NOPTS_VALUE
+            ) {
+              int64_t max = last_mux_dts + !(output_format_context->flags & AVFMT_TS_NONSTRICT);
+              if (packet->dts < max) {
+                  if (packet->pts >= packet->dts) {
+                    packet->pts = FFMAX(packet->pts, max);
+                  }
+                  packet->dts = max;
+                  if (!error.isUndefined()) {
+                    error(false, static_cast<std::string>("non monotonicaly increasing DTS values"));
+                  }
+              }
+          }
+
         }
         last_mux_dts_list[in_stream->index] = packet->dts;
 
