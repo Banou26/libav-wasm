@@ -39,30 +39,29 @@ ARG CACHE_BUST
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   emconfigure ./configure \
   --prefix=${PREFIX} \
-  --target-os=none \
-  --arch=x86_32 \
-  --enable-cross-compile \
-  --disable-debug \
-  --disable-x86asm \
-  --disable-inline-asm \
-  --disable-stripping \
+  --disable-autodetect --disable-all --disable-doc --disable-everything --disable-static --disable-debug \
+  --disable-amd3dnow --disable-amd3dnowext --disable-avx512 --disable-aesni --enable-stripping --disable-network \
   --disable-programs \
-  --disable-doc \
-  --disable-all \
-  --enable-avcodec \
-  --enable-avformat \
-  --enable-avfilter \
+  --enable-static --enable-small \
+  --enable-avutil --enable-avfilter --enable-avcodec \
+  --enable-avformat --enable-demuxer=matroska --enable-muxer=mp4 \
   --enable-avdevice \
-  --enable-avutil \
   --enable-swresample \
-  --enable-postproc \
+  # --enable-postproc \
   --enable-swscale \
-  --enable-protocol=file \
+  # --enable-protocol=file \
   --enable-decoder=h264,aac,pcm_s16le \
-  --enable-demuxer=mov,matroska \
-  --enable-muxer=mp4 \
-  --enable-gpl \
-  --enable-libx264 \
+  # --enable-demuxer=mov,matroska \
+  # --enable-muxer=mp4 \
+  # --enable-gpl \
+  # --enable-libx264 \
+  # emscripten flags, probably?
+  --disable-stripping \
+  --disable-inline-asm \
+  --enable-cross-compile \
+  --target-os=none \
+  --disable-x86asm \
+  --arch=x86_32 \
   --extra-cflags="$CFLAGS" \
   --extra-cxxflags="$CFLAGS" \
   --extra-ldflags="$LDFLAGS" \
@@ -74,30 +73,33 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --cxx=em++ \
   --objcc=emcc \
   --dep-cc=emcc
+
+  # ORIGINAL COMPILATION FLAGS WITHOUT SIZE REDUCTION
   # --prefix=${PREFIX} \
-  # --disable-autodetect --disable-all --disable-doc --disable-everything --disable-static --disable-debug \
-  # --disable-amd3dnow --disable-amd3dnowext --disable-avx512 --disable-aesni --enable-stripping --disable-network \
-  # --disable-programs \
-  # --enable-static --enable-small \
-  # --enable-avutil --enable-avfilter --enable-avcodec \
-  # --enable-avformat --enable-demuxer=matroska --enable-muxer=mp4 \
-  # --enable-avdevice \
-  # --enable-swresample \
-  # # --enable-postproc \
-  # --enable-swscale \
-  # # --enable-protocol=file \
-  # # --enable-decoder=h264,aac,pcm_s16le \
-  # # --enable-demuxer=mov,matroska \
-  # # --enable-muxer=mp4 \
-  # # --enable-gpl \
-  # # --enable-libx264 \
-  # # emscripten flags, probably?
-  # --disable-stripping \
-  # --disable-inline-asm \
-  # --enable-cross-compile \
   # --target-os=none \
-  # --disable-x86asm \
   # --arch=x86_32 \
+  # --enable-cross-compile \
+  # --disable-debug \
+  # --disable-x86asm \
+  # --disable-inline-asm \
+  # --disable-stripping \
+  # --disable-programs \
+  # --disable-doc \
+  # --disable-all \
+  # --enable-avcodec \
+  # --enable-avformat \
+  # --enable-avfilter \
+  # --enable-avdevice \
+  # --enable-avutil \
+  # --enable-swresample \
+  # --enable-postproc \
+  # --enable-swscale \
+  # --enable-protocol=file \
+  # --enable-decoder=h264,aac,pcm_s16le \
+  # --enable-demuxer=mov,matroska \
+  # --enable-muxer=mp4 \
+  # --enable-gpl \
+  # --enable-libx264 \
   # --extra-cflags="$CFLAGS" \
   # --extra-cxxflags="$CFLAGS" \
   # --extra-ldflags="$LDFLAGS" \
