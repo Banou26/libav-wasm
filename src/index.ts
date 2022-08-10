@@ -206,21 +206,30 @@ export const remux =
         }
       }
     })
-    remuxer.init()
+    
+    try {
+      await remuxer.init()
+    } catch (err) {
+      error(true, 'init')
+    }
     
     // const headerChunks = chunks.splice(0, chunks.length).map((chunk, i) => ({ ...chunk, keyframeIndex: i }))
     const process = async () => {
-      readCount = 0
-      if (!headerChunkEnqueued) {
-        readCount = 1
+      try {
+        readCount = 0
+        if (!headerChunkEnqueued) {
+          readCount = 1
+          remuxer.process(currentBuffer.byteLength)
+          if (!initDone) process()
+          return
+        }
+        const { value: buffer, done } = await reader.read()
+        currentBuffer = new Uint8Array(buffer)
         remuxer.process(currentBuffer.byteLength)
-        if (!initDone) process()
-        return
+        if (!done) process()
+      } catch (err) {
+        error(true, 'process')
       }
-      const { value: buffer, done } = await reader.read()
-      currentBuffer = new Uint8Array(buffer)
-      remuxer.process(currentBuffer.byteLength)
-      if (!done) process()
     }
 
     await process()
