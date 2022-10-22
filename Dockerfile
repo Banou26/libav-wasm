@@ -1,4 +1,4 @@
-FROM emscripten/emsdk:3.1.8 as build
+FROM emscripten/emsdk:3.1.24 as build
 
 ARG X264_VERSION=20191217-2245-stable
 ARG FFMPEG_VERSION=5.1
