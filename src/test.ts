@@ -1,5 +1,14 @@
 import { createFile } from 'mp4box'
+import { Readable, Transform } from 'stream'
+import { EbmlStreamDecoder, EbmlTagId } from 'ebml-stream'
+import JMuxer from 'jmuxer'
 // const {  } = Stream
+// import * as libav from '../dist/libav'
+
+// console.log('libav', libav)
+
+import { Buffer } from 'buffer'
+
 interface Chunk {
   arrayBuffer: ArrayBuffer
   keyframeIndex: number
@@ -11,7 +20,7 @@ interface Chunk {
   buffered: boolean
 }
 
-const BUFFER_SIZE = 10_000_000
+const BUFFER_SIZE = 5_000_000
 const PUSH_ARRAY_SIZE = BUFFER_SIZE * 2 // 10_000_000
 
 let libavInstance
@@ -140,13 +149,15 @@ function bufferStreamChunksToSize(stream: ReadableStream<Uint8Array>, DEFAULT_CH
 // todo: impl the mime generator from https://developer.mozilla.org/en-US/docs/Web/Media/Formats/codecs_parameter | https://superuser.com/questions/1494831/extract-mime-type-codecs-for-mediasource-using-ffprobe#comment2431440_1494831
 const remux =
   async (
-    { size, stream, autoStart = false, autoProcess = true }:
-    { size:number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
+    { buffer, size, stream, autoStart = false, autoProcess = true }:
+    { buffer: ArrayBuffer, size: number, stream: ReadableStream<Uint8Array>, autoStart?: boolean, autoProcess?: boolean }
   ) => {
-    const libav = libavInstance ?? (libavInstance = await (await import('../dist/libav.js'))())
+    const libav = libavInstance ?? (libavInstance = await (await import('libav')).default({
+      locateFile: (path: string, scriptDirectory: string) => console.log('locateFile', path, scriptDirectory) || `/dist/${path.replace('/dist', '')}`
+    }))
     const sizedChunksStream = bufferStreamChunksToSize(stream, PUSH_ARRAY_SIZE)
     const reader = sizedChunksStream.getReader()
-    // todo: replace this with a stream that handles backpressure
+    // // todo: replace this with a stream that handles backpressure
     const [resultStream, controller] = await new Promise<[ReadableStream<Uint8Array>, ReadableStreamController<any>]>(resolve => {
       let controller
       resolve([
@@ -174,7 +185,7 @@ const remux =
         // prevent seeking for now, once i wanna retry re-implementing seeking i can remove it then
         // maybe https://stackoverflow.com/a/17213878 could be of big help if i manage to unstuck libav from the end of file status
         console.log('seek', offset, whence)
-        return -1
+        // return -1
 
         // if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
         //   bd->ptr = bd->buf + offset;
@@ -188,27 +199,33 @@ const remux =
         //   bd->ptr = (bd->buf + bd->size) + offset;
         //   return bd->ptr;
         // }
+        if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
+          currentOffset = currentOffset + offset
+          return currentOffset;
+        }
+        if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
+          return -1;
+        }
+        if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
+          currentOffset = offset
+          return currentOffset;
+        }
         if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
           return size;
         }
-        currentOffset = offset
-        const result = currentOffset
-        currentBuffer = new Uint8Array(currentBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
-        readCount = 0
-        return result
+        // currentOffset = offset
+        // const result = currentOffset
+        // currentBuffer = new Uint8Array(currentBuffer.slice(currentOffset, currentOffset + PUSH_ARRAY_SIZE))
+        // readCount = 0
+        // return result
       },
       read: (bufferSize: number) => {
-        const buffer =
-          readCount === 0
-            ? currentBuffer.slice(0, BUFFER_SIZE)
-            : currentBuffer.slice(BUFFER_SIZE)
-        readCount++
-        if (readCount === 2) {
-          readCount = 0
-        }
+        console.log('reading from ', currentOffset, currentOffset + bufferSize)
+        const _buffer = buffer.slice(currentOffset, currentOffset + bufferSize)
+        currentOffset = currentOffset + bufferSize
         return {
-          buffer,
-          size: buffer.byteLength
+          buffer: _buffer,
+          size: _buffer.byteLength
         }
       },
       write: (type, keyframeIndex, size, offset, arrayBuffer, keyframePts, keyframePos, done) => {
@@ -257,15 +274,18 @@ const remux =
     }
   }
 
-fetch('./wrong-dts-3-3.mkv')
+fetch('../dist/spy13broke.mkv')
+// fetch('./wrong-dts-3-3.mkv')
 // fetch('./wrong-dts-3.mkv')
 // fetch('./fucked-subtitles-and-FF-playback.mkv')
 // fetch('./wrong-dts-2.mkv')
 // fetch('./video15.mkv')
   .then(async ({ headers, body }) => {
-    const stream2 = body
-    // const [stream1, stream2] = body.tee()
-
+    if (!body) return
+    // const stream2 = body
+    const [stream1, stream2] = body.tee()
+    const buffer = await new Response(stream1).arrayBuffer()
+    
     // const parser = new MatroskaSubtitles.SubtitleParser()
     
     // // first an array of subtitle track information is emitted
@@ -291,7 +311,7 @@ fetch('./wrong-dts-3-3.mkv')
     
     const fileSize = Number(headers.get('Content-Length'))
     // const { headerChunks, stream, getInfo } = await remux({ size: fileSize, stream: stream2, autoStart: true })
-    const { headerChunks, chunks: _chunks, stream, getInfo, seek } = await remux({ size: fileSize, stream: stream2, autoStart: true })
+    const { headerChunks, chunks: _chunks, stream, getInfo, seek } = await remux({ size: fileSize, stream: stream2, buffer,  autoStart: true })
     const reader = stream.getReader()
     console.log('fileSize', fileSize)
     // let resultBuffer = new Uint8Array(fileSize + (fileSize * 0.01))
@@ -385,13 +405,17 @@ fetch('./wrong-dts-3-3.mkv')
     const duration = getInfo().input.duration / 1_000_000
 
     const video = document.createElement('video')
-    video.autoplay = true
+    // video.autoplay = true
     video.controls = true
     video.volume = 0
     video.addEventListener('error', ev => {
       console.error(ev.target.error)
     })
     document.body.appendChild(video)
+    
+    setTimeout(() => {
+      video.play()
+    }, 5_000)
 
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)

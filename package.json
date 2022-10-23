@@ -2,18 +2,18 @@
   "name": "@banou26/oz-libav",
   "version": "0.0.1",
   "main": "dist/index.js",
-  "files": ["dist/*"],
-  "appModern": "dist/index.html",
-  "targets": {
-    "appModern": {
-      "engines": {
-        "browsers": [
-          "last 1 chrome version"
-        ]
-      }
-    }
-  },
+  "files": [
+    "dist/*"
+  ],
   "scripts": {
+    "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
+    "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
+    "make-docker": "docker-compose run libav-wasm make",
+    "dev-web": "vite --port 1234",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "_scripts": {
     "build": "npx --yes make-dir-cli ./dist && npm run make-docker && npm run build-web",
     "build-web": "npx tsc src/index.ts --outDir dist",
     "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
@@ -22,12 +22,22 @@
     "make-docker": "docker-compose run libav-wasm make"
   },
   "devDependencies": {
+    "@esbuild-plugins/node-globals-polyfill": "^0.1.1",
+    "@esbuild-plugins/node-modules-polyfill": "^0.1.4",
     "concurrently": "^6.0.0",
     "nodemon": "^2.0.7",
     "parcel": "^2.0.0-nightly.642",
-    "typescript": "^4.2.4"
+    "rollup-plugin-node-polyfills": "^0.2.1",
+    "typescript": "^4.6.4",
+    "vite": "^3.1.8",
+    "vite-plugin-wasm": "^3.1.0"
   },
   "dependencies": {
+    "buffer": "^6.0.3",
+    "ebml": "^3.0.0",
+    "ebml-stream": "^1.0.3",
+    "jmuxer": "^2.0.5",
+    "libav": "file:dist",
     "mp4box": "^0.4.1"
   }
 }

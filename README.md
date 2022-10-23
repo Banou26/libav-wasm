@@ -15,3 +15,11 @@ To have C++ autocompletion, put a ffmpeg repo clone folder in the root
     http://localhost:1234/app/616331fa7b57db93f0957a18/watch/mal:50265/mal:50265-1/nyaa:1512518
 - Thumbnail extraction
 - Output DASH format to re-use the dash reference player impl instead of my scuffed one https://github.com/Dash-Industry-Forum/dash.js
+
+https://gitlab.freedesktop.org/gstreamer/gstreamer-rs/-/blob/master/examples/src/bin/decodebin.rs
+
+ASYNC SEEK:
+https://ffmpeg.org/doxygen/trunk/async_8c_source.html#l00386
+
+
+https://ffmpeg.org/pipermail/libav-user/2013-March/003928.html
