@@ -2,8 +2,7 @@ namespace Transmuxer;
  
 enum Operation:byte {
   Seek = 0,
-  Read = 1,
-  Write = 2
+  Read = 1
 }
 
 table Interface {

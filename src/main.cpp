@@ -61,6 +61,7 @@ extern "C" {
     int keyframe_pos;
     int ret, i;
     int stream_index;
+    int *subtitle_decoder_list;
     int *streams_list;
     int64_t *last_mux_dts_list;
     int number_of_streams;
@@ -102,6 +103,7 @@ extern "C" {
       should_demux = false;
       written_output = 0;
       stream_index = 0;
+      subtitle_decoder_list = NULL;
       streams_list = NULL;
       last_mux_dts_list = NULL;
       number_of_streams = 0;
@@ -149,6 +151,7 @@ extern "C" {
       output_format_context->pb = output_avio_context;
 
       number_of_streams = input_format_context->nb_streams;
+      subtitle_decoder_list = (int *)av_calloc(number_of_streams, sizeof(*subtitle_decoder_list));
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
       if (!(last_mux_dts_list = (int64_t *)av_calloc(number_of_streams, sizeof(int64_t)))) {
         return;
@@ -170,9 +173,36 @@ extern "C" {
         // Filter out all non video/audio streams
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
-          in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO
+          in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
+          in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
         ) {
           streams_list[i] = -1;
+          continue;
+        }
+
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+          // char buf[256];
+          auto codec = avcodec_find_decoder(in_codecpar->codec_id);
+          auto codecCtx = avcodec_alloc_context3(codec);
+          avcodec_parameters_to_context(codecCtx, in_codecpar);
+          // if ((res = avcodec_open2(codecCtx, codec, NULL)) < 0) {
+          //   avcodec_string(buf, sizeof(buf), codecCtx, 0);
+          //   printf("Failed to open subtitle codec %s \n", buf);
+          // }
+          // subtitle_decoder_list[i] = codec;
+
+          codecCtx->subtitle_header = (uint8_t *)av_malloc(codecCtx->extradata_size + 1);
+          if (!codecCtx->subtitle_header) {
+            res = AVERROR(ENOMEM);
+            return;
+          }
+          if (codecCtx->extradata_size) {
+            memcpy(codecCtx->subtitle_header, codecCtx->extradata, codecCtx->extradata_size);
+          }
+          codecCtx->subtitle_header[codecCtx->extradata_size] = 0;
+          codecCtx->subtitle_header_size = codecCtx->extradata_size;
+          printf("HEADER IS SUBTITLE TYPE, %s \n", codecCtx->subtitle_header);
+
           continue;
         }
 
@@ -233,6 +263,13 @@ extern "C" {
           av_packet_unref(packet);
           continue;
         }
+
+        if (input_format_context->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+          // auto str = av_strdup((char*)packet->data);
+          printf("PACKET IS SUBTITLE TYPE, %lld %s \n", packet->pos, packet->data);
+          continue;
+        }
+
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
 

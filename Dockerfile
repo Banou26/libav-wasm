@@ -1,5 +1,6 @@
 FROM emscripten/emsdk:3.1.24 as build
 
+# ARG LASS_VERSION=0.16.0
 ARG X264_VERSION=20191217-2245-stable
 ARG FFMPEG_VERSION=5.1
 
@@ -7,6 +8,28 @@ ARG PREFIX=/opt/ffmpeg
 ARG MAKEFLAGS="-j4"
 
 RUN apt-get update && apt-get install -y autoconf libtool build-essential
+# libass-dev libfreetype6-dev libfontconfig1-dev xclip
+
+# # libass
+# RUN cd /tmp && \
+#   wget https://github.com/libass/libass/releases/download/${LASS_VERSION}/libass-${LASS_VERSION}.tar.xz && \
+#   tar Jxvf "libass-$LASS_VERSION.tar.xz"
+
+# RUN cd /tmp/libass-${LASS_VERSION} && \
+#   emconfigure ./configure \
+#   -s USE_FREETYPE=1 \
+#   --disable-asm \
+#   --enable-shared
+#   # --disable-static \
+#   # --prefix=${PREFIX} \
+#   # --host=x86-none-linux \
+#   # --build=x86_64 \
+#   # --enable-static \
+#   # --disable-shared \
+#   # --disable-debug
+
+# RUN cd /tmp/libass-${LASS_VERSION} && \
+#   emmake make && emmake make install 
 
 # libx264
 RUN cd /tmp && \
@@ -47,6 +70,8 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-avformat --enable-demuxer=matroska --enable-muxer=mp4 \
   --enable-avdevice \
   --enable-swresample \
+  # --enable-libass \
+  # --enable-filter=subtitles,overlay \
   # --enable-postproc \
   --enable-swscale \
   # --enable-protocol=file \
