@@ -7,6 +7,7 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include <algorithm>
+#include <thread>
 
 using namespace emscripten;
 
@@ -43,7 +44,7 @@ extern "C" {
   static int readOutputFunction(void* opaque, uint8_t* buf, int buf_size);
   static int64_t seekFunction(void* opaque, int64_t offset, int whence);
 
-  class Remuxer {
+  class Transmuxer {
   public:
     AVIOContext* input_avio_context;
     AVIOContext* output_avio_context;
@@ -76,7 +77,7 @@ extern "C" {
     val error = val::undefined();
     bool done = false;
 
-    Remuxer(val options) {
+    Transmuxer(val options) {
       std::string hostStr = val::global("location")["host"].as<std::string>();
       const char* str = hostStr.c_str();
       std::string hostStdString(str);
@@ -211,6 +212,8 @@ extern "C" {
       }
     }
 
+
+    // todo: try to implement subtitle decoding: https://gist.github.com/reusee/7372569
     void process(int size) {
       processed_bytes += size;
       // printf("process call, processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
@@ -326,6 +329,14 @@ extern "C" {
       output_stream.seekg(0);
     }
 
+    int64_t getInputPosition () {
+      return input_avio_context->pos;
+    }
+
+    int64_t getOutputPosition () {
+      return output_avio_context->pos;
+    }
+
     // todo: check if using any of these might help
     // input_format_context->av_class, this has AVOption, which has {"seek2any", "allow seeking to non-keyframes on demuxer level when supported"
     // avformat_seek_file, maybe this could be used instead of av_seek_frame ?
@@ -366,24 +377,21 @@ extern "C" {
   };
 
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
-    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     auto& seek = remuxObject.seek;
     auto result = seek((int)offset, whence).as<long>();
-    // printf("seekFunction offset: %lld, flags: %d, result: %d\n", offset, whence, result);
     return result;
   }
 
   // todo: re-implement this when https://github.com/emscripten-core/emscripten/issues/16686 is fixed
-
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     auto& read = remuxObject.read;
     val res = read(buf_size, remuxObject.used_input);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
-    // printf("readFunction buf_size: %d, buffer_size: %d \n", buf_size, buffer_size);
     if (buffer_size == 0) {
       return AVERROR_EOF;
     }
@@ -391,9 +399,8 @@ extern "C" {
   }
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    auto& remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     auto& write = remuxObject.write;
-    // printf("writeFunction buf_size: %d \n", buf_size);
     write(
       static_cast<std::string>("data"),
       remuxObject.keyframe_index - 2,
@@ -425,16 +432,16 @@ extern "C" {
       .field("input", &InfoObject::input)
       .field("output", &InfoObject::output);
 
-    class_<Remuxer>("Remuxer")
+    class_<Transmuxer>("Transmuxer")
       .constructor<emscripten::val>()
-      .function("init", &Remuxer::init)
-      .function("push", &Remuxer::push)
-      .function("process", &Remuxer::process)
-      .function("close", &Remuxer::close)
-      .function("clearInput", &Remuxer::clearInput)
-      .function("clearOutput", &Remuxer::clearOutput)
-      .function("seek", &Remuxer::_seek)
-      .function("getInfo", &Remuxer::getInfo)
-      .function("getInt8Array", &Remuxer::getInt8Array);
+      .function("init", &Transmuxer::init)
+      .function("push", &Transmuxer::push)
+      .function("process", &Transmuxer::process)
+      .function("close", &Transmuxer::close)
+      .function("clearInput", &Transmuxer::clearInput)
+      .function("clearOutput", &Transmuxer::clearOutput)
+      .function("seek", &Transmuxer::_seek)
+      .function("getInfo", &Transmuxer::getInfo)
+      .function("getInt8Array", &Transmuxer::getInt8Array);
   }
 }

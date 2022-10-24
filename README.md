@@ -22,4 +22,6 @@ ASYNC SEEK:
 https://ffmpeg.org/doxygen/trunk/async_8c_source.html#l00386
 
 
-https://ffmpeg.org/pipermail/libav-user/2013-March/003928.html
+ASYNC SEEK ADVICE: https://ffmpeg.org/pipermail/libav-user/2013-March/003928.html
+
+SUBTITLE DECODING IN GO: https://gist.github.com/reusee/7372569

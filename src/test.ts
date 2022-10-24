@@ -174,7 +174,7 @@ const remux =
     let readCount = 0
     let closed = false
     let currentOffset = 0
-    const remuxer = new libav.Remuxer({
+    const remuxer = new libav.Transmuxer({
       length: size,
       bufferSize: BUFFER_SIZE,
       error: (critical, message) => {
@@ -220,7 +220,7 @@ const remux =
         // return result
       },
       read: (bufferSize: number) => {
-        console.log('reading from ', currentOffset, currentOffset + bufferSize)
+        // console.log('reading from ', currentOffset, currentOffset + bufferSize)
         const _buffer = buffer.slice(currentOffset, currentOffset + bufferSize)
         currentOffset = currentOffset + bufferSize
         return {
@@ -244,7 +244,7 @@ const remux =
     remuxer.init()
     const headerChunks = chunks.splice(0, chunks.length)
     const process = async () => {
-      console.log('process')
+      // console.log('process')
       readCount = 0
       if (!chunks.length) {
         readCount = 1
@@ -474,7 +474,7 @@ fetch('../dist/spy13broke.mkv')
     const appendChunk = async (chunk: Chunk) => {
       // console.log('appendChunk', chunks[chunk.keyframeIndex + 2])
       // console.log('appendChunk', chunk)
-      console.log('chunk', chunk)
+      console.log('chunk', chunk, _chunks[chunk.keyframeIndex])
       await appendBuffer(_chunks[chunk.keyframeIndex].arrayBuffer.buffer)
       
       // console.log('appendChunk',
