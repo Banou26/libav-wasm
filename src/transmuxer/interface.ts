@@ -3,6 +3,7 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { Operation } from '../transmuxer/operation.js';
+import { State } from '../transmuxer/state.js';
 
 
 export class Interface {
@@ -23,14 +24,14 @@ static getSizePrefixedRootAsInterface(bb:flatbuffers.ByteBuffer, obj?:Interface)
   return (obj || new Interface()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-state():number {
+state():State {
   const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : State.Idle;
 }
 
 operation():Operation {
   const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt8(this.bb_pos + offset) : Operation.Seek;
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : Operation.Idle;
 }
 
 argOffset():bigint {
@@ -72,12 +73,12 @@ static startInterface(builder:flatbuffers.Builder) {
   builder.startObject(7);
 }
 
-static addState(builder:flatbuffers.Builder, state:number) {
-  builder.addFieldInt32(0, state, 0);
+static addState(builder:flatbuffers.Builder, state:State) {
+  builder.addFieldInt8(0, state, State.Idle);
 }
 
 static addOperation(builder:flatbuffers.Builder, operation:Operation) {
-  builder.addFieldInt8(1, operation, Operation.Seek);
+  builder.addFieldInt8(1, operation, Operation.Idle);
 }
 
 static addArgOffset(builder:flatbuffers.Builder, argOffset:bigint) {
@@ -125,7 +126,7 @@ static finishSizePrefixedInterfaceBuffer(builder:flatbuffers.Builder, offset:fla
   builder.finish(offset, undefined, true);
 }
 
-static createInterface(builder:flatbuffers.Builder, state:number, operation:Operation, argOffset:bigint, argWhence:number, argBufferSize:number, bufferOffset:flatbuffers.Offset, offset:bigint):flatbuffers.Offset {
+static createInterface(builder:flatbuffers.Builder, state:State, operation:Operation, argOffset:bigint, argWhence:number, argBufferSize:number, bufferOffset:flatbuffers.Offset, offset:bigint):flatbuffers.Offset {
   Interface.startInterface(builder);
   Interface.addState(builder, state);
   Interface.addOperation(builder, operation);

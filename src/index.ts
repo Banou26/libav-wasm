@@ -1,11 +1,10 @@
 import type { Resolvers as WorkerResolvers } from './worker'
 
 import PQueue from 'p-queue'
-import * as flatbuffers from 'flatbuffers'
 import { call } from 'osra'
 
-import { Interface, Operation } from './shared-buffer_generated'
-import { notifyInterface, setSharedInterface, waitForInterfaceNotification } from './utils'
+import { Operation, State } from './shared-buffer_generated'
+import { getSharedInterface, notifyInterface, setSharedInterface, waitForInterfaceNotification } from './utils'
 
 /** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
 export enum SEEK_FLAG {
@@ -40,7 +39,7 @@ export const makeTransmuxer = async ({
   seek: _seek,
   length,
   sharedArrayBufferSize = 10_000_000,
-  bufferSize = 10_000_000
+  bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
   const sharedArrayBuffer = new SharedArrayBuffer(sharedArrayBufferSize)
   const worker = new Worker('/worker.js', { type: 'module' })
@@ -68,44 +67,40 @@ export const makeTransmuxer = async ({
       {
         length,
         sharedArrayBuffer,
-        bufferSize
+        bufferSize,
+        write: (buffer: Uint8Array) => {
+          console.log('receive write', buffer)
+        }
       }
     )
 
   const seek = async (offset: bigint, whence: SEEK_WHENCE_FLAG) => {
     const resultOffset = await _seek(offset, whence)
     setSharedInterface(sharedArrayBuffer, {
-      state: 2,
+      state: State.Responded,
       operation: Operation.Read,
       offset: resultOffset,
-      argBufferSize: 0,
       argOffset: 0n,
       argWhence: 0
     })
-    notifyInterface(sharedArrayBuffer, 0)
   }
 
   const read = async (size: number) => {
     const readResultBuffer = await _read(currentOffset, size)
     setSharedInterface(sharedArrayBuffer, {
-      state: 2,
+      state: State.Responded,
       operation: Operation.Read,
       buffer: readResultBuffer,
-      argBufferSize: 0,
-      argOffset: 0n,
-      argWhence: 0
+      argBufferSize: 0
     })
-    notifyInterface(sharedArrayBuffer, 0)
   }
 
   const waitForTransmuxerCall = async () => {
-    const uint8Array = new Uint8Array(sharedArrayBuffer)
-    await waitForInterfaceNotification(sharedArrayBuffer, 0, 1)
-    const byteBuffer = new flatbuffers.ByteBuffer(uint8Array)
-    const responseSharedInterface = Interface.getRootAsInterface(byteBuffer)
+    await waitForInterfaceNotification(sharedArrayBuffer, 0, State.Requested)
+    const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
     const operation = responseSharedInterface.operation()
-    if (operation === Operation.Read) await read(responseSharedInterface.argBufferSize())
-    if (operation === Operation.Seek) await seek(responseSharedInterface.argOffset(), responseSharedInterface.argWhence())
+    if (operation === Operation.Read) await addBlockingTask(() => read(responseSharedInterface.argBufferSize()))
+    if (operation === Operation.Seek) await addBlockingTask(() => seek(responseSharedInterface.argOffset(), responseSharedInterface.argWhence()))
     waitForTransmuxerCall()
   }
 

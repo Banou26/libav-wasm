@@ -6,96 +6,66 @@ import * as flatbuffers from 'flatbuffers'
 import { makeCallListener, registerListener } from 'osra'
 
 import WASMModule from 'libav'
-import { Interface, Operation } from './shared-buffer_generated'
+import { Interface, Operation, State } from './shared-buffer_generated'
+import { freeInterface, getSharedInterface, setSharedInterface, waitSyncForInterfaceNotification } from './utils'
+import { SEEK_WHENCE_FLAG } from '.'
 
 const module = await WASMModule.default({
   locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
 })
 
-/** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
-enum SEEK_FLAG {
-  NONE = 0,
-  /** seek backward */
-  AVSEEK_FLAG_BACKWARD = 1 << 0,
-  /** seeking based on position in bytes */
-  AVSEEK_FLAG_BYTE = 1 << 1,
-  /** seek to any frame, even non-keyframes */
-  AVSEEK_FLAG_ANY = 1 << 2,
-  /** seeking based on frame number */
-  AVSEEK_FLAG_FRAME = 1 << 3
-}
-
-enum SEEK_WHENCE_FLAG {
-  SEEK_SET = 0,
-  SEEK_CUR = 1 << 0,
-  SEEK_END = 1 << 1,
-  AVSEEK_SIZE = 1 << 16 //0x10000,
-}
-
+// @ts-ignore
 const init = makeCallListener(async (
-  { length, sharedArrayBuffer, bufferSize }:
-  { length: number, sharedArrayBuffer: SharedArrayBuffer, bufferSize: number }, extra) => {
+  { length, sharedArrayBuffer, bufferSize, write }:
+  {
+    length: number
+    sharedArrayBuffer: SharedArrayBuffer
+    bufferSize: number
+    write: (buffer: Uint8Array) => Promise<void>
+  }, extra) => {
   let currentOffset = 0
   const transmuxer = new module.Transmuxer({
     bufferSize,
     error: (critical, message) => {
       console.log('error', critical, message)
     },
-    seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
-      if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
-        currentOffset = currentOffset + offset
-        return currentOffset
-      }
-      if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
-        // In this case offset should be a negative number
-        currentOffset = length + offset
-        return currentOffset
-      }
-      if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
-        currentOffset = offset
-        return currentOffset;
-      }
-      if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
-        return length
-      }
+    seek: (offset: bigint, whence: SEEK_WHENCE_FLAG) => {
+      console.log('seeking', offset, whence)
+      setSharedInterface(sharedArrayBuffer, {
+        state: State.Requested,
+        operation: Operation.Seek,
+        argOffset: offset,
+        argWhence: whence
+      })
+      waitSyncForInterfaceNotification(sharedArrayBuffer, 0, State.Responded)
+      const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
+      const offsetResult = responseSharedInterface.offset()
+      freeInterface(sharedArrayBuffer)
+      console.log('seeked', offsetResult)
+      return offsetResult
     },
     read: (bufferSize: number) => {
-      const int32Array = new Int32Array(sharedArrayBuffer)
-      const uint8Array = new Uint8Array(sharedArrayBuffer)
-      const builder = new flatbuffers.Builder(sharedArrayBuffer.byteLength)
-      const sharedInterface = Interface.createInterface(builder, 1, Operation.Read, bufferSize)
-      builder.finish(sharedInterface)
-      const result = builder.asUint8Array()
-      uint8Array.set(result)
-
-      Atomics.notify(int32Array, 0)
-      Atomics.wait(int32Array, 0, 2)
-
-      const byteBuffer = new flatbuffers.ByteBuffer(uint8Array)
-      const responseSharedInterface = Interface.getRootAsInterface(byteBuffer)
-      const resultBuffer = responseSharedInterface.bufferArray()
-      if (!resultBuffer) throw new Error('Transmuxer read returned null result buffer')
-
-      uint8Array.fill(0)
-
-      const buffer = resultBuffer.buffer
-      currentOffset = currentOffset + bufferSize
+      console.log('reading', bufferSize)
+      setSharedInterface(sharedArrayBuffer, {
+        state: State.Requested,
+        operation: Operation.Read,
+        argBufferSize: bufferSize
+      })
+      waitSyncForInterfaceNotification(sharedArrayBuffer, 0, State.Responded)
+      const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
+      const buffer: Uint8Array | null = structuredClone(responseSharedInterface.bufferArray())
+      if (!buffer) throw new Error('Transmuxer read returned null result buffer')
+      freeInterface(sharedArrayBuffer)
+      console.log('read', buffer)
       return {
         buffer,
         size: buffer.byteLength
       }
     },
     write: (type, keyframeIndex, size, offset, arrayBuffer, keyframePts, keyframePos, done) => {
+      console.log('writing', arrayBuffer)
       const buffer = new Uint8Array(arrayBuffer.slice())
-      chunks.push({ keyframeIndex, size, offset, arrayBuffer: buffer, pts: keyframePts, pos: keyframePos, done })
-      if (closed) return
-      if (done) {
-        closed = true
-        if (buffer.byteLength) controller.enqueue(buffer)
-        controller.close()
-      } else {
-        controller.enqueue(buffer)
-      }
+      console.log('wrote', buffer)
     }
   })
 
