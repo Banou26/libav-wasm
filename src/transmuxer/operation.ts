@@ -2,6 +2,5 @@
 
 export enum Operation {
   Seek = 0,
-  Read = 1,
-  Write = 2
+  Read = 1
 }

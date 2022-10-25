@@ -11,7 +11,13 @@ fetch('../dist/spy13broke.mkv')
       bufferSize: 1_000_000,
       sharedArrayBufferSize: 2_000_000,
       length: contentLength,
-      read: (offset, size) => Promise.resolve(new Uint8Array(buffer.slice(offset, size)))
+      read: async (offset, size) => {
+        console.log('read', offset, size)
+        return new Uint8Array(buffer.slice(Number(offset), size))
+      },
+      seek: async (offset, whence) => {
+        console.log('seek', offset, whence)
+        return -1n
+      }
     })
-
   })

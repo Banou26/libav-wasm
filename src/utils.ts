@@ -9,11 +9,20 @@ type SharedInterface = {
   argWhence: number
   argBufferSize: number
   buffer: Uint8Array
+  offset: bigint
 }
 
 export const setSharedInterface = (
   sharedArrayBuffer: SharedArrayBuffer,
-  { state, operation, argOffset, argWhence, argBufferSize, buffer }: SharedInterface
+  {
+    state,
+    operation,
+    argOffset,
+    argWhence,
+    argBufferSize,
+    buffer = new Uint8Array(),
+    offset = 0n
+  }: Omit<SharedInterface, 'buffer' | 'offset'> & Partial<Pick<SharedInterface, 'buffer' | 'offset'>>
 ) => {
   const uint8Array = new Uint8Array(sharedArrayBuffer)
   const builder = new flatbuffers.Builder(sharedArrayBuffer.byteLength)
@@ -25,7 +34,8 @@ export const setSharedInterface = (
     argOffset,
     argWhence,
     argBufferSize,
-    bufferVector
+    bufferVector,
+    offset
   )
   builder.finish(sharedInterface)
   const result = builder.asUint8Array()

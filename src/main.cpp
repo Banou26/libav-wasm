@@ -174,9 +174,15 @@ extern "C" {
         if (
           in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
           in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
-          in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
+          in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE &&
+          in_codecpar->codec_type != AVMEDIA_TYPE_ATTACHMENT
         ) {
           streams_list[i] = -1;
+          continue;
+        }
+
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+          printf("HEADER IS ATTACHMENT TYPE, %d \n", i);
           continue;
         }
 
@@ -194,7 +200,7 @@ extern "C" {
           codecCtx->subtitle_header = (uint8_t *)av_malloc(codecCtx->extradata_size + 1);
           if (!codecCtx->subtitle_header) {
             res = AVERROR(ENOMEM);
-            return;
+            continue;
           }
           if (codecCtx->extradata_size) {
             memcpy(codecCtx->subtitle_header, codecCtx->extradata, codecCtx->extradata_size);
@@ -264,14 +270,19 @@ extern "C" {
           continue;
         }
 
-        if (input_format_context->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        in_stream  = input_format_context->streams[packet->stream_index];
+        out_stream = output_format_context->streams[packet->stream_index];
+
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+          printf("PACKET IS ATTACHMENT TYPE, %lld %s \n", packet->pos, packet->data);
+          continue;
+        }
+
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
           // auto str = av_strdup((char*)packet->data);
           printf("PACKET IS SUBTITLE TYPE, %lld %s \n", packet->pos, packet->data);
           continue;
         }
-
-        in_stream  = input_format_context->streams[packet->stream_index];
-        out_stream = output_format_context->streams[packet->stream_index];
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
           keyframe_index += 1;

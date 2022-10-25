@@ -20,7 +20,7 @@ interface Chunk {
   buffered: boolean
 }
 
-const BUFFER_SIZE = 5_000_000
+const BUFFER_SIZE = 1_500_000 // 6_000_000 / 2
 const PUSH_ARRAY_SIZE = BUFFER_SIZE * 2 // 10_000_000
 
 let libavInstance
@@ -220,7 +220,7 @@ const remux =
         // return result
       },
       read: (bufferSize: number) => {
-        // console.log('reading from ', currentOffset, currentOffset + bufferSize)
+        console.log('reading from ', currentOffset, currentOffset + bufferSize)
         const _buffer = buffer.slice(currentOffset, currentOffset + bufferSize)
         currentOffset = currentOffset + bufferSize
         return {

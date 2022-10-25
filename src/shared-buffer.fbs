@@ -8,10 +8,19 @@ enum Operation:byte {
 table Interface {
   state: int32;
   operation: Operation;
+  
+  // argument types
+  // seek
   arg_offset: long;
   arg_whence: int;
+  // read
   arg_buffer_size: int;
+
+  // return types
+  // read
   buffer: [uint8];
+  // seek
+  offset: long;
 }
 
 root_type Interface;
