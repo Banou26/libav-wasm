@@ -17,8 +17,9 @@ table Interface {
   operation: Operation;
   
   // argument types
-  // seek
+  // seek and read
   arg_offset: long;
+  // seek
   arg_whence: int;
   // read
   arg_buffer_size: int;

@@ -21,14 +21,14 @@ export const setSharedInterface = (
       & (
         Pick<SharedInterface, 'argOffset' | 'argWhence'>
         | Pick<SharedInterface, 'argOffset' | 'argWhence' | 'offset'>
-        | Pick<SharedInterface, 'argBufferSize'>
-        | Pick<SharedInterface, 'argBufferSize' | 'buffer'>
+        | Pick<SharedInterface, 'argOffset' | 'argBufferSize'>
+        | Pick<SharedInterface, 'argOffset' | 'argBufferSize' | 'buffer'>
       )
     )
 ) => {
   const uint8Array = new Uint8Array(sharedArrayBuffer)
   const builder = new flatbuffers.Builder(sharedArrayBuffer.byteLength)
-  const bufferVector = Interface.createBufferVector(builder, buffer)
+  const bufferVector = Interface.createBufferVector(builder, uint8Array)
   const sharedInterface = Interface.createInterface(
     builder,
     options.state,

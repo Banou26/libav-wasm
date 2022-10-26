@@ -61,9 +61,9 @@ export const makeTransmuxer = async ({
   const addTask = <T extends (...args: any) => any>(func: T) =>
     apiQueue.add<Awaited<ReturnType<T>>>(func)
   
-  let currentOffset = 0n
-  const { process: workerProcess, seek: workerSeek } = await target(
-    'init',
+  const { process: workerProcess, seek: workerSeek } =
+    await target(
+      'init',
       {
         length,
         sharedArrayBuffer,
@@ -85,12 +85,13 @@ export const makeTransmuxer = async ({
     })
   }
 
-  const read = async (size: number) => {
-    const readResultBuffer = await _read(currentOffset, size)
+  const read = async (offset: bigint, size: number) => {
+    const readResultBuffer = await _read(offset, size)
     setSharedInterface(sharedArrayBuffer, {
       state: State.Responded,
       operation: Operation.Read,
       buffer: readResultBuffer,
+      argOffset: offset,
       argBufferSize: 0
     })
   }
@@ -99,8 +100,22 @@ export const makeTransmuxer = async ({
     await waitForInterfaceNotification(sharedArrayBuffer, 0, State.Requested)
     const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
     const operation = responseSharedInterface.operation()
-    if (operation === Operation.Read) await addBlockingTask(() => read(responseSharedInterface.argBufferSize()))
-    if (operation === Operation.Seek) await addBlockingTask(() => seek(responseSharedInterface.argOffset(), responseSharedInterface.argWhence()))
+    if (operation === Operation.Read) {
+      await addBlockingTask(() =>
+        read(
+          responseSharedInterface.argOffset(),
+          responseSharedInterface.argBufferSize()
+        )
+      )
+    }
+    if (operation === Operation.Seek) {
+      await addBlockingTask(() =>
+        seek(
+          responseSharedInterface.argOffset(),
+          responseSharedInterface.argWhence()
+        )
+      )
+    }
     waitForTransmuxerCall()
   }
 
