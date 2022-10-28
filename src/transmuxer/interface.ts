@@ -3,7 +3,6 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { Operation } from '../transmuxer/operation.js';
-import { State } from '../transmuxer/state.js';
 
 
 export class Interface {
@@ -24,77 +23,68 @@ static getSizePrefixedRootAsInterface(bb:flatbuffers.ByteBuffer, obj?:Interface)
   return (obj || new Interface()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-state():State {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readInt8(this.bb_pos + offset) : State.Idle;
-}
-
 operation():Operation {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
+  const offset = this.bb!.__offset(this.bb_pos, 4);
   return offset ? this.bb!.readInt8(this.bb_pos + offset) : Operation.Idle;
 }
 
-argOffset():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+argOffset():number {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
 argWhence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 8);
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
 argBufferSize():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 10);
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
 buffer(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 bufferLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 bufferArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
-offset():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+offset():number {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
 static startInterface(builder:flatbuffers.Builder) {
-  builder.startObject(7);
-}
-
-static addState(builder:flatbuffers.Builder, state:State) {
-  builder.addFieldInt8(0, state, State.Idle);
+  builder.startObject(6);
 }
 
 static addOperation(builder:flatbuffers.Builder, operation:Operation) {
-  builder.addFieldInt8(1, operation, Operation.Idle);
+  builder.addFieldInt8(0, operation, Operation.Idle);
 }
 
-static addArgOffset(builder:flatbuffers.Builder, argOffset:bigint) {
-  builder.addFieldInt64(2, argOffset, BigInt('0'));
+static addArgOffset(builder:flatbuffers.Builder, argOffset:number) {
+  builder.addFieldInt32(1, argOffset, 0);
 }
 
 static addArgWhence(builder:flatbuffers.Builder, argWhence:number) {
-  builder.addFieldInt32(3, argWhence, 0);
+  builder.addFieldInt32(2, argWhence, 0);
 }
 
 static addArgBufferSize(builder:flatbuffers.Builder, argBufferSize:number) {
-  builder.addFieldInt32(4, argBufferSize, 0);
+  builder.addFieldInt32(3, argBufferSize, 0);
 }
 
 static addBuffer(builder:flatbuffers.Builder, bufferOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, bufferOffset, 0);
+  builder.addFieldOffset(4, bufferOffset, 0);
 }
 
 static createBufferVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -109,8 +99,8 @@ static startBufferVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(1, numElems, 1);
 }
 
-static addOffset(builder:flatbuffers.Builder, offset:bigint) {
-  builder.addFieldInt64(6, offset, BigInt('0'));
+static addOffset(builder:flatbuffers.Builder, offset:number) {
+  builder.addFieldInt32(5, offset, 0);
 }
 
 static endInterface(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -126,9 +116,8 @@ static finishSizePrefixedInterfaceBuffer(builder:flatbuffers.Builder, offset:fla
   builder.finish(offset, undefined, true);
 }
 
-static createInterface(builder:flatbuffers.Builder, state:State, operation:Operation, argOffset:bigint, argWhence:number, argBufferSize:number, bufferOffset:flatbuffers.Offset, offset:bigint):flatbuffers.Offset {
+static createInterface(builder:flatbuffers.Builder, operation:Operation, argOffset:number, argWhence:number, argBufferSize:number, bufferOffset:flatbuffers.Offset, offset:number):flatbuffers.Offset {
   Interface.startInterface(builder);
-  Interface.addState(builder, state);
   Interface.addOperation(builder, operation);
   Interface.addArgOffset(builder, argOffset);
   Interface.addArgWhence(builder, argWhence);

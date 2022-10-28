@@ -1,79 +1,82 @@
 import * as flatbuffers from 'flatbuffers'
 
-import { Interface, Operation, State } from './shared-buffer_generated'
+import { Interface, Operation } from './shared-buffer_generated'
+
+export enum State {
+  Idle = 0,
+  Requested = 1,
+  Responded = 2
+}
 
 type SharedInterface = {
-  state: State
   operation: Operation
-  argOffset: bigint
+  argOffset: number
   argWhence: number
   argBufferSize: number
   buffer: Uint8Array
-  offset: bigint
+  offset: number
 }
 
 export const setSharedInterface = (
   sharedArrayBuffer: SharedArrayBuffer,
   options:
     SharedInterface
-    | (
-      Pick<SharedInterface, 'state' | 'operation'>
-      & (
-        Pick<SharedInterface, 'argOffset' | 'argWhence'>
-        | Pick<SharedInterface, 'argOffset' | 'argWhence' | 'offset'>
-        | Pick<SharedInterface, 'argOffset' | 'argBufferSize'>
-        | Pick<SharedInterface, 'argOffset' | 'argBufferSize' | 'buffer'>
-      )
+    | Pick<SharedInterface, 'operation'> 
+    & (
+      Pick<SharedInterface, 'argOffset' | 'argWhence'>
+      | Pick<SharedInterface, 'argOffset' | 'argWhence' | 'offset'>
+      | Pick<SharedInterface, 'argOffset' | 'argBufferSize'>
+      | Pick<SharedInterface, 'argOffset' | 'argBufferSize' | 'buffer'>
     )
 ) => {
   const uint8Array = new Uint8Array(sharedArrayBuffer)
-  const builder = new flatbuffers.Builder(sharedArrayBuffer.byteLength)
-  const bufferVector = Interface.createBufferVector(builder, uint8Array)
+  const builder = new flatbuffers.Builder(sharedArrayBuffer.byteLength - 4)
   const sharedInterface = Interface.createInterface(
     builder,
-    options.state,
     options.operation,
-    'argOffset' in options ? options.argOffset : 0n,
+    'argOffset' in options ? options.argOffset : 0,
     'argWhence' in options ? options.argWhence : 0,
     'argBufferSize' in options ? options.argBufferSize : 0,
-    bufferVector,
-    'offset' in options ? options.offset : 0n
+    'buffer' in options
+      ? Interface.createBufferVector(builder, options.buffer)
+      : Interface.createBufferVector(builder, new Uint8Array()),
+    'offset' in options ? options.offset : 0
   )
+  // console.log('sharedInterface', sharedInterface)
   builder.finish(sharedInterface)
   const result = builder.asUint8Array()
-  uint8Array.set(result)
-  notifyInterface(sharedArrayBuffer, 0)
+  uint8Array.set(result, 4)
 }
 
 export const getSharedInterface = (sharedArrayBuffer: SharedArrayBuffer) => {
-  const uint8Array = new Uint8Array(sharedArrayBuffer)
+  const uint8Array = new Uint8Array(sharedArrayBuffer.slice(4))
   const byteBuffer = new flatbuffers.ByteBuffer(uint8Array)
   return Interface.getRootAsInterface(byteBuffer)
 }
 
-export const notifyInterface = (sharedArrayBuffer: SharedArrayBuffer, index: number) => {
+export const notifyInterface = (sharedArrayBuffer: SharedArrayBuffer, value: State) => {
   const int32Array = new Int32Array(sharedArrayBuffer)
-  return Atomics.notify(int32Array, index)
+  int32Array.set([value], 0)
+  return Atomics.notify(int32Array, 0)
 }
 
-export const waitForInterfaceNotification = (sharedArrayBuffer: SharedArrayBuffer, index: number, value: State) => {
+export const waitForInterfaceNotification = (
+  sharedArrayBuffer: SharedArrayBuffer,
+  value: State
+): Promise<'ok' | 'timed-out'> | 'not-equal' => {
+    const int32Array = new Int32Array(sharedArrayBuffer)
+    const result = Atomics.waitAsync(int32Array, 0, value, 1_000)
+
+    if (result.value === 'not-equal') {
+      return result.value
+    }
+    return result.value as Promise<"ok" | "timed-out">
+  }
+
+export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayBuffer, value: State) => {
   const int32Array = new Int32Array(sharedArrayBuffer)
-  return Atomics.waitAsync(int32Array, index, value).value as Promise<"ok" | "timed-out">
+  console.log('GONNA WAIT FOR NOTIFICATION', value)
+  return Atomics.wait(int32Array, 0, value)
 }
 
-export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayBuffer, index: number, value: State) => {
-  const int32Array = new Int32Array(sharedArrayBuffer)
-  return Atomics.wait(int32Array, index, value)
-}
-
-export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => {
-  setSharedInterface(sharedArrayBuffer, {
-    state: State.Idle,
-    operation: Operation.Idle,
-    argOffset: 0n,
-    argWhence: 0,
-    argBufferSize: 0,
-    buffer: new Uint8Array(),
-    offset: 0n,
-  })
-}
+export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => new Uint8Array(sharedArrayBuffer).fill(0)

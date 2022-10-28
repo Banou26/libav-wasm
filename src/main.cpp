@@ -250,8 +250,7 @@ extern "C" {
 
 
     // todo: try to implement subtitle decoding: https://gist.github.com/reusee/7372569
-    void process(int size) {
-      processed_bytes += size;
+    void process() {
       // printf("process call, processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
       int res;
       AVPacket* packet = av_packet_alloc();
@@ -385,6 +384,7 @@ extern "C" {
       return output_avio_context->pos;
     }
 
+    // https://stackoverflow.com/a/3062994/4465603
     // todo: check if using any of these might help
     // input_format_context->av_class, this has AVOption, which has {"seek2any", "allow seeking to non-keyframes on demuxer level when supported"
     // avformat_seek_file, maybe this could be used instead of av_seek_frame ?

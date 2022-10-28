@@ -6,19 +6,13 @@ enum Operation:byte {
   Read = 2
 }
 
-enum State:byte {
-  Idle = 0,
-  Requested = 1,
-  Responded = 2
-}
-
 table Interface {
-  state: State;
+  // state: State;
   operation: Operation;
   
   // argument types
   // seek and read
-  arg_offset: long;
+  arg_offset: int;
   // seek
   arg_whence: int;
   // read
@@ -28,7 +22,7 @@ table Interface {
   // read
   buffer: [uint8];
   // seek
-  offset: long;
+  offset: int;
 }
 
 root_type Interface;

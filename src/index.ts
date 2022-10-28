@@ -3,8 +3,8 @@ import type { Resolvers as WorkerResolvers } from './worker'
 import PQueue from 'p-queue'
 import { call } from 'osra'
 
-import { Operation, State } from './shared-buffer_generated'
-import { getSharedInterface, notifyInterface, setSharedInterface, waitForInterfaceNotification } from './utils'
+import { Operation } from './shared-buffer_generated'
+import { getSharedInterface, notifyInterface, setSharedInterface, State, waitForInterfaceNotification } from './utils'
 
 /** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
 export enum SEEK_FLAG {
@@ -27,8 +27,8 @@ export enum SEEK_WHENCE_FLAG {
 }
 
 export type MakeTransmuxerOptions = {
-  read: (offset: bigint, size: number) => Promise<Uint8Array>
-  seek: (offset: bigint, whence: SEEK_WHENCE_FLAG) => Promise<bigint>
+  read: (offset: number, size: number) => Promise<Uint8Array>
+  seek: (offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
   length: number
   sharedArrayBufferSize: number
   bufferSize: number
@@ -42,7 +42,20 @@ export const makeTransmuxer = async ({
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
   const sharedArrayBuffer = new SharedArrayBuffer(sharedArrayBufferSize)
-  const worker = new Worker('/worker.js', { type: 'module' })
+  const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+
+  console.log('mt sharedArrayBuffer', sharedArrayBuffer)
+
+  await new Promise((resolve, reject) => {
+    const onMessage = (message: MessageEvent) => {
+      if (message.data !== 'init') return
+      resolve(undefined)
+      worker.removeEventListener('message', onMessage)
+    }
+    worker.addEventListener('message', onMessage)
+    setTimeout(reject, 30_000)
+  })
+
   const target = call<WorkerResolvers>(worker)
 
   const blockingQueue = new PQueue({ concurrency: 1 })
@@ -61,7 +74,7 @@ export const makeTransmuxer = async ({
   const addTask = <T extends (...args: any) => any>(func: T) =>
     apiQueue.add<Awaited<ReturnType<T>>>(func)
   
-  const { process: workerProcess, seek: workerSeek } =
+  const { init: workerInit, process: workerProcess, seek: workerSeek } =
     await target(
       'init',
       {
@@ -74,32 +87,43 @@ export const makeTransmuxer = async ({
       }
     )
 
-  const seek = async (offset: bigint, whence: SEEK_WHENCE_FLAG) => {
+  const seek = async (offset: number, whence: SEEK_WHENCE_FLAG) => {
     const resultOffset = await _seek(offset, whence)
+    console.log('MT SEEK SETTING VALUE')
     setSharedInterface(sharedArrayBuffer, {
-      state: State.Responded,
       operation: Operation.Read,
       offset: resultOffset,
-      argOffset: 0n,
+      argOffset: 0,
       argWhence: 0
     })
+    console.log('MT SEEK NOTIFYING RESPONDED')
+    notifyInterface(sharedArrayBuffer, State.Responded)
   }
 
-  const read = async (offset: bigint, size: number) => {
+  const read = async (offset: number, size: number) => {
     const readResultBuffer = await _read(offset, size)
+    console.log('MT READ SETTING VALUE')
     setSharedInterface(sharedArrayBuffer, {
-      state: State.Responded,
       operation: Operation.Read,
       buffer: readResultBuffer,
       argOffset: offset,
       argBufferSize: 0
     })
+    console.log('MT READ NOTIFYING RESPONDED')
+    notifyInterface(sharedArrayBuffer, State.Responded)
   }
 
   const waitForTransmuxerCall = async () => {
-    await waitForInterfaceNotification(sharedArrayBuffer, 0, State.Requested)
+    const result = await waitForInterfaceNotification(sharedArrayBuffer, State.Idle)
+
+    if (result === 'not-equal') {
+      setTimeout(waitForTransmuxerCall, 1)
+      return
+    }
+
     const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
     const operation = responseSharedInterface.operation()
+    console.log('NEW REQUEST', result, [...new Uint8Array(sharedArrayBuffer.slice(0, 5))])
     if (operation === Operation.Read) {
       await addBlockingTask(() =>
         read(
@@ -120,6 +144,11 @@ export const makeTransmuxer = async ({
   }
 
   waitForTransmuxerCall()
+
+  return {
+    init: () => workerInit(),
+    process: () => workerProcess()
+  }
 }
 
 export default makeTransmuxer
