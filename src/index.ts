@@ -44,8 +44,6 @@ export const makeTransmuxer = async ({
   const sharedArrayBuffer = new SharedArrayBuffer(sharedArrayBufferSize)
   const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
 
-  console.log('mt sharedArrayBuffer', sharedArrayBuffer)
-
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {
       if (message.data !== 'init') return
@@ -89,65 +87,58 @@ export const makeTransmuxer = async ({
 
   const seek = async (offset: number, whence: SEEK_WHENCE_FLAG) => {
     const resultOffset = await _seek(offset, whence)
-    console.log('MT SEEK SETTING VALUE')
     setSharedInterface(sharedArrayBuffer, {
       operation: Operation.Read,
       offset: resultOffset,
       argOffset: 0,
       argWhence: 0
     })
-    console.log('MT SEEK NOTIFYING RESPONDED')
-    notifyInterface(sharedArrayBuffer, State.Responded)
   }
 
   const read = async (offset: number, size: number) => {
     const readResultBuffer = await _read(offset, size)
-    console.log('MT READ SETTING VALUE')
     setSharedInterface(sharedArrayBuffer, {
       operation: Operation.Read,
       buffer: readResultBuffer,
       argOffset: offset,
       argBufferSize: 0
     })
-    console.log('MT READ NOTIFYING RESPONDED')
-    notifyInterface(sharedArrayBuffer, State.Responded)
   }
 
   const waitForTransmuxerCall = async () => {
     const result = await waitForInterfaceNotification(sharedArrayBuffer, State.Idle)
 
-    if (result === 'not-equal') {
-      setTimeout(waitForTransmuxerCall, 1)
+    if (result === 'timed-out' || (result === 'not-equal' && new Uint8Array(sharedArrayBuffer)[0] !== 1)) {
+      setTimeout(waitForTransmuxerCall, 10)
       return
     }
 
     const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
     const operation = responseSharedInterface.operation()
-    console.log('NEW REQUEST', result, [...new Uint8Array(sharedArrayBuffer.slice(0, 5))])
-    if (operation === Operation.Read) {
-      await addBlockingTask(() =>
-        read(
+
+    await addBlockingTask(async () => {
+      if (operation === Operation.Read) {
+        await read(
           responseSharedInterface.argOffset(),
           responseSharedInterface.argBufferSize()
         )
-      )
-    }
-    if (operation === Operation.Seek) {
-      await addBlockingTask(() =>
-        seek(
+      } else {
+        await seek(
           responseSharedInterface.argOffset(),
           responseSharedInterface.argWhence()
         )
-      )
-    }
+      }
+      notifyInterface(sharedArrayBuffer, State.Responded)
+      await waitForInterfaceNotification(sharedArrayBuffer, State.Responded)
+    })
     waitForTransmuxerCall()
   }
 
   waitForTransmuxerCall()
 
   return {
-    init: () => workerInit(),
-    process: () => workerProcess()
+    init: () => addTask(() => workerInit()),
+    process: () => addTask(() => workerProcess())
   }
 }
 

@@ -1,4 +1,4 @@
-import { makeTransmuxer } from '.'
+import { makeTransmuxer, SEEK_WHENCE_FLAG } from '.'
 
 
 
@@ -7,17 +7,31 @@ fetch('../dist/spy13broke.mkv')
     const contentLength = Number(headers.get('Content-Length'))
     const buffer = await new Response(body).arrayBuffer()
 
+    let currentOffset = 0
     const transmuxer = await makeTransmuxer({
       bufferSize: 1_000_000,
-      sharedArrayBufferSize: 1_500_000,
+      sharedArrayBufferSize: 2_000_000,
       length: contentLength,
       read: async (offset, size) => {
-        const buff = new Uint8Array(buffer.slice(Number(offset), size))
-        console.log('mt read', offset, size, buff)
+        const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
+        currentOffset = currentOffset + buff.byteLength
         return buff
       },
       seek: async (offset, whence) => {
-        console.log('mt seek', offset, whence)
+        if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
+          currentOffset = currentOffset + offset
+          return currentOffset;
+        }
+        if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
+          return -1;
+        }
+        if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
+          currentOffset = offset
+          return currentOffset;
+        }
+        if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
+          return contentLength;
+        }
         return -1
       }
     })

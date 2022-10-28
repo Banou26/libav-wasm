@@ -60,6 +60,21 @@ export const notifyInterface = (sharedArrayBuffer: SharedArrayBuffer, value: Sta
   return Atomics.notify(int32Array, 0)
 }
 
+export const waitForInterfaceValueNotification = (
+  sharedArrayBuffer: SharedArrayBuffer,
+  value: State
+) => {
+  const checkValue = () => {
+    const int32Array = new Int32Array(sharedArrayBuffer)
+    const result = Atomics.waitAsync(int32Array, 0, value, 1_000)
+
+    if (result.value === 'not-equal') {
+      return result.value
+    }
+    return result.value as Promise<"ok" | "timed-out">
+  }
+}
+
 export const waitForInterfaceNotification = (
   sharedArrayBuffer: SharedArrayBuffer,
   value: State
@@ -75,7 +90,6 @@ export const waitForInterfaceNotification = (
 
 export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayBuffer, value: State) => {
   const int32Array = new Int32Array(sharedArrayBuffer)
-  console.log('GONNA WAIT FOR NOTIFICATION', value)
   return Atomics.wait(int32Array, 0, value)
 }
 

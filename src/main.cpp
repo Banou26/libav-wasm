@@ -440,9 +440,9 @@ extern "C" {
     int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
-    if (buffer_size == 0) {
-      return AVERROR_EOF;
-    }
+    // if (buffer_size == 0) {
+    //   return AVERROR_EOF;
+    // }
     return buffer_size;
   }
 
