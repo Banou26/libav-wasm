@@ -37,8 +37,20 @@ fetch('../dist/spy13broke.mkv')
     })
     console.log('mt transmuxer', transmuxer)
 
-    transmuxer.init()
+    await transmuxer.init()
 
+    console.log('init finished')
+
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    transmuxer.process(10_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process()
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process()
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process()
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process()
     // setInterval(() => {
     //   console.log('process')
     //   transmuxer.process()

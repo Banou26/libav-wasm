@@ -30,8 +30,10 @@ const init = makeCallListener(async (
     error: (critical, message) => {
       console.log('worker error', critical, message)
     },
+    attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
+      console.log('ATTACHMENT', filename, mimetype, buffer)
+    },
     seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
-      console.group()
       setSharedInterface(sharedArrayBuffer, {
         operation: Operation.Seek,
         argOffset: offset,
@@ -44,11 +46,9 @@ const init = makeCallListener(async (
       if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE) currentOffset = offsetResult
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-      console.groupEnd()
       return offsetResult
     },
     read: (bufferSize: number) => {
-      console.group()
       setSharedInterface(sharedArrayBuffer, {
         operation: Operation.Read,
         argOffset: currentOffset,
@@ -65,7 +65,6 @@ const init = makeCallListener(async (
       currentOffset = currentOffset + buffer.byteLength
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-      console.groupEnd()
       return {
         buffer,
         size: buffer.byteLength
@@ -84,8 +83,8 @@ const init = makeCallListener(async (
     seek: () => {
       transmuxer.seek()
     },
-    process: () => {
-      transmuxer.process()
+    process: (size: number) => {
+      transmuxer.process(size)
     }
   }
 })

@@ -73,6 +73,7 @@ extern "C" {
     bool seeking;
     int64_t seeking_timestamp = -2;
     val read = val::undefined();
+    val attachment = val::undefined();
     val write = val::undefined();
     val seek = val::undefined();
     val error = val::undefined();
@@ -97,6 +98,7 @@ extern "C" {
       input_length = options["length"].as<int>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
+      attachment = options["attachment"];
       write = options["write"];
       seek = options["seek"];
       error = options["error"];
@@ -190,16 +192,23 @@ extern "C" {
         }
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          print_dict(in_stream->metadata);
+          // print_dict(in_stream->metadata);
+          auto codec = avcodec_find_decoder(in_codecpar->codec_id);
+          auto codecCtx = avcodec_alloc_context3(codec);
+          avcodec_parameters_to_context(codecCtx, in_codecpar);
           auto filename = av_dict_get(in_stream->metadata, "filename", NULL, AV_DICT_IGNORE_SUFFIX)->value;
           auto mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          // printf("%s %s   \n", t->key, t->value);
-          // const char *filename;
-          // AVDictionaryEntry *e;
-          // if (!*filename && (e = av_dict_get(in_stream->metadata, "filename", NULL, 0))) {
-          //   filename = e->value;
-          // }
-          printf("HEADER IS ATTACHMENT TYPE, %d %s %s \n", i, filename, mimetype);
+          attachment(
+            static_cast<std::string>(filename),
+            static_cast<std::string>(mimetype),
+            emscripten::val(
+              emscripten::typed_memory_view(
+                codecCtx->extradata_size,
+                codecCtx->extradata
+              )
+            )
+          );
+          // printf("HEADER IS ATTACHMENT TYPE, %d %s %s \n", i, filename, mimetype);
           continue;
         }
 
@@ -267,20 +276,22 @@ extern "C" {
 
 
     // todo: try to implement subtitle decoding: https://gist.github.com/reusee/7372569
-    void process() {
-      // printf("process call, processed_bytes: %d, used_input: %d\n", processed_bytes, used_input);
+    void process(int size) {
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
-
-      bool is_first_chunk = used_input == buffer_size;
-      bool is_last_chunk = used_input + buffer_size >= input_length;
-      bool output_input_init_done = false;
-      int packetIndex = 0;
       AVStream *in_stream, *out_stream;
+
+      auto start_position = input_format_context->pb->pos;
 
       // Read through all buffered frames
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
+
+        if (input_format_context->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+          printf("PACKET IS ATTACHMENT TYPE, %lld %s \n", packet->pos, packet->data);
+          continue;
+        }
+
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
@@ -289,10 +300,7 @@ extern "C" {
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
 
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          printf("PACKET IS ATTACHMENT TYPE, %lld %s \n", packet->pos, packet->data);
-          continue;
-        }
+
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
           // auto str = av_strdup((char*)packet->data);
@@ -301,12 +309,9 @@ extern "C" {
         }
 
         if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-          keyframe_index += 1;
-          keyframe_pts = packet->pts;
-          keyframe_pos = packet->pos;
-        }
-        if (input_length <= packet->pos) {
-          break;
+          // keyframe_index += 1;
+          // keyframe_pts = packet->pts;
+          // keyframe_pos = packet->pos;
         }
 
         // Rescale the PTS/DTS from the input time base to the output time base
@@ -340,28 +345,28 @@ extern "C" {
                   }
               }
           }
-
         }
         last_mux_dts_list[in_stream->index] = packet->dts;
 
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          // printf("av_interleaved_write_frame failed %d \n", processed_bytes);
-          // return;
+          printf("av_interleaved_write_frame failed\n");
           break;
         }
         av_packet_unref(packet);
-        if (!is_last_chunk && used_input + buffer_size > processed_bytes) {
+
+        if (start_position + input_format_context->pb->pos >= start_position + ((int64_t)size)) {
           break;
         }
+
       }
 
       // if (res == AVERROR_EOF) {
-      if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
-        keyframe_index -= 1;
-        done = true;
-        av_write_trailer(output_format_context);
-      }
+      // if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
+      //   keyframe_index -= 1;
+      //   done = true;
+      //   av_write_trailer(output_format_context);
+      // }
     }
 
     InfoObject getInfo () {

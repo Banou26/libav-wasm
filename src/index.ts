@@ -138,7 +138,7 @@ export const makeTransmuxer = async ({
 
   return {
     init: () => addTask(() => workerInit()),
-    process: () => addTask(() => workerProcess())
+    process: (size: number) => addTask(() => workerProcess(size))
   }
 }
 
