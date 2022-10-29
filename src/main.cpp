@@ -78,6 +78,14 @@ extern "C" {
     val error = val::undefined();
     bool done = false;
 
+    static void print_dict(const AVDictionary *m)
+    {
+        AVDictionaryEntry *t = NULL;
+        while ((t = av_dict_get(m, "", t, AV_DICT_IGNORE_SUFFIX)))
+            printf("%s %s   ", t->key, t->value);
+        printf("\n");
+    }
+
     Transmuxer(val options) {
       std::string hostStr = val::global("location")["host"].as<std::string>();
       const char* str = hostStr.c_str();
@@ -182,7 +190,16 @@ extern "C" {
         }
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          printf("HEADER IS ATTACHMENT TYPE, %d \n", i);
+          print_dict(in_stream->metadata);
+          auto filename = av_dict_get(in_stream->metadata, "filename", NULL, AV_DICT_IGNORE_SUFFIX)->value;
+          auto mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, AV_DICT_IGNORE_SUFFIX)->value;
+          // printf("%s %s   \n", t->key, t->value);
+          // const char *filename;
+          // AVDictionaryEntry *e;
+          // if (!*filename && (e = av_dict_get(in_stream->metadata, "filename", NULL, 0))) {
+          //   filename = e->value;
+          // }
+          printf("HEADER IS ATTACHMENT TYPE, %d %s %s \n", i, filename, mimetype);
           continue;
         }
 
