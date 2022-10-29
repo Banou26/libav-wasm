@@ -281,7 +281,6 @@ extern "C" {
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVStream *in_stream, *out_stream;
-
       auto start_position = input_format_context->pb->pos;
 
       // Read through all buffered frames
@@ -308,45 +307,45 @@ extern "C" {
           continue;
         }
 
-        if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-          // keyframe_index += 1;
-          // keyframe_pts = packet->pts;
-          // keyframe_pos = packet->pos;
-        }
+        // if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+        //   // keyframe_index += 1;
+        //   // keyframe_pts = packet->pts;
+        //   // keyframe_pos = packet->pos;
+        // }
 
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
         // this fixes unplayable output files but skips frames, need to find a way to properly correct so no frames are skipped
-        if (!(output_format_context->flags & AVFMT_NOTIMESTAMPS)) {
-          int64_t last_mux_dts = last_mux_dts_list[in_stream->index];
-          if (packet->dts != AV_NOPTS_VALUE &&
-              packet->pts != AV_NOPTS_VALUE &&
-              packet->dts > packet->pts) {
-            packet->pts =
-            packet->dts = packet->pts + packet->dts + last_mux_dts + 1
-                    - FFMIN3(packet->pts, packet->dts, last_mux_dts + 1)
-                    - FFMAX3(packet->pts, packet->dts, last_mux_dts + 1);
-          }
+        // if (!(output_format_context->flags & AVFMT_NOTIMESTAMPS)) {
+        //   int64_t last_mux_dts = last_mux_dts_list[in_stream->index];
+        //   if (packet->dts != AV_NOPTS_VALUE &&
+        //       packet->pts != AV_NOPTS_VALUE &&
+        //       packet->dts > packet->pts) {
+        //     packet->pts =
+        //     packet->dts = packet->pts + packet->dts + last_mux_dts + 1
+        //             - FFMIN3(packet->pts, packet->dts, last_mux_dts + 1)
+        //             - FFMAX3(packet->pts, packet->dts, last_mux_dts + 1);
+        //   }
 
-          if ((in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) &&
-              packet->dts != AV_NOPTS_VALUE &&
-              last_mux_dts != AV_NOPTS_VALUE
-            ) {
-              int64_t max = last_mux_dts + !(output_format_context->flags & AVFMT_TS_NONSTRICT);
-              if (packet->dts < max) {
-                  if (packet->pts >= packet->dts) {
-                    packet->pts = FFMAX(packet->pts, max);
-                  }
-                  packet->dts = max;
-                  if (!error.isUndefined()) {
-                    error(false, static_cast<std::string>("non monotonicaly increasing DTS values"));
-                  }
-              }
-          }
-        }
-        last_mux_dts_list[in_stream->index] = packet->dts;
+        //   if ((in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) &&
+        //       packet->dts != AV_NOPTS_VALUE &&
+        //       last_mux_dts != AV_NOPTS_VALUE
+        //     ) {
+        //       int64_t max = last_mux_dts + !(output_format_context->flags & AVFMT_TS_NONSTRICT);
+        //       if (packet->dts < max) {
+        //           if (packet->pts >= packet->dts) {
+        //             packet->pts = FFMAX(packet->pts, max);
+        //           }
+        //           packet->dts = max;
+        //           if (!error.isUndefined()) {
+        //             error(false, static_cast<std::string>("non monotonicaly increasing DTS values"));
+        //           }
+        //       }
+        //   }
+        // }
+        // last_mux_dts_list[in_stream->index] = packet->dts;
 
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
@@ -355,18 +354,11 @@ extern "C" {
         }
         av_packet_unref(packet);
 
-        if (start_position + input_format_context->pb->pos >= start_position + ((int64_t)size)) {
-          break;
+        if (input_format_context->pb->pos >= start_position + ((int64_t)size)) {
+          return;
         }
-
       }
-
-      // if (res == AVERROR_EOF) {
-      // if (is_last_chunk && processed_bytes + buffer_size > processed_bytes) {
-      //   keyframe_index -= 1;
-      //   done = true;
-      //   av_write_trailer(output_format_context);
-      // }
+      av_write_trailer(output_format_context);
     }
 
     InfoObject getInfo () {
