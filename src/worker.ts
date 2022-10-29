@@ -30,6 +30,11 @@ const init = makeCallListener(async (
     error: (critical, message) => {
       console.log('worker error', critical, message)
     },
+    subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
+      const [startTime, endTime] = isHeader ? [] as number[] : rest as number[]
+      const [language, title] = isHeader ? rest as string[] : [] as string[]
+      console.log('SUBTITLE', streamIndex, isHeader, language, title, startTime, endTime, data)
+    },
     attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
       console.log('ATTACHMENT', filename, mimetype, buffer)
     },

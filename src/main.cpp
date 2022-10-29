@@ -74,6 +74,7 @@ extern "C" {
     int64_t seeking_timestamp = -2;
     val read = val::undefined();
     val attachment = val::undefined();
+    val subtitle = val::undefined();
     val write = val::undefined();
     val seek = val::undefined();
     val error = val::undefined();
@@ -99,6 +100,7 @@ extern "C" {
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
       attachment = options["attachment"];
+      subtitle = options["subtitle"];
       write = options["write"];
       seek = options["seek"];
       error = options["error"];
@@ -233,8 +235,18 @@ extern "C" {
           }
           codecCtx->subtitle_header[codecCtx->extradata_size] = 0;
           codecCtx->subtitle_header_size = codecCtx->extradata_size;
-          printf("HEADER IS SUBTITLE TYPE, %s \n", codecCtx->subtitle_header);
-
+          // printf("HEADER IS SUBTITLE TYPE, %s \n", codecCtx->subtitle_header);
+          // print_dict(in_stream->metadata);
+          auto language = av_dict_get(in_stream->metadata, "language", NULL, AV_DICT_IGNORE_SUFFIX)->value;
+          auto title = av_dict_get(in_stream->metadata, "title", NULL, AV_DICT_IGNORE_SUFFIX)->value;
+          std::string data = reinterpret_cast<char *>(codecCtx->subtitle_header);
+          subtitle(
+            i,
+            true,
+            data,
+            static_cast<std::string>(language),
+            static_cast<std::string>(title)
+          );
           continue;
         }
 
@@ -285,12 +297,6 @@ extern "C" {
 
       // Read through all buffered frames
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
-
-        if (input_format_context->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          printf("PACKET IS ATTACHMENT TYPE, %lld %s \n", packet->pos, packet->data);
-          continue;
-        }
-
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
           continue;
@@ -299,11 +305,18 @@ extern "C" {
         in_stream  = input_format_context->streams[packet->stream_index];
         out_stream = output_format_context->streams[packet->stream_index];
 
-
-
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-          // auto str = av_strdup((char*)packet->data);
-          printf("PACKET IS SUBTITLE TYPE, %lld %s \n", packet->pos, packet->data);
+          int start = packet->pts;
+          int end = start + packet->duration;
+          // printf("PACKET IS SUBTITLE TYPE, %lld %s %lld %lld\n", packet->pos, packet->data, start, end);
+          std::string data = reinterpret_cast<char *>(packet->data);
+          subtitle(
+            i,
+            false,
+            data,
+            start,
+            end
+          );
           continue;
         }
 
