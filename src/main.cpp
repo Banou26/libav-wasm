@@ -306,12 +306,12 @@ extern "C" {
         out_stream = output_format_context->streams[packet->stream_index];
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-          int start = packet->pts;
-          int end = start + packet->duration;
+          long start = packet->pts;
+          long end = start + packet->duration;
           // printf("PACKET IS SUBTITLE TYPE, %lld %s %lld %lld\n", packet->pos, packet->data, start, end);
           std::string data = reinterpret_cast<char *>(packet->data);
           subtitle(
-            i,
+            packet->stream_index,
             false,
             data,
             start,
@@ -320,14 +320,22 @@ extern "C" {
           continue;
         }
 
-        // if (out_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-        //   // keyframe_index += 1;
-        //   // keyframe_pts = packet->pts;
-        //   // keyframe_pos = packet->pos;
-        // }
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+          // keyframe_index += 1;
+          keyframe_pts = packet->pts;
+          keyframe_pos = packet->pos;
+          printf("BEFORE packet duration: %lld, PTS: %lld, DTS: %lld, fixedPTS?: %lld,  fixedDTS?: %lld \n", packet->duration, packet->pts, packet->dts, packet->pts, packet->pts + packet->duration);
+        }
 
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
+          // keyframe_index += 1;
+          // keyframe_pts = packet->pts;
+          // keyframe_pos = packet->pos;
+          printf("AFTER packet duration: %lld, PTS: %lld, DTS: %lld, fixedPTS?: %lld,  fixedDTS?: %lld \n", packet->duration, packet->pts, packet->dts, packet->pts, packet->pts + packet->duration);
+        }
 
         // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
         // this fixes unplayable output files but skips frames, need to find a way to properly correct so no frames are skipped
@@ -371,7 +379,7 @@ extern "C" {
           return;
         }
       }
-      av_write_trailer(output_format_context);
+      // av_write_trailer(output_format_context);
     }
 
     InfoObject getInfo () {
@@ -389,20 +397,6 @@ extern "C" {
       };
     }
 
-    void clearInput() {
-      input_stream.clear();
-      input_stream.str("");
-      input_stream.seekp(0);
-      input_stream.seekg(0);
-    }
-
-    void clearOutput() {
-      output_stream.clear();
-      output_stream.str("");
-      output_stream.seekp(0);
-      output_stream.seekg(0);
-    }
-
     int64_t getInputPosition () {
       return input_avio_context->pos;
     }
@@ -417,44 +411,26 @@ extern "C" {
     // avformat_seek_file, maybe this could be used instead of av_seek_frame ?
     int _seek(int timestamp, int flags) {
       int res;
+      printf("seeking\n");
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("av_seek_frame errored\n");
       }
-      AVPacket* packet = av_packet_alloc();
-      res = av_read_frame(input_format_context, packet);
-      char buf[1024];
-      av_strerror(res, buf, sizeof(buf));
-      printf("av_read_frame res %d %s \n", res, buf);
-      av_packet_unref(packet);
+      printf("seek done\n");
       return 0;
     }
 
     void close () {
-      // avformat_free_context(input_format_context);
-      // avformat_free_context(output_format_context);
-      // avio_close(avioContext);
-      // avio_close(output_avio_context);
-    }
-
-    void push(std::string buf) {
-      input_stream.write(buf.c_str(), buf.length());
-      processed_bytes += buf.length();
-    }
-
-    emscripten::val getInt8Array() {
-      return emscripten::val(
-        emscripten::typed_memory_view(
-          output_stream.str().size(),
-          output_stream.str().data()
-        )
-      );
+      avformat_free_context(input_format_context);
+      avformat_free_context(output_format_context);
+      avio_close(input_avio_context);
+      avio_close(output_avio_context);
     }
   };
 
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
     auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     auto& seek = remuxObject.seek;
-    auto result = seek((int)offset, whence).as<long>();
+    auto result = seek((long)offset, whence).as<long>();
     return result;
   }
 
@@ -462,14 +438,14 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     auto& read = remuxObject.read;
-    val res = read(buf_size, remuxObject.used_input);
+    val res = read((long)remuxObject.input_format_context->pb->pos, buf_size);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     remuxObject.used_input += buf_size;
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
-    // if (buffer_size == 0) {
-    //   return AVERROR_EOF;
-    // }
+    if (buffer_size == 0) {
+      return AVERROR_EOF;
+    }
     return buffer_size;
   }
 
@@ -477,10 +453,7 @@ extern "C" {
     auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     auto& write = remuxObject.write;
     write(
-      static_cast<std::string>("data"),
-      remuxObject.keyframe_index - 2,
-      buf_size,
-      remuxObject.written_output,
+      (long)remuxObject.input_format_context->pb->pos,
       emscripten::val(
         emscripten::typed_memory_view(
           buf_size,
@@ -488,10 +461,8 @@ extern "C" {
         )
       ),
       remuxObject.keyframe_pts,
-      remuxObject.keyframe_pos,
-      remuxObject.done
+      remuxObject.keyframe_pos
     );
-    remuxObject.written_output += buf_size;
     return buf_size;
   }
 
@@ -510,13 +481,9 @@ extern "C" {
     class_<Transmuxer>("Transmuxer")
       .constructor<emscripten::val>()
       .function("init", &Transmuxer::init)
-      .function("push", &Transmuxer::push)
       .function("process", &Transmuxer::process)
       .function("close", &Transmuxer::close)
-      .function("clearInput", &Transmuxer::clearInput)
-      .function("clearOutput", &Transmuxer::clearOutput)
       .function("seek", &Transmuxer::_seek)
-      .function("getInfo", &Transmuxer::getInfo)
-      .function("getInt8Array", &Transmuxer::getInt8Array);
+      .function("getInfo", &Transmuxer::getInfo);
   }
 }

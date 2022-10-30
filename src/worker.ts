@@ -8,7 +8,7 @@ import WASMModule from 'libav'
 
 import {  Operation } from './shared-buffer_generated'
 import { freeInterface, getSharedInterface, notifyInterface, setSharedInterface, State, waitSyncForInterfaceNotification } from './utils'
-import { SEEK_WHENCE_FLAG } from '.'
+import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '.'
 
 const module = await WASMModule({
   locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
@@ -21,7 +21,7 @@ const init = makeCallListener(async (
     length: number
     sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
-    write: (buffer: Uint8Array) => Promise<void>
+    write: (offset:number, buffer: ArrayBufferLike, keyframePts: number, keyframePos: number) => Promise<void>
   }, extra) => {
   let currentOffset = 0
   const transmuxer = new module.Transmuxer({
@@ -53,10 +53,10 @@ const init = makeCallListener(async (
       notifyInterface(sharedArrayBuffer, State.Idle)
       return offsetResult
     },
-    read: (bufferSize: number) => {
+    read: (offset: number, bufferSize: number) => {
       setSharedInterface(sharedArrayBuffer, {
         operation: Operation.Read,
-        argOffset: currentOffset,
+        argOffset: offset,
         argBufferSize: bufferSize
       })
       notifyInterface(sharedArrayBuffer, State.Requested)
@@ -67,7 +67,7 @@ const init = makeCallListener(async (
       const buffer = new ArrayBuffer(sharedBuffer.byteLength)
       const uint8Buffer = new Uint8Array(buffer)
       uint8Buffer.set(sharedBuffer)
-      currentOffset = currentOffset + buffer.byteLength
+      currentOffset = offset + buffer.byteLength
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
       return {
@@ -75,9 +75,9 @@ const init = makeCallListener(async (
         size: buffer.byteLength
       }
     },
-    write: (type, keyframeIndex, size, offset, arrayBuffer, keyframePts, keyframePos, done) => {
+    write: async (offset: number, arrayBuffer: Uint8Array, keyframePts: number, keyframePos: number) => {
       const buffer = new Uint8Array(arrayBuffer.slice())
-      write(buffer.buffer)
+      await write(offset, buffer.buffer, keyframePts, keyframePos)
     }
   })
 
@@ -85,8 +85,8 @@ const init = makeCallListener(async (
     init: () => {
       transmuxer.init()
     },
-    seek: () => {
-      transmuxer.seek()
+    seek: (timestamp: number, flags: SEEK_FLAG) => {
+      transmuxer.seek(timestamp, flags)
     },
     process: (size: number) => {
       transmuxer.process(size)

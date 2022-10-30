@@ -40,7 +40,7 @@
     "flatbuffers": "^2.0.7",
     "jmuxer": "^2.0.5",
     "libav": "file:dist",
-    "mp4box": "^0.4.1",
+    "mp4box": "^0.5.2",
     "osra": "file:../../osra",
     "p-queue": "^7.3.0",
     "remove": "^0.1.5"
