@@ -146,7 +146,7 @@ export const makeTransmuxer = async ({
             ].sort((dialogue, dialogue2) => dialogue.index - dialogue2.index)
           }
           subtitles.set(streamIndex, newSubtitle)
-          const subtitleString = `${subtitle.header}${newSubtitle.dialogues.map(({ dialogue }) => dialogue).join('\n')}`
+          const subtitleString = `${subtitle.header.trim()}\n${newSubtitle.dialogues.map(({ dialogue }) => dialogue).join('\n').trim()}`
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
         attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
