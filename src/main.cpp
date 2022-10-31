@@ -57,8 +57,17 @@ extern "C" {
     int written_output = 0;
     int used_output_input;
     int keyframe_index;
-    int keyframe_pts;
-    int keyframe_pos;
+    long last_frame_pts;
+    long last_frame_duration;
+    int time_base_num;
+    int time_base_den;
+    int frame_write_index;
+    long last_keyframe_duration;
+    long last_keyframe_pts;
+    long last_keyframe_pos;
+    long keyframe_duration;
+    long keyframe_pts;
+    long keyframe_pos;
     int ret, i;
     int stream_index;
     int *subtitle_decoder_list;
@@ -294,7 +303,6 @@ extern "C" {
       AVFrame* pFrame;
       AVStream *in_stream, *out_stream;
       auto start_position = input_format_context->pb->pos;
-
       // Read through all buffered frames
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
@@ -320,21 +328,22 @@ extern "C" {
           continue;
         }
 
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-          // keyframe_index += 1;
-          keyframe_pts = packet->pts;
-          keyframe_pos = packet->pos;
-          printf("BEFORE packet duration: %lld, PTS: %lld, DTS: %lld, fixedPTS?: %lld,  fixedDTS?: %lld \n", packet->duration, packet->pts, packet->dts, packet->pts, packet->pts + packet->duration);
-        }
+        bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
 
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->flags & AV_PKT_FLAG_KEY) {
-          // keyframe_index += 1;
-          // keyframe_pts = packet->pts;
-          // keyframe_pos = packet->pos;
-          printf("AFTER packet duration: %lld, PTS: %lld, DTS: %lld, fixedPTS?: %lld,  fixedDTS?: %lld \n", packet->duration, packet->pts, packet->dts, packet->pts, packet->pts + packet->duration);
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
+          time_base_num = out_stream->time_base.num;
+          time_base_den = out_stream->time_base.den;
+          keyframe_duration = packet->duration;
+          keyframe_pts = packet->pts;
+          keyframe_pos = packet->pos;
+          // printf("packet PTS: %ld, POS: %ld \n", keyframe_pts, keyframe_pos);
+        } else if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          last_frame_pts = packet->pts;
+          last_frame_duration = packet->duration;
+          // printf("LAST FRAME PTS: %ld, POS: %ld \n", last_frame_pts, last_frame_duration);
         }
 
         // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
@@ -368,13 +377,28 @@ extern "C" {
         // }
         // last_mux_dts_list[in_stream->index] = packet->dts;
 
+        frame_write_index = 0;
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          printf("av_interleaved_write_frame failed\n");
+          // printf("av_interleaved_write_frame failed\n");
           break;
         }
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
+          write(
+            (long)input_format_context->pb->pos,
+            NULL,
+            time_base_num,
+            time_base_den,
+            last_frame_pts,
+            last_frame_duration,
+            last_keyframe_duration,
+            last_keyframe_pts,
+            last_keyframe_pos,
+            -1
+          );
+        }
         av_packet_unref(packet);
-
+        frame_write_index = 0;
         if (input_format_context->pb->pos >= start_position + ((int64_t)size)) {
           return;
         }
@@ -460,9 +484,20 @@ extern "C" {
           buf
         )
       ),
-      remuxObject.keyframe_pts,
-      remuxObject.keyframe_pos
+      remuxObject.time_base_num,
+      remuxObject.time_base_den,
+      remuxObject.last_frame_pts,
+      remuxObject.last_frame_duration,
+      remuxObject.last_keyframe_duration,
+      remuxObject.last_keyframe_pts,
+      remuxObject.last_keyframe_pos,
+      remuxObject.frame_write_index
     );
+    remuxObject.last_keyframe_duration = remuxObject.keyframe_duration;
+    remuxObject.last_keyframe_pts = remuxObject.keyframe_pts;
+    remuxObject.last_keyframe_pos = remuxObject.keyframe_pos;
+    remuxObject.frame_write_index = remuxObject.frame_write_index + 1;
+
     return buf_size;
   }
 

@@ -5,10 +5,16 @@
 import { makeCallListener, registerListener } from 'osra'
 
 import WASMModule from 'libav'
+import PQueue from 'p-queue'
 
 import {  Operation } from './shared-buffer_generated'
 import { freeInterface, getSharedInterface, notifyInterface, setSharedInterface, State, waitSyncForInterfaceNotification } from './utils'
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '.'
+
+const queue = new PQueue({ concurrency: 1 })
+const queueCall = <T extends (...args: any) => any>(func: T) =>
+  queue.add<Awaited<ReturnType<T>>>(func)
+
 
 const module = await WASMModule({
   locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
@@ -21,9 +27,12 @@ const init = makeCallListener(async (
     length: number
     sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
-    write: (offset:number, buffer: ArrayBufferLike, keyframePts: number, keyframePos: number) => Promise<void>
+    write: (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number, bufferIndex: number) => Promise<void>
   }, extra) => {
+
+  let GOPBuffer: Uint8Array | undefined
   let currentOffset = 0
+  
   const transmuxer = new module.Transmuxer({
     length,
     bufferSize,
@@ -75,9 +84,33 @@ const init = makeCallListener(async (
         size: buffer.byteLength
       }
     },
-    write: async (offset: number, arrayBuffer: Uint8Array, keyframePts: number, keyframePos: number) => {
+    write: (offset: number, arrayBuffer: Uint8Array, timebaseNum: number, timebaseDen: number, lastFramePts: number, lastFrameduration: number, keyframeDuration: number, keyframePts: number, keyframePos: number, bufferIndex: number) => {
+      const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
+      const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
+      if (bufferIndex === -1) {
+        if (!GOPBuffer) return
+        write(offset, GOPBuffer.buffer, pts, duration, keyframePos, bufferIndex)
+        GOPBuffer = undefined
+        return
+      }
       const buffer = new Uint8Array(arrayBuffer.slice())
-      await write(offset, buffer.buffer, keyframePts, keyframePos)
+      if (!GOPBuffer) {
+        GOPBuffer = buffer
+      } else {
+        const _buffer = GOPBuffer
+        GOPBuffer = new Uint8Array(GOPBuffer.byteLength + buffer.byteLength)
+        GOPBuffer.set(_buffer)
+        GOPBuffer.set(buffer, _buffer.byteLength)
+      }
+
+      setTimeout(() => {
+        if (!GOPBuffer) return
+        queueCall(() => {
+          if (!GOPBuffer) return
+          write(offset, GOPBuffer.buffer, pts, duration, keyframePos, bufferIndex)
+          GOPBuffer = undefined
+        })
+      }, 0)
     }
   })
 

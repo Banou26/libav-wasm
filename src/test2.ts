@@ -50,7 +50,7 @@ fetch('../dist/spy13broke.mkv')
     }
 
     let currentOffset = 0
-    let currentWriteOffset = 0
+    let mp4boxOffset = 0
     const transmuxer = await makeTransmuxer({
       bufferSize: 1_000_000,
       sharedArrayBufferSize: 2_000_000,
@@ -77,17 +77,13 @@ fetch('../dist/spy13broke.mkv')
         }
         return -1
       },
-      write: async (offset, buffer, keyframePts, keyframePos) => {
-        console.log('receive write', offset, keyframePts, keyframePos, new Uint8Array(buffer))
+      write: async (offset, buffer, pts, duration, pos) => {
+        console.log('receive write', offset, pts, duration, pos, new Uint8Array(buffer))
         if (!info) {
-          console.log('writing init no info', currentWriteOffset)
-          buffer.fileStart = currentWriteOffset
+          console.log('writing init no info', mp4boxOffset)
+          buffer.fileStart = mp4boxOffset
           mp4boxfile.appendBuffer(buffer)
-          currentWriteOffset = currentWriteOffset + buffer.byteLength
-        } else {
-          buffer.fileStart = currentWriteOffset
-          currentWriteOffset = currentWriteOffset + buffer.byteLength
-          mp4boxfile.appendBuffer(buffer)
+          mp4boxOffset = mp4boxOffset + buffer.byteLength
         }
       }
     })
@@ -102,9 +98,6 @@ fetch('../dist/spy13broke.mkv')
     await new Promise(resolve => setTimeout(resolve, 2000))
     transmuxer.process(10_000_000)
     await new Promise(resolve => setTimeout(resolve, 2000))
-    const seekRes = mp4boxfile.seek(50)
-    console.log('mp4book seek', seekRes)
-    currentWriteOffset = seekRes.offset
     transmuxer.seek(50000, SEEK_FLAG.NONE)
     await new Promise(resolve => setTimeout(resolve, 2000))
     transmuxer.process(10_000_000)

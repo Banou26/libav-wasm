@@ -29,7 +29,7 @@ export enum SEEK_WHENCE_FLAG {
 export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<Uint8Array>
   seek: (offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
-  write: (offset: number, buffer: ArrayBufferLike, keyframePts: number, keyframePos: number) => Promise<void>
+  write: (offset: number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => Promise<void>
   length: number
   sharedArrayBufferSize: number
   bufferSize: number
@@ -81,8 +81,8 @@ export const makeTransmuxer = async ({
         length,
         sharedArrayBuffer,
         bufferSize,
-        write: async (offset:number, buffer: ArrayBufferLike, keyframePts: number, keyframePos: number) => {
-          await _write(offset, buffer, keyframePts, keyframePos)
+        write: async (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => {
+          await _write(offset, buffer, pts, duration, pos)
         }
       }
     )
