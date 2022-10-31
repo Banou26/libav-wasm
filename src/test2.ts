@@ -35,6 +35,10 @@ fetch('../dist/spy13broke.mkv')
         mp4boxfile.releaseUsedSamples(1, lastSample.number)
       }
     }
+
+    let _resolveInfo
+    const infoPromise = new Promise((resolve) => { _resolveInfo = resolve })
+
     let mime = 'video/mp4; codecs=\"'
     let info: string | undefined
     mp4boxfile.onReady = (_info) => {
@@ -47,6 +51,7 @@ fetch('../dist/spy13broke.mkv')
       mime += '\"'
       mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
       mp4boxfile.start()
+      _resolveInfo(info)
     }
 
     let currentOffset = 0
@@ -78,10 +83,10 @@ fetch('../dist/spy13broke.mkv')
         return -1
       },
       subtitle: (title, language, subtitle) => {
-        console.log('SUBTITLE HEADER', title, language, subtitle)
+        // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
       attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
-        console.log('attachment', filename, mimetype, buffer)
+        // console.log('attachment', filename, mimetype, buffer)
       },
       write: (offset, buffer, pts, duration, pos) => {
         console.log('receive write', offset, pts, duration, pos, new Uint8Array(buffer))
@@ -99,16 +104,54 @@ fetch('../dist/spy13broke.mkv')
 
     console.log('init finished')
 
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    transmuxer.process(10_000_000)
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    transmuxer.process(10_000_000)
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    transmuxer.seek(50000, SEEK_FLAG.NONE)
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    transmuxer.process(10_000_000)
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    transmuxer.process(10_000_000)
+    const duration = (await transmuxer.getInfo()).input.duration / 1_000_000
+
+    await infoPromise
+
+    console.log('DURATION', duration)
+
+    const video = document.createElement('video')
+    // video.autoplay = true
+    video.controls = true
+    video.volume = 0
+    video.addEventListener('error', ev => {
+      console.error(ev.target.error)
+    })
+    document.body.appendChild(video)
+    
+    setTimeout(() => {
+      video.play()
+    }, 5_000)
+
+    const mediaSource = new MediaSource()
+    video.src = URL.createObjectURL(mediaSource)
+
+    const sourceBuffer: SourceBuffer =
+      await new Promise(resolve =>
+        mediaSource.addEventListener(
+          'sourceopen',
+          () => resolve(mediaSource.addSourceBuffer(mime)),
+          { once: true }
+        )
+      )
+
+    mediaSource.duration = duration
+    sourceBuffer.mode = 'segments'
+
+    
+
+
+
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process(10_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process(10_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.seek(50000, SEEK_FLAG.NONE)
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process(10_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // transmuxer.process(10_000_000)
     // transmuxer.process(10_000_000)
     // await new Promise(resolve => setTimeout(resolve, 2000))
     // transmuxer.process(10_000_000)

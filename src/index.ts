@@ -54,6 +54,12 @@ export type Subtitle = {
   dialogues: Dialogue[]
 }
 
+export type MediaInfo = {
+  formatName: string,
+  mimeType: string,
+  duration: number
+}
+
 // converts ms to 'h:mm:ss.cc' format
 const convertTimestamp = (ms: number) =>
   new Date(ms)
@@ -104,7 +110,7 @@ export const makeTransmuxer = async ({
   
   const subtitles = new Map<number, Subtitle>()
 
-  const { init: workerInit, process: workerProcess, seek: workerSeek } =
+  const { init: workerInit, process: workerProcess, seek: workerSeek, getInfo } =
     await target(
       'init',
       {
@@ -212,7 +218,8 @@ export const makeTransmuxer = async ({
   return {
     init: () => addTask(() => workerInit()),
     process: (size: number) => addTask(() => workerProcess(size)),
-    seek: (timestamp: number, flags: SEEK_FLAG) => addTask(() => workerSeek(timestamp, flags))
+    seek: (timestamp: number, flags: SEEK_FLAG) => addTask(() => workerSeek(timestamp, flags)),
+    getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 }
 

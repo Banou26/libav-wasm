@@ -124,7 +124,8 @@ const init = makeCallListener(async (
     },
     process: (size: number) => {
       transmuxer.process(size)
-    }
+    },
+    getInfo: () => transmuxer.getInfo()
   }
 })
 
