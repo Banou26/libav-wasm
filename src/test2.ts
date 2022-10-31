@@ -77,7 +77,13 @@ fetch('../dist/spy13broke.mkv')
         }
         return -1
       },
-      write: async (offset, buffer, pts, duration, pos) => {
+      subtitle: (title, language, subtitle) => {
+        console.log('SUBTITLE HEADER', title, language, subtitle)
+      },
+      attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
+        console.log('attachment', filename, mimetype, buffer)
+      },
+      write: (offset, buffer, pts, duration, pos) => {
         console.log('receive write', offset, pts, duration, pos, new Uint8Array(buffer))
         if (!info) {
           console.log('writing init no info', mp4boxOffset)

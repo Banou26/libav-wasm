@@ -22,11 +22,13 @@ const module = await WASMModule({
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { length, sharedArrayBuffer, bufferSize, write }:
+  { length, sharedArrayBuffer, bufferSize, attachment, subtitle, write }:
   {
     length: number
     sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
+    subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
+    attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
     write: (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number, bufferIndex: number) => Promise<void>
   }, extra) => {
 
@@ -40,12 +42,11 @@ const init = makeCallListener(async (
       console.log('worker error', critical, message)
     },
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
-      const [startTime, endTime] = isHeader ? [] as number[] : rest as number[]
-      const [language, title] = isHeader ? rest as string[] : [] as string[]
-      console.log('SUBTITLE', streamIndex, isHeader, language, title, startTime, endTime, data)
+      subtitle(streamIndex, isHeader, data, ...rest)
     },
-    attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
-      console.log('ATTACHMENT', filename, mimetype, buffer)
+    attachment: (filename: string, mimetype: string, _buffer: ArrayBuffer) => {
+      const buffer = new ArrayBuffer(_buffer.byteLength)
+      attachment(filename, mimetype, buffer)
     },
     seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
       setSharedInterface(sharedArrayBuffer, {

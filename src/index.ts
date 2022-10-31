@@ -29,16 +29,44 @@ export enum SEEK_WHENCE_FLAG {
 export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<Uint8Array>
   seek: (offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
-  write: (offset: number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => Promise<void>
+  subtitle: (title: string, language: string, data: string) => Promise<void> | void
+  attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
+  write: (offset: number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => Promise<void> | void
   length: number
   sharedArrayBufferSize: number
   bufferSize: number
 }
 
+export type Dialogue = {
+  index: number
+  data: string
+  startTime: number
+  endTime: number
+  layerIndex: number
+  dialogue: string
+}
+
+export type Subtitle = {
+  streamIndex: number
+  language: string
+  title: string
+  header: string
+  dialogues: Dialogue[]
+}
+
+// converts ms to 'h:mm:ss.cc' format
+const convertTimestamp = (ms: number) =>
+  new Date(ms)
+    .toISOString()
+    .slice(11, 22)
+    .replace(/^00/, '0')
+
 export const makeTransmuxer = async ({
   read: _read,
   seek: _seek,
   write: _write,
+  attachment,
+  subtitle: _subtitle,
   length,
   sharedArrayBufferSize = 10_000_000,
   bufferSize = 1_000_000
@@ -74,6 +102,8 @@ export const makeTransmuxer = async ({
   const addTask = <T extends (...args: any) => any>(func: T) =>
     apiQueue.add<Awaited<ReturnType<T>>>(func)
   
+  const subtitles = new Map<number, Subtitle>()
+
   const { init: workerInit, process: workerProcess, seek: workerSeek } =
     await target(
       'init',
@@ -81,6 +111,47 @@ export const makeTransmuxer = async ({
         length,
         sharedArrayBuffer,
         bufferSize,
+        subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
+          if (isHeader) {
+          const [language, title] = rest as string[]
+            subtitles.set(streamIndex, {
+              streamIndex,
+              header: data,
+              language,
+              title,
+              dialogues: []
+            })
+            return
+          }
+          const subtitle = subtitles.get(streamIndex)
+          if (subtitle?.dialogues.includes(data)) return
+          if (!subtitle) throw new Error('Subtitle data was received but no instance was found.')
+          const [startTime, endTime] = rest as number[]
+          const [dialogueIndex, layer] = data.split(',')
+          const startTimestamp = convertTimestamp(startTime)
+          const endTimestamp = convertTimestamp(endTime)
+          const dialogueContent = data.replace(`${dialogueIndex},${layer},`, '')
+          const newSubtitle = {
+            ...subtitle,
+            dialogues: [
+              ...subtitle?.dialogues ?? [],
+              {
+                index: Number(dialogueIndex),
+                startTime,
+                endTime,
+                data,
+                layerIndex: Number(layer),
+                dialogue: `Dialogue: ${layer},${startTimestamp},${endTimestamp},${dialogueContent}`
+              }
+            ].sort((dialogue, dialogue2) => dialogue.index - dialogue2.index)
+          }
+          subtitles.set(streamIndex, newSubtitle)
+          const subtitleString = `${subtitle.header}${newSubtitle.dialogues.map(({ dialogue }) => dialogue).join('\n')}`
+          _subtitle(subtitle.title, subtitle.language, subtitleString)
+        },
+        attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
+          attachment(filename, mimetype, buffer)
+        },
         write: async (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => {
           await _write(offset, buffer, pts, duration, pos)
         }
