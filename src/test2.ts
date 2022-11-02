@@ -1,8 +1,19 @@
 import { createFile } from 'mp4box'
 
 import { makeTransmuxer, SEEK_FLAG, SEEK_WHENCE_FLAG } from '.'
+import PQueue from 'p-queue'
+import pThrottle from 'p-throttle'
 
-fetch('../dist/spy13broke.mkv')
+type Chunk = {
+  offset: number
+  buffer: Uint8Array
+  pts: number
+  duration: number
+  pos: number
+  buffered: boolean
+}
+
+fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
   .then(async ({ headers, body }) => {
     const contentLength = Number(headers.get('Content-Length'))
     const buffer = await new Response(body).arrayBuffer()
@@ -56,6 +67,8 @@ fetch('../dist/spy13broke.mkv')
 
     let currentOffset = 0
     let mp4boxOffset = 0
+    const chunks: Chunk[] = []
+
     const transmuxer = await makeTransmuxer({
       bufferSize: 1_000_000,
       sharedArrayBufferSize: 2_000_000,
@@ -96,6 +109,14 @@ fetch('../dist/spy13broke.mkv')
           mp4boxfile.appendBuffer(buffer)
           mp4boxOffset = mp4boxOffset + buffer.byteLength
         }
+        chunks.push({
+          offset,
+          buffer: new Uint8Array(buffer),
+          pts,
+          duration,
+          pos,
+          buffered: false
+        })
       }
     })
     console.log('mt transmuxer', transmuxer)
@@ -138,9 +159,174 @@ fetch('../dist/spy13broke.mkv')
     mediaSource.duration = duration
     sourceBuffer.mode = 'segments'
 
-    
+    const queue = new PQueue({ concurrency: 1 })
 
+    const setupListeners = (resolve: (value: Event) => void, reject: (reason: Event) => void) => {
+      const updateEndListener = (ev: Event) => {
+        resolve(ev)
+        unregisterListeners()
+      }
+      const abortListener = (ev: Event) => {
+        resolve(ev)
+        unregisterListeners()
+      }
+      const errorListener = (ev: Event) => {
+        reject(ev),
+        unregisterListeners()
+      }
+      const unregisterListeners = () => {
+        sourceBuffer.removeEventListener('updateend', updateEndListener)
+        sourceBuffer.removeEventListener('abort', abortListener)
+        sourceBuffer.removeEventListener('error', errorListener)
+      }
+      sourceBuffer.addEventListener('updateend', updateEndListener, { once: true })
+      sourceBuffer.addEventListener('abort', abortListener, { once: true })
+      sourceBuffer.addEventListener('error', errorListener, { once: true })
+    }
 
+    const getTimeRanges = () =>
+      Array(sourceBuffer.buffered.length)
+        .fill(undefined)
+        .map((_, index) => ({
+          index,
+          start: sourceBuffer.buffered.start(index),
+          end: sourceBuffer.buffered.end(index)
+        }))
+
+    const getTimeRange = (time: number) =>
+      getTimeRanges()
+        .find(({ start, end }) => time >= start && time <= end)
+
+    const appendBuffer = (buffer: ArrayBuffer) =>
+      queue.add(() =>
+        new Promise<Event>((resolve, reject) => {
+          setupListeners(resolve, reject)
+          sourceBuffer.appendBuffer(buffer)
+        })
+      )
+
+    const appendChunk = async (chunk: Chunk) => {
+      await appendBuffer(chunk.buffer.buffer)
+      chunk.buffered = true
+    }
+
+    const removeChunk = async (chunk: Chunk) => {
+      const chunkIndex = chunks.indexOf(chunk)
+      if (chunkIndex === -1) throw new RangeError('No chunk found')
+      chunks.slice(chunkIndex, 1)
+    }
+
+    const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
+      queue.add(() =>
+        new Promise((resolve, reject) => {
+          setupListeners(resolve, reject)
+          sourceBuffer.remove(
+            Math.max(sourceBuffer.buffered.start(index), start),
+            Math.min(sourceBuffer.buffered.end(index), end)
+          )
+        })
+      )
+
+    const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
+    const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
+
+    const throttle = pThrottle({
+      limit: 1,
+      interval: 1000
+    })
+
+    const seek = throttle(async (time: number) => {
+      console.log('seeking')
+      const allTasksDone = new Promise(resolve => {
+        processingQueue.size && processingQueue.pending
+          ? (
+            processingQueue.on(
+              'next',
+              () =>
+                processingQueue.pending === 0
+                  ? resolve(undefined)
+                  : undefined
+            )
+          )
+          : resolve(undefined)
+      })
+      processingQueue.pause()
+      processingQueue.clear()
+      await allTasksDone
+
+      await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS), SEEK_FLAG.NONE)
+      processingQueue.start()
+      await process()
+      console.log('seeked')
+    })
+
+    const processingQueue = new PQueue({ concurrency: 1 })
+
+    const process = async () => {
+      await processingQueue.add(async () => {
+        console.log('processing')
+        await transmuxer.process(1_000_000)
+        console.log('processed')
+      })
+    }
+
+    const updateBuffers = async () => {
+      console.log('updateBuffers', chunks)
+      const { currentTime } = video
+      const neededChunks =
+        chunks
+          .filter(({ pts, duration }) =>
+            currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < pts
+            && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > (pts + duration)
+          )
+
+      const nonNeededChunks =
+        chunks
+          .filter((chunk) => !neededChunks.includes(chunk))
+      
+      const bufferedRanges =
+        getTimeRanges()
+          .filter(({ start, end }) =>
+              currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > start && currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > end ||
+              currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < start && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < end
+          )
+      for (const nonNeededChunk of nonNeededChunks) {
+        await removeChunk(nonNeededChunk)
+      }
+      for (const range of bufferedRanges) {
+        await removeRange(range)
+      }
+      for (const chunk of neededChunks) {
+        if (chunk.buffered) continue
+        try {
+          await appendChunk(chunk)
+        } catch (err) {
+          if (!(err instanceof Event)) throw err
+          // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
+          break
+        }
+      }
+    }
+
+    await appendBuffer(chunks[0].buffer)
+
+    setInterval(async () => {
+      const { currentTime } = video
+      await updateBuffers()
+      const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
+      if (!latestChunk || latestChunk.pts >= currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) return
+      for (let i = 0; i < 5; i++) {
+        await process()
+      }
+    }, 1_000)
+
+    video.addEventListener('seeking', () => {
+      seek(video.currentTime)
+    })
+    video.addEventListener('timeupdate', () => {
+      // console.log('\n\n\n\n\n\n\n\n\ntimeupdate', video.currentTime)
+      // myEfficientFn(...args)
+    })
 
     // await new Promise(resolve => setTimeout(resolve, 2000))
     // transmuxer.process(10_000_000)

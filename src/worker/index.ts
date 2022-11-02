@@ -1,15 +1,11 @@
-/// <reference no-default-lib="true"/>
-/// <reference lib="es2015" />
-/// <reference lib="webworker" />
-
 import { makeCallListener, registerListener } from 'osra'
 
 import WASMModule from 'libav'
 import PQueue from 'p-queue'
 
-import {  Operation } from './shared-buffer_generated'
-import { freeInterface, getSharedInterface, notifyInterface, setSharedInterface, State, waitSyncForInterfaceNotification } from './utils'
-import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '.'
+import {  Operation } from '../shared-buffer_generated'
+import { freeInterface, getSharedInterface, notifyInterface, setSharedInterface, State, waitSyncForInterfaceNotification } from '../utils'
+import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '..'
 
 const queue = new PQueue({ concurrency: 1 })
 const queueCall = <T extends (...args: any) => any>(func: T) =>

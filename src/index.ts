@@ -78,7 +78,7 @@ export const makeTransmuxer = async ({
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
   const sharedArrayBuffer = new SharedArrayBuffer(sharedArrayBufferSize)
-  const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+  const worker = new Worker(new URL('./worker/index.ts', import.meta.url), { type: 'module' })
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {
