@@ -12,6 +12,7 @@ type Chunk = {
   pos: number
   buffered: boolean
 }
+// , { headers: { Range: 'bytes=0-200000000' } }
 
 fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
   .then(async ({ headers, body }) => {
@@ -67,11 +68,12 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     let currentOffset = 0
     let mp4boxOffset = 0
+    let headerChunk: Chunk
     const chunks: Chunk[] = []
 
     const transmuxer = await makeTransmuxer({
-      bufferSize: 1_000_000,
-      sharedArrayBufferSize: 2_000_000,
+      bufferSize: 4_000_000,
+      sharedArrayBufferSize: 5_000_000,
       length: contentLength,
       read: async (offset, size) => {
         const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
@@ -109,14 +111,25 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
           mp4boxfile.appendBuffer(buffer)
           mp4boxOffset = mp4boxOffset + buffer.byteLength
         }
-        chunks.push({
-          offset,
-          buffer: new Uint8Array(buffer),
-          pts,
-          duration,
-          pos,
-          buffered: false
-        })
+        if (!headerChunk) {
+          headerChunk = {
+            offset,
+            buffer: new Uint8Array(buffer),
+            pts,
+            duration,
+            pos,
+            buffered: false
+          }
+        } else {
+          chunks.push({
+            offset,
+            buffer: new Uint8Array(buffer),
+            pts,
+            duration,
+            pos,
+            buffered: false
+          })
+        }
       }
     })
     console.log('mt transmuxer', transmuxer)
@@ -213,7 +226,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     const removeChunk = async (chunk: Chunk) => {
       const chunkIndex = chunks.indexOf(chunk)
       if (chunkIndex === -1) throw new RangeError('No chunk found')
-      chunks.slice(chunkIndex, 1)
+      // chunks.splice(chunkIndex, 1)
     }
 
     const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
@@ -255,16 +268,16 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       await allTasksDone
 
       const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
-
+      console.log('seeking pts time', latestChunk?.pts, time, (latestChunk?.pts ?? 0) > time)
       await transmuxer.seek(
         Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) * 1000,
-        latestChunk?.pts ?? 0 > time
+        (latestChunk?.pts ?? 0) > time
           ? SEEK_FLAG.AVSEEK_FLAG_BACKWARD
           : SEEK_FLAG.NONE
       )
       processingQueue.start()
       await process()
-      console.log('seeked')
+      console.log('seeked pts time', latestChunk?.pts, time, (latestChunk?.pts ?? 0) > time)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -283,8 +296,8 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       const neededChunks =
         chunks
           .filter(({ pts, duration }) =>
-            currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < pts
-            && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > (pts + duration)
+            ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) < pts)
+            && ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) > (pts + duration))
           )
 
       const nonNeededChunks =
@@ -294,9 +307,10 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       const bufferedRanges =
         getTimeRanges()
           .filter(({ start, end }) =>
-              currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > start && currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > end ||
-              currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < start && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < end
+              ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) > start) && ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) > end) ||
+              ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) < start) && ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) < end)
           )
+      console.log('nonNeededChunks', nonNeededChunks)
       for (const nonNeededChunk of nonNeededChunks) {
         await removeChunk(nonNeededChunk)
       }
@@ -315,15 +329,15 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       }
     }
 
-    await appendBuffer(chunks[0].buffer)
+    await appendBuffer(headerChunk.buffer)
 
     
     setInterval(async () => {
       const { currentTime } = video
       await updateBuffers()
       const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
-      if (!latestChunk || latestChunk.pts >= currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) return
-      for (let i = 0; i < 20; i++) {
+      if (latestChunk && (latestChunk.pts >= (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) return
+      for (let i = 0; i < 5; i++) {
         await process()
       }
     }, 500)
@@ -365,19 +379,24 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     //   await process()
     // }
 
+    // await new Promise(resolve => setTimeout(resolve, 1000))
+    // transmuxer.process(4_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 1000))
+    // transmuxer.process(4_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 1000))
+    // transmuxer.seek(100_000, SEEK_FLAG.NONE)
     // await new Promise(resolve => setTimeout(resolve, 2000))
     // transmuxer.process(4_000_000)
+    // await new Promise(resolve => setTimeout(resolve, 1000))
+    // transmuxer.process(4_000_000)
+    // transmuxer.seek(30_000, SEEK_FLAG.AVSEEK_FLAG_BACKWARD)
     // await new Promise(resolve => setTimeout(resolve, 2000))
     // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // transmuxer.seek(50000, SEEK_FLAG.NONE)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // await new Promise(resolve => setTimeout(resolve, 1000))
     // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // await new Promise(resolve => setTimeout(resolve, 1000))
     // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
+    // await new Promise(resolve => setTimeout(resolve, 1000))
     // transmuxer.process(4_000_000)
     // setInterval(() => {
     //   console.log('process')
