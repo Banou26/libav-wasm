@@ -77,7 +77,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        console.log('receive write', offset, pts, duration, pos, new Uint8Array(buffer))
+        console.log('receive write', isHeader, offset, pts, duration, pos, new Uint8Array(buffer))
         if (!info && isHeader) {
           if (!headerBuffer) {
             headerBuffer = buffer
@@ -87,6 +87,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
             headerBuffer.set(_headerBuffer)
             headerBuffer.set(buffer, _headerBuffer.byteLength)
           }
+          if (headerChunk) headerChunk.buffer = headerBuffer
         }
         if (!headerChunk && isHeader) {
           headerChunk = {
@@ -97,7 +98,8 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
             pos,
             buffered: false
           }
-        } else if (!isHeader) {
+        }
+        if (!isHeader) {
           chunks.push({
             offset,
             buffer: new Uint8Array(buffer),

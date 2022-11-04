@@ -198,10 +198,10 @@ export const makeTransmuxer = async ({
     buffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
     lastFrameDuration, lastFramePts, offset, timebaseDen, timebaseNum
   }: WriteRequest) => {
-    console.log('libav write',
-      'buffer', buffer, 'bufferIndex', bufferIndex, 'keyframeDuration', keyframeDuration, 'keyframePos', keyframePos, 'keyframePts', keyframePts,
-      'lastFrameDuration', lastFrameDuration, 'lastFramePts', lastFramePts, 'offset', offset, 'timebaseDen', timebaseDen, 'timebaseNum', timebaseNum
-    )
+    // console.log('libav write',
+    //   'buffer', buffer, 'bufferIndex', bufferIndex, 'keyframeDuration', keyframeDuration, 'keyframePos', keyframePos, 'keyframePts', keyframePts,
+    //   'lastFrameDuration', lastFrameDuration, 'lastFramePts', lastFramePts, 'offset', offset, 'timebaseDen', timebaseDen, 'timebaseNum', timebaseNum
+    // )
     const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
     const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
 
@@ -255,7 +255,7 @@ export const makeTransmuxer = async ({
     }
 
     unflushedWrite = {
-      isHeader: true,
+      isHeader: false,
       offset,
       buffer,
       pts,
@@ -290,10 +290,7 @@ export const makeTransmuxer = async ({
         : requestMessage.endpoint.case === 'seek' ? seek(request as SeekRequest)
         : undefined)
 
-      if (!response) {
-        console.log('BRUH', requestMessage.endpoint.case)
-        throw new Error('Shared memory api response is undefined')
-      }
+      if (!response) throw new Error('Shared memory api response is undefined')
       const responseBuffer = response.toBinary()
       dataview.setUint32(4, responseBuffer.byteLength)
       uint8Array.set(responseBuffer, 8)

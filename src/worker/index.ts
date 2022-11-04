@@ -115,12 +115,12 @@ const init = makeCallListener(async (
       keyframeDuration: number, keyframePts: number, keyframePos: number,
       bufferIndex: number
     ) => {
-      console.log('worker write called with ',
-      'offset', offset, 'arrayBuffer', arrayBuffer,'timebaseNum', timebaseNum,
-      'timebaseDen', timebaseDen, 'lastFramePts', lastFramePts,'lastFrameDuration', lastFrameDuration,
-      'keyframeDuration', keyframeDuration, 'keyframePts', keyframePts,'keyframePos', keyframePos,
-      'bufferIndex', bufferIndex
-      )
+      // console.log('worker write called with ',
+      // 'offset', offset, 'arrayBuffer', arrayBuffer,'timebaseNum', timebaseNum,
+      // 'timebaseDen', timebaseDen, 'lastFramePts', lastFramePts,'lastFrameDuration', lastFrameDuration,
+      // 'keyframeDuration', keyframeDuration, 'keyframePts', keyframePts,'keyframePos', keyframePos,
+      // 'bufferIndex', bufferIndex
+      // )
       const request = new ApiMessage({
         endpoint: {
           case: 'write',
