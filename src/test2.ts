@@ -41,7 +41,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     let currentOffset = 0
     let headerBuffer: Uint8Array | undefined
     let headerChunk: Chunk
-    const chunks: Chunk[] = []
+    let chunks: Chunk[] = []
 
     const transmuxer = await makeTransmuxer({
       bufferSize: 4_000_000,
@@ -50,7 +50,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       read: async (offset, size) => {
         const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
         currentOffset = currentOffset + buff.byteLength
-        console.log('read', buff)
+        console.log('read', offset, size, buff)
         return buff
       },
       seek: async (offset, whence) => {
@@ -100,14 +100,25 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
           }
         }
         if (!isHeader) {
-          chunks.push({
-            offset,
-            buffer: new Uint8Array(buffer),
-            pts,
-            duration,
-            pos,
-            buffered: false
-          })
+          chunks = [
+            ...chunks,
+            {
+              offset,
+              buffer: new Uint8Array(buffer),
+              pts,
+              duration,
+              pos,
+              buffered: false
+            }
+          ]
+          // chunks.push({
+          //   offset,
+          //   buffer: new Uint8Array(buffer),
+          //   pts,
+          //   duration,
+          //   pos,
+          //   buffered: false
+          // })
         }
       }
     })
@@ -130,6 +141,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     console.log('DURATION', duration)
 
     const video = document.createElement('video')
+    const seconds = document.createElement('div')
     // video.autoplay = true
     video.controls = true
     video.volume = 0
@@ -137,7 +149,12 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       console.error(ev.target?.error)
     })
     document.body.appendChild(video)
+    document.body.appendChild(seconds)
     
+    setInterval(() => {
+      seconds.textContent = video.currentTime.toString()
+    }, 100)
+
     setTimeout(() => {
       video.play()
     }, 5_000)
@@ -211,6 +228,8 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     const removeChunk = async (chunk: Chunk) => {
       const chunkIndex = chunks.indexOf(chunk)
       if (chunkIndex === -1) throw new RangeError('No chunk found')
+      chunk.buffered = false
+      chunks = chunks.filter(_chunk => _chunk !== chunk)
       // chunks.splice(chunkIndex, 1)
     }
 
@@ -227,6 +246,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
     const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
+    const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
     const throttle = pThrottle({
       limit: 1,
@@ -261,7 +281,14 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
           : SEEK_FLAG.NONE
       )
       processingQueue.start()
-      await process()
+      for (let i = 0; i < 5; i++) {
+        await process()
+      }
+      const bufferedRanges = getTimeRanges()
+      for (const range of bufferedRanges) {
+        await removeRange(range)
+      }
+      await updateBuffers()
       console.log('seeked pts time', latestChunk?.pts, time, (latestChunk?.pts ?? 0) > time)
     })
 
@@ -282,6 +309,13 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         chunks
           .filter(({ pts, duration }) =>
             ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) < pts)
+            && ((currentTime + POST_SEEK_REMOVE_BUFFERS_IN_SECONDS) > (pts + duration))
+          )
+
+      const shouldBeBufferedChunks =
+        neededChunks
+          .filter(({ pts, duration }) =>
+            ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) < pts)
             && ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) > (pts + duration))
           )
 
@@ -295,14 +329,18 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
               ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) > start) && ((currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) > end) ||
               ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) < start) && ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) < end)
           )
+
+      
+      console.log('neededChunks', neededChunks)
       console.log('nonNeededChunks', nonNeededChunks)
+      console.log('bufferedRanges', bufferedRanges)
       for (const nonNeededChunk of nonNeededChunks) {
         await removeChunk(nonNeededChunk)
       }
       for (const range of bufferedRanges) {
         await removeRange(range)
       }
-      for (const chunk of neededChunks) {
+      for (const chunk of shouldBeBufferedChunks) {
         if (chunk.buffered) continue
         try {
           await appendChunk(chunk)
@@ -317,14 +355,20 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     // @ts-ignore
     await appendBuffer(headerChunk.buffer)
 
+
+    let previousTime = -1
     setInterval(async () => {
       const { currentTime } = video
+      if (previousTime === currentTime) return
+      previousTime = currentTime
       await updateBuffers()
       const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
+      console.log('latestChunk', latestChunk, currentTime)
       if (latestChunk && (latestChunk.pts >= (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) return
       for (let i = 0; i < 5; i++) {
         await process()
       }
+      await updateBuffers()
     }, 500)
 
 
