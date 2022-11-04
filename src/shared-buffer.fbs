@@ -6,10 +6,15 @@ enum Operation:byte {
   Read = 2
 }
 
+struct SeekArguments {
+
+  arg_whence: int;
+}
+
 table Interface {
   // state: State;
   operation: Operation;
-  
+
   // argument types
   // seek and read
   arg_offset: int;

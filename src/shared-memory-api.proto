@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+message ReadRequest {
+  int32 offset = 1;
+  int32 buffer_size = 2;
+}
+
+message ReadResponse {
+  bytes buffer = 1;
+}
+
+message Read {
+  ReadRequest request = 1;
+  ReadResponse response = 2;
+}
+
+message WriteRequest {
+  int32 offset = 1;
+  bytes buffer = 2;
+  int32 timebase_num = 3;
+  int32 timebase_den = 4;
+  int32 last_frame_pts = 5;
+  int32 last_frame_duration = 6;
+  int32 keyframe_duration = 7;
+  int32 keyframe_pts = 8;
+  int32 keyframe_pos = 9;
+  int32 buffer_index = 10;
+}
+
+message WriteResponse {
+  int32 bytes_written = 1;
+}
+
+message Write {
+  WriteRequest request = 1;
+  WriteResponse response = 2;
+}
+
+message SeekRequest {
+  int32 offset = 1;
+  int32 whence = 2;
+}
+
+message SeekResponse {
+  int32 offset = 1;
+}
+
+message Seek {
+  SeekRequest request = 1;
+  SeekResponse response = 2;
+}
+
+message ApiMessage {
+  oneof endpoint {
+    Read read = 1;
+    Write write = 2;
+    Seek seek = 3;
+  }
+}

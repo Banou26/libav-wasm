@@ -6,6 +6,7 @@ import PQueue from 'p-queue'
 import {  Operation } from '../shared-buffer_generated'
 import { freeInterface, getSharedInterface, notifyInterface, setSharedInterface, State, waitSyncForInterfaceNotification } from '../utils'
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '..'
+import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'
 
 const queue = new PQueue({ concurrency: 1 })
 const queueCall = <T extends (...args: any) => any>(func: T) =>
@@ -28,9 +29,9 @@ const init = makeCallListener(async (
     write: (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number, bufferIndex: number) => Promise<void>
   }, extra) => {
 
-  let GOPBuffer: Uint8Array | undefined
+  const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
-  
+
   const transmuxer = new module.Transmuxer({
     length,
     bufferSize,
@@ -45,69 +46,118 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, buffer)
     },
     seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
-      setSharedInterface(sharedArrayBuffer, {
-        operation: Operation.Seek,
-        argOffset: offset,
-        argWhence: whence
+      const request = new ApiMessage({
+        endpoint: {
+          case: 'seek',
+          value: {
+            request: {
+              offset,
+              whence
+            }
+          }
+        }
       })
+      const uint8Array = new Uint8Array(sharedArrayBuffer)
+      const requestBuffer = request.toBinary()
+      dataview.setUint32(4, requestBuffer.byteLength)
+      uint8Array.set(requestBuffer, 8)
+
       notifyInterface(sharedArrayBuffer, State.Requested)
       waitSyncForInterfaceNotification(sharedArrayBuffer, State.Requested)
-      const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
-      const offsetResult = responseSharedInterface.offset()
-      if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE) currentOffset = offsetResult
+
+      const messageLength = dataview.getUint32(4)
+      const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+      const resultOffset = (response.endpoint.value as Seek).response!.offset
+
+      if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE) currentOffset = resultOffset
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-      return offsetResult
+      // console.log('worker seek return with ', resultOffset)
+      return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
-      setSharedInterface(sharedArrayBuffer, {
-        operation: Operation.Read,
-        argOffset: offset,
-        argBufferSize: bufferSize
+      const request = new ApiMessage({
+        endpoint: {
+          case: 'read',
+          value: {
+            request: {
+              offset,
+              bufferSize
+            }
+          }
+        }
       })
+      const uint8Array = new Uint8Array(sharedArrayBuffer)
+      const requestBuffer = request.toBinary()
+      dataview.setUint32(4, requestBuffer.byteLength)
+      uint8Array.set(requestBuffer, 8)
+
       notifyInterface(sharedArrayBuffer, State.Requested)
       waitSyncForInterfaceNotification(sharedArrayBuffer, State.Requested)
-      const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
-      const sharedBuffer: Uint8Array | null = structuredClone(responseSharedInterface.bufferArray())
-      if (!sharedBuffer) throw new Error('Transmuxer read returned null result buffer')
-      const buffer = new ArrayBuffer(sharedBuffer.byteLength)
-      const uint8Buffer = new Uint8Array(buffer)
-      uint8Buffer.set(sharedBuffer)
-      currentOffset = offset + buffer.byteLength
+
+      const messageLength = dataview.getUint32(4)
+      const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+      const resultBuffer = (response.endpoint.value as Read).response!.buffer
+
+      currentOffset = offset + resultBuffer.byteLength
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
+
+      // console.log('worker read return with ', resultBuffer)
       return {
-        buffer,
-        size: buffer.byteLength
+        buffer: resultBuffer,
+        size: resultBuffer.byteLength
       }
     },
-    write: (offset: number, arrayBuffer: Uint8Array, timebaseNum: number, timebaseDen: number, lastFramePts: number, lastFrameduration: number, keyframeDuration: number, keyframePts: number, keyframePos: number, bufferIndex: number) => {
-      const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
-      const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
-      if (bufferIndex === -1) {
-        if (!GOPBuffer) return
-        write(offset, GOPBuffer.buffer, pts, duration, keyframePos, bufferIndex)
-        GOPBuffer = undefined
-        return
-      }
-      const buffer = new Uint8Array(arrayBuffer.slice())
-      if (!GOPBuffer) {
-        GOPBuffer = buffer
-      } else {
-        const _buffer = GOPBuffer
-        GOPBuffer = new Uint8Array(GOPBuffer.byteLength + buffer.byteLength)
-        GOPBuffer.set(_buffer)
-        GOPBuffer.set(buffer, _buffer.byteLength)
-      }
+    write: (
+      offset: number, arrayBuffer: Uint8Array, timebaseNum: number,
+      timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
+      keyframeDuration: number, keyframePts: number, keyframePos: number,
+      bufferIndex: number
+    ) => {
+      console.log('worker write called with ',
+      'offset', offset, 'arrayBuffer', arrayBuffer,'timebaseNum', timebaseNum,
+      'timebaseDen', timebaseDen, 'lastFramePts', lastFramePts,'lastFrameDuration', lastFrameDuration,
+      'keyframeDuration', keyframeDuration, 'keyframePts', keyframePts,'keyframePos', keyframePos,
+      'bufferIndex', bufferIndex
+      )
+      const request = new ApiMessage({
+        endpoint: {
+          case: 'write',
+          value: {
+            request: {
+              buffer: arrayBuffer,
+              bufferIndex,
+              keyframeDuration,
+              keyframePts,
+              keyframePos,
+              lastFrameDuration,
+              lastFramePts,
+              offset,
+              timebaseDen,
+              timebaseNum
+            }
+          }
+        }
+      })
 
-      setTimeout(() => {
-        if (!GOPBuffer) return
-        queueCall(() => {
-          if (!GOPBuffer) return
-          write(offset, GOPBuffer.buffer, pts, duration, keyframePos, bufferIndex)
-          GOPBuffer = undefined
-        })
-      }, 0)
+      const uint8Array = new Uint8Array(sharedArrayBuffer)
+      const requestBuffer = request.toBinary()
+      dataview.setUint32(4, requestBuffer.byteLength)
+      uint8Array.set(requestBuffer, 8)
+
+      notifyInterface(sharedArrayBuffer, State.Requested)
+      waitSyncForInterfaceNotification(sharedArrayBuffer, State.Requested)
+
+      const messageLength = dataview.getUint32(4)
+      const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+      const resultBytesWritten = (response.endpoint.value as Write).response!.bytesWritten
+
+      freeInterface(sharedArrayBuffer)
+      notifyInterface(sharedArrayBuffer, State.Idle)
+
+      // console.log('worker write return with ', resultBytesWritten)
+      return resultBytesWritten
     }
   })
 

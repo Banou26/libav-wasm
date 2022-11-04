@@ -298,6 +298,8 @@ extern "C" {
       // Fragment the MP4 output
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
 
+      frame_write_index = -2;
+
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
       // Writes the header of the output
       if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
@@ -433,6 +435,8 @@ extern "C" {
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
       // Fragment the MP4 output
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+
+      frame_write_index = -2;
 
       // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
       // Writes the header of the output
@@ -669,7 +673,7 @@ extern "C" {
 
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
-    printf("WRITE FUNCTION SEEKING %d \n", remuxObject.seeking);
+    // printf("WRITE FUNCTION SEEKING %d \n", remuxObject.seeking);
     if (remuxObject.seeking) return buf_size;
     auto& write = remuxObject.write;
     write(
@@ -692,7 +696,9 @@ extern "C" {
     remuxObject.last_keyframe_duration = remuxObject.keyframe_duration;
     remuxObject.last_keyframe_pts = remuxObject.keyframe_pts;
     remuxObject.last_keyframe_pos = remuxObject.keyframe_pos;
-    remuxObject.frame_write_index = remuxObject.frame_write_index + 1;
+    if (remuxObject.frame_write_index >= 0) {
+      remuxObject.frame_write_index = remuxObject.frame_write_index + 1;
+    }
 
     return buf_size;
   }

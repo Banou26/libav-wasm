@@ -5,6 +5,7 @@ import { call } from 'osra'
 
 import { Operation } from './shared-buffer_generated'
 import { getSharedInterface, notifyInterface, setSharedInterface, State, waitForInterfaceNotification } from './utils'
+import { ApiMessage, Read, ReadRequest, ReadResponse, Seek, SeekRequest, SeekResponse, Write, WriteRequest, WriteResponse } from './gen/src/shared-memory-api_pb'
 
 /** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
 export enum SEEK_FLAG {
@@ -31,7 +32,14 @@ export type MakeTransmuxerOptions = {
   seek: (offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
-  write: (offset: number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => Promise<void> | void
+  write: (params: {
+    isHeader: boolean
+    offset: number
+    buffer: Uint8Array
+    pts: number
+    duration: number
+    pos: number
+  }) => Promise<void> | void
   length: number
   sharedArrayBufferSize: number
   bufferSize: number
@@ -78,6 +86,8 @@ export const makeTransmuxer = async ({
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
   const sharedArrayBuffer = new SharedArrayBuffer(sharedArrayBufferSize)
+  const dataview = new DataView(sharedArrayBuffer)
+  const uint8Array = new Uint8Array(sharedArrayBuffer)
   const worker = new Worker(new URL('./worker/index.ts', import.meta.url), { type: 'module' })
 
   await new Promise((resolve, reject) => {
@@ -164,24 +174,100 @@ export const makeTransmuxer = async ({
       }
     )
 
-  const seek = async (offset: number, whence: SEEK_WHENCE_FLAG) => {
+  const seek = async ({ offset, whence }: SeekRequest) => {
     const resultOffset = await _seek(offset, whence)
-    setSharedInterface(sharedArrayBuffer, {
-      operation: Operation.Read,
-      offset: resultOffset,
-      argOffset: 0,
-      argWhence: 0
-    })
+    const messageLength = dataview.getUint32(4)
+    const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+    const seekResponse = new SeekResponse({ offset: resultOffset })
+    ;(responseMessage.endpoint.value as Seek).response = seekResponse
+    return responseMessage
   }
 
-  const read = async (offset: number, size: number) => {
-    const readResultBuffer = await _read(offset, size)
-    setSharedInterface(sharedArrayBuffer, {
-      operation: Operation.Read,
-      buffer: readResultBuffer,
-      argOffset: offset,
-      argBufferSize: 0
-    })
+  const read = async ({ offset, bufferSize }: ReadRequest) => {
+    const readResultBuffer = await _read(offset, bufferSize)
+    const messageLength = dataview.getUint32(4)
+    const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+    const readResponse = new ReadResponse({ buffer: readResultBuffer })
+    ;(responseMessage.endpoint.value as Read).response = readResponse
+    return responseMessage
+  }
+
+  let GOPBuffer: Uint8Array | undefined
+  let unflushedWrite: any
+  const write = async ({
+    buffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
+    lastFrameDuration, lastFramePts, offset, timebaseDen, timebaseNum
+  }: WriteRequest) => {
+    console.log('libav write',
+      'buffer', buffer, 'bufferIndex', bufferIndex, 'keyframeDuration', keyframeDuration, 'keyframePos', keyframePos, 'keyframePts', keyframePts,
+      'lastFrameDuration', lastFrameDuration, 'lastFramePts', lastFramePts, 'offset', offset, 'timebaseDen', timebaseDen, 'timebaseNum', timebaseNum
+    )
+    const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
+    const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
+
+    // header chunk
+    if (bufferIndex === -2) {
+      await _write({
+        isHeader: true,
+        offset,
+        buffer,
+        pts,
+        duration,
+        pos: keyframePos
+      })
+      const messageLength = dataview.getUint32(4)
+      const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+      const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
+      ;(responseMessage.endpoint.value as Write).response = readResponse
+      GOPBuffer = undefined
+      unflushedWrite = undefined
+      return responseMessage
+    }
+
+    // flush buffers
+    if (bufferIndex === -1) {
+      const messageLength = dataview.getUint32(4)
+      const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+      const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
+      ;(responseMessage.endpoint.value as Write).response = readResponse
+      // this case happens right after headerChunk
+      if (!GOPBuffer) return responseMessage
+      await _write({
+        isHeader: false,
+        offset,
+        buffer: GOPBuffer,
+        pts,
+        duration,
+        pos:  keyframePos
+      })
+      GOPBuffer = undefined
+      unflushedWrite = undefined
+      return responseMessage
+    }
+
+    if (!GOPBuffer) {
+      GOPBuffer = buffer
+    } else {
+      const _buffer = GOPBuffer
+      GOPBuffer = new Uint8Array(GOPBuffer.byteLength + buffer.byteLength)
+      GOPBuffer.set(_buffer)
+      GOPBuffer.set(buffer, _buffer.byteLength)
+    }
+
+    unflushedWrite = {
+      isHeader: true,
+      offset,
+      buffer,
+      pts,
+      duration,
+      pos: keyframePos
+    }
+
+    const messageLength = dataview.getUint32(4)
+    const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+    const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
+    ;(responseMessage.endpoint.value as Write).response = readResponse
+    return responseMessage
   }
 
   const waitForTransmuxerCall = async () => {
@@ -191,22 +277,27 @@ export const makeTransmuxer = async ({
       setTimeout(waitForTransmuxerCall, 10)
       return
     }
-
-    const responseSharedInterface = getSharedInterface(sharedArrayBuffer)
-    const operation = responseSharedInterface.operation()
+    const messageLength = dataview.getUint32(4)
+    const requestMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
 
     await addBlockingTask(async () => {
-      if (operation === Operation.Read) {
-        await read(
-          responseSharedInterface.argOffset(),
-          responseSharedInterface.argBufferSize()
-        )
-      } else {
-        await seek(
-          responseSharedInterface.argOffset(),
-          responseSharedInterface.argWhence()
-        )
+      const request = requestMessage.endpoint.value?.request
+      if (!request) throw new Error('Shared memory api request is undefined')
+
+      const response =
+        await (requestMessage.endpoint.case === 'read' ? read(request as ReadRequest)
+        : requestMessage.endpoint.case === 'write' ? write(request as WriteRequest)
+        : requestMessage.endpoint.case === 'seek' ? seek(request as SeekRequest)
+        : undefined)
+
+      if (!response) {
+        console.log('BRUH', requestMessage.endpoint.case)
+        throw new Error('Shared memory api response is undefined')
       }
+      const responseBuffer = response.toBinary()
+      dataview.setUint32(4, responseBuffer.byteLength)
+      uint8Array.set(responseBuffer, 8)
+
       notifyInterface(sharedArrayBuffer, State.Responded)
       await waitForInterfaceNotification(sharedArrayBuffer, State.Responded)
     })
@@ -217,7 +308,21 @@ export const makeTransmuxer = async ({
 
   return {
     init: () => addTask(() => workerInit()),
-    process: (size: number) => addTask(() => workerProcess(size)),
+    process: (size: number) => addTask(async() => {
+
+      console.log('START PROCESSING')
+      await workerProcess(size)
+      if (unflushedWrite) {
+        await _write({
+          ...unflushedWrite,
+          buffer: GOPBuffer
+        })
+        GOPBuffer = undefined
+        unflushedWrite = undefined
+      }
+      console.log('PROCESSING FINISHED')
+
+    }),
     seek: (timestamp: number, flags: SEEK_FLAG) => addTask(() => workerSeek(timestamp, flags)),
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }

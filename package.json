@@ -12,7 +12,8 @@
     "dev-web": "vite --port 1234",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "flatbuffers": "flatc.exe -o src --ts src/shared-buffer.fbs"
+    "flatbuffers": "flatc.exe -o src --ts src/shared-buffer.fbs",
+    "proto": "buf-Windows-x86_64.exe generate"
   },
   "_scripts": {
     "build": "npx --yes make-dir-cli ./dist && npm run make-docker && npm run build-web",
@@ -23,6 +24,7 @@
     "make-docker": "docker-compose run libav-wasm make"
   },
   "devDependencies": {
+    "@bufbuild/protoc-gen-es": "^0.2.1",
     "@esbuild-plugins/node-globals-polyfill": "^0.1.1",
     "@esbuild-plugins/node-modules-polyfill": "^0.1.4",
     "concurrently": "^6.0.0",
@@ -34,6 +36,7 @@
     "vite-plugin-wasm": "^3.1.0"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^0.2.1",
     "buffer": "^6.0.3",
     "ebml": "^3.0.0",
     "ebml-stream": "^1.0.3",

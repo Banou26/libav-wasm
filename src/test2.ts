@@ -20,39 +20,13 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     const buffer = await new Response(body).arrayBuffer()
 
     let mp4boxfile = createFile()
-    mp4boxfile.onError = e => console.error('onError', e)
-    mp4boxfile.onSamples = (id, user, samples) => {
-      // console.log('onSamples', id, user, samples)
-      const groupBy = (xs, key) => {
-        return xs.reduce((rv, x) => {
-          (rv[x[key]] = rv[x[key]] || []).push(x)
-          return rv
-        }, []).filter(Boolean)
-      }
-      const groupedSamples = groupBy(samples, 'moof_number')
-      for (const group of groupedSamples) {
-        const firstSample = group[0]
-        const lastSample = group.slice(-1)[0]
-        console.log('mp4box sample', {
-          firstSample,
-          lastSample,
-          keyframeIndex: firstSample.moof_number - 1,
-          // id: firstSample.moof_number - 1,
-          startTime: firstSample.cts / firstSample.timescale,
-          endTime: firstSample.cts / firstSample.timescale === lastSample.cts / lastSample.timescale ? lastSample.cts / lastSample.timescale + 0.02 : lastSample.cts / lastSample.timescale,
-          // start: firstSample.cts / firstSample.timescale,
-          // end: lastSample.cts / lastSample.timescale,
-          buffered: false
-        })
-        mp4boxfile.releaseUsedSamples(1, lastSample.number)
-      }
-    }
+    mp4boxfile.onError = (error: Error) => console.error('mp4box error', error)
 
-    let _resolveInfo
+    let _resolveInfo: (value: unknown) => void
     const infoPromise = new Promise((resolve) => { _resolveInfo = resolve })
 
     let mime = 'video/mp4; codecs=\"'
-    let info: string | undefined
+    let info: any | undefined
     mp4boxfile.onReady = (_info) => {
       console.log('mp4box ready info', _info)
       info = _info
@@ -61,13 +35,11 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         mime += info.tracks[i].codec
       }
       mime += '\"'
-      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
-      mp4boxfile.start()
       _resolveInfo(info)
     }
 
     let currentOffset = 0
-    let mp4boxOffset = 0
+    let headerBuffer: Uint8Array | undefined
     let headerChunk: Chunk
     const chunks: Chunk[] = []
 
@@ -78,6 +50,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       read: async (offset, size) => {
         const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
         currentOffset = currentOffset + buff.byteLength
+        console.log('read', buff)
         return buff
       },
       seek: async (offset, whence) => {
@@ -103,15 +76,19 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
         // console.log('attachment', filename, mimetype, buffer)
       },
-      write: (offset, buffer, pts, duration, pos) => {
+      write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
         console.log('receive write', offset, pts, duration, pos, new Uint8Array(buffer))
-        if (!info) {
-          console.log('writing init no info', mp4boxOffset)
-          buffer.fileStart = mp4boxOffset
-          mp4boxfile.appendBuffer(buffer)
-          mp4boxOffset = mp4boxOffset + buffer.byteLength
+        if (!info && isHeader) {
+          if (!headerBuffer) {
+            headerBuffer = buffer
+          } else {
+            const _headerBuffer = headerBuffer
+            headerBuffer = new Uint8Array(headerBuffer.byteLength + buffer.byteLength)
+            headerBuffer.set(_headerBuffer)
+            headerBuffer.set(buffer, _headerBuffer.byteLength)
+          }
         }
-        if (!headerChunk) {
+        if (!headerChunk && isHeader) {
           headerChunk = {
             offset,
             buffer: new Uint8Array(buffer),
@@ -120,7 +97,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
             pos,
             buffered: false
           }
-        } else {
+        } else if (!isHeader) {
           chunks.push({
             offset,
             buffer: new Uint8Array(buffer),
@@ -138,6 +115,12 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     console.log('init finished')
 
+    if (!headerBuffer) throw new Error('No header buffer found after transmuxer init')
+
+    headerBuffer.buffer.fileStart = 0
+    console.log('APPEND MP4BOX', buffer)
+    mp4boxfile.appendBuffer(headerBuffer.buffer)
+
     const duration = (await transmuxer.getInfo()).input.duration / 1_000_000
 
     await infoPromise
@@ -149,7 +132,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     video.controls = true
     video.volume = 0
     video.addEventListener('error', ev => {
-      console.error(ev.target.error)
+      console.error(ev.target?.error)
     })
     document.body.appendChild(video)
     
@@ -329,9 +312,9 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       }
     }
 
+    // @ts-ignore
     await appendBuffer(headerChunk.buffer)
 
-    
     setInterval(async () => {
       const { currentTime } = video
       await updateBuffers()
