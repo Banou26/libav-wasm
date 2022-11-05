@@ -306,8 +306,6 @@ export const makeTransmuxer = async ({
   return {
     init: () => addTask(() => workerInit()),
     process: (size: number) => addTask(async() => {
-
-      console.log('START PROCESSING')
       await workerProcess(size)
       if (unflushedWrite) {
         await _write({
@@ -317,8 +315,6 @@ export const makeTransmuxer = async ({
         GOPBuffer = undefined
         unflushedWrite = undefined
       }
-      console.log('PROCESSING FINISHED')
-
     }),
     seek: (timestamp: number, flags: SEEK_FLAG) => addTask(() => workerSeek(timestamp, flags)),
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>

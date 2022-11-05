@@ -26,7 +26,7 @@ extern "C" {
 
   // #include "libavformat/avio_internal.h"
   // #include "libavformat/demux.h"
-  // #include "libavformat/internal.h"
+  #include <libavformat/internal.h>
 };
 
 int main() {
@@ -59,13 +59,6 @@ extern "C" {
     AVIOContext* output_avio_context;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
-    std::stringstream input_stream;
-    std::stringstream output_stream;
-    std::stringstream output_input_stream;
-    int used_input;
-    int written_output = 0;
-    int used_output_input;
-    int keyframe_index;
     long last_frame_pts;
     long last_frame_duration;
     int time_base_num;
@@ -77,26 +70,18 @@ extern "C" {
     long keyframe_duration;
     long keyframe_pts;
     long keyframe_pos;
-    int ret, i;
     int stream_index;
-    int *subtitle_decoder_list;
     int *streams_list;
-    int64_t *last_mux_dts_list;
     int number_of_streams;
-    bool should_demux;
-    int processed_bytes = 0;
     int input_length;
     int buffer_size;
     int video_stream_index;
-    bool seeking;
-    int64_t seeking_timestamp = -2;
     val read = val::undefined();
     val attachment = val::undefined();
     val subtitle = val::undefined();
     val write = val::undefined();
     val seek = val::undefined();
     val error = val::undefined();
-    bool done = false;
 
     static void print_dict(const AVDictionary *m)
     {
@@ -125,17 +110,27 @@ extern "C" {
     }
 
     void init () {
-      seeking = false;
+      init_output_context(true);
+    }
+
+    void init_output_context (bool init) {
+      int res;
+      if (!init) {
+        // avio_flush(output_format_context->pb);
+        // avformat_flush(output_format_context);
+        // avio_flush(output_avio_context);
+        avio_context_free(&input_avio_context);
+        avformat_free_context(input_format_context);
+        avio_context_free(&output_avio_context);
+        avformat_free_context(output_format_context);
+      }
+
       input_avio_context = NULL;
       input_format_context = avformat_alloc_context();
       output_format_context = avformat_alloc_context();
 
-      should_demux = false;
-      written_output = 0;
       stream_index = 0;
-      subtitle_decoder_list = NULL;
       streams_list = NULL;
-      last_mux_dts_list = NULL;
       number_of_streams = 0;
 
       // Initialize the input avio context
@@ -153,7 +148,6 @@ extern "C" {
       input_format_context->pb = input_avio_context;
 
       // Open the input stream and automatically recognise format
-      int res;
       if ((res = avformat_open_input(&input_format_context, NULL, nullptr, nullptr)) < 0) {
         // printf("ERROR: %s \n", av_err2str(res));
         return;
@@ -162,8 +156,7 @@ extern "C" {
         // printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
         return;
       }
-
-      // Initialize the output avio context
+      
       unsigned char* buffer2 = (unsigned char*)av_malloc(buffer_size);
       output_avio_context = avio_alloc_context(
         buffer2,
@@ -175,19 +168,14 @@ extern "C" {
         nullptr
       );
 
+      output_format_context = avformat_alloc_context();
       // Initialize the output format stream context as an mp4 file
       avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
       // Set the avio context to the output format context
       output_format_context->pb = output_avio_context;
-      // output_format_context->flags |= AVFMT_SEEK_TO_PTS;
-      // output_format_context->flags |= AVFMT_FLAG_IGNDTS;
 
       number_of_streams = input_format_context->nb_streams;
-      subtitle_decoder_list = (int *)av_calloc(number_of_streams, sizeof(*subtitle_decoder_list));
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
-      if (!(last_mux_dts_list = (int64_t *)av_calloc(number_of_streams, sizeof(int64_t)))) {
-        return;
-      }
 
       if (!streams_list) {
         res = AVERROR(ENOMEM);
@@ -196,144 +184,7 @@ extern "C" {
       }
 
       // Loop through all of the input streams
-      for (i = 0; i < input_format_context->nb_streams; i++) {
-        AVStream *out_stream;
-        AVStream *in_stream = input_format_context->streams[i];
-        AVStream *out_in_stream;
-        AVCodecParameters *in_codecpar = in_stream->codecpar;
-
-        // Filter out all non video/audio streams
-        if (
-          in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
-          in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
-          in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE &&
-          in_codecpar->codec_type != AVMEDIA_TYPE_ATTACHMENT
-        ) {
-          streams_list[i] = -1;
-          continue;
-        }
-
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          // print_dict(in_stream->metadata);
-          auto codec = avcodec_find_decoder(in_codecpar->codec_id);
-          auto codecCtx = avcodec_alloc_context3(codec);
-          avcodec_parameters_to_context(codecCtx, in_codecpar);
-          auto filename = av_dict_get(in_stream->metadata, "filename", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          auto mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          attachment(
-            static_cast<std::string>(filename),
-            static_cast<std::string>(mimetype),
-            emscripten::val(
-              emscripten::typed_memory_view(
-                codecCtx->extradata_size,
-                codecCtx->extradata
-              )
-            )
-          );
-          // printf("HEADER IS ATTACHMENT TYPE, %d %s %s \n", i, filename, mimetype);
-          continue;
-        }
-
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-          // char buf[256];
-          auto codec = avcodec_find_decoder(in_codecpar->codec_id);
-          auto codecCtx = avcodec_alloc_context3(codec);
-          avcodec_parameters_to_context(codecCtx, in_codecpar);
-          // if ((res = avcodec_open2(codecCtx, codec, NULL)) < 0) {
-          //   avcodec_string(buf, sizeof(buf), codecCtx, 0);
-          //   printf("Failed to open subtitle codec %s \n", buf);
-          // }
-          // subtitle_decoder_list[i] = codec;
-
-          codecCtx->subtitle_header = (uint8_t *)av_malloc(codecCtx->extradata_size + 1);
-          if (!codecCtx->subtitle_header) {
-            res = AVERROR(ENOMEM);
-            continue;
-          }
-          if (codecCtx->extradata_size) {
-            memcpy(codecCtx->subtitle_header, codecCtx->extradata, codecCtx->extradata_size);
-          }
-          codecCtx->subtitle_header[codecCtx->extradata_size] = 0;
-          codecCtx->subtitle_header_size = codecCtx->extradata_size;
-          // printf("HEADER IS SUBTITLE TYPE, %s \n", codecCtx->subtitle_header);
-          // print_dict(in_stream->metadata);
-          auto language = av_dict_get(in_stream->metadata, "language", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          auto title = av_dict_get(in_stream->metadata, "title", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          std::string data = reinterpret_cast<char *>(codecCtx->subtitle_header);
-          subtitle(
-            i,
-            true,
-            data,
-            static_cast<std::string>(language),
-            static_cast<std::string>(title)
-          );
-          continue;
-        }
-
-        // Assign the video stream index to a global variable (potentially used to seek)
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          video_stream_index = i;
-        }
-
-        streams_list[i] = stream_index++;
-        // Open the output stream
-        out_stream = avformat_new_stream(output_format_context, NULL);
-        if (!out_stream) {
-          // printf("Failed allocating output stream \n");
-          res = AVERROR_UNKNOWN;
-          return;
-        }
-        // Copy all of the input file codecs to the output file codecs
-        if ((res = avcodec_parameters_copy(out_stream->codecpar, in_codecpar)) < 0) {
-          // printf("Failed to copy codec parameters \n");
-          return;
-        }
-      }
-
-      AVDictionary* opts = NULL;
-
-      // Force transmuxing instead of re-encoding by copying the codecs
-      av_dict_set(&opts, "c", "copy", 0);
-      // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
-      // Fragment the MP4 output
-      av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
-
-      frame_write_index = -2;
-
-      // https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#ga18b7b10bb5b94c4842de18166bc677cb
-      // Writes the header of the output
-      if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
-        // printf("Error occurred when opening output file \n");
-        return;
-      }
-    }
-
-    void init_output_context (bool init) {
-      int res;
-      if (!init) {
-        avio_flush(output_avio_context);
-        avformat_free_context(output_format_context);
-      }
-      // Initialize the output format stream context as an mp4 file
-      avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
-      // Set the avio context to the output format context
-      output_format_context->pb = output_avio_context;
-
-      number_of_streams = input_format_context->nb_streams;
-      subtitle_decoder_list = (int *)av_calloc(number_of_streams, sizeof(*subtitle_decoder_list));
-      streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
-      if (!(last_mux_dts_list = (int64_t *)av_calloc(number_of_streams, sizeof(int64_t)))) {
-        return;
-      }
-
-      if (!streams_list) {
-        res = AVERROR(ENOMEM);
-        // printf("No streams_list, %s \n", av_err2str(res));
-        return;
-      }
-
-      // Loop through all of the input streams
-      for (i = 0; i < input_format_context->nb_streams; i++) {
+      for (int i = 0; i < input_format_context->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = input_format_context->streams[i];
         AVStream *out_in_stream;
@@ -453,7 +304,7 @@ extern "C" {
       AVFrame* pFrame;
       AVStream *in_stream, *out_stream;
       auto start_position = input_format_context->pb->pos;
-      // Read through all buffered frames
+
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           av_packet_unref(packet);
@@ -466,7 +317,6 @@ extern "C" {
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
           long start = packet->pts;
           long end = start + packet->duration;
-          // printf("PACKET IS SUBTITLE TYPE, %lld %s %lld %lld\n", packet->pos, packet->data, start, end);
           std::string data = reinterpret_cast<char *>(packet->data);
           subtitle(
             packet->stream_index,
@@ -489,48 +339,15 @@ extern "C" {
           keyframe_duration = packet->duration;
           keyframe_pts = packet->pts;
           keyframe_pos = packet->pos;
-          // printf("packet PTS: %ld, POS: %ld \n", keyframe_pts, keyframe_pos);
         } else if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
           last_frame_pts = packet->pts;
           last_frame_duration = packet->duration;
-          // printf("LAST FRAME PTS: %ld, POS: %ld \n", last_frame_pts, last_frame_duration);
         }
-
-        // automatic non monotonically increasing DTS correction from https://github.com/FFmpeg/FFmpeg/blob/5c66ee6351ae3523206f64e5dc6c1768e438ed34/fftools/ffmpeg_mux.c#L127
-        // this fixes unplayable output files but skips frames, need to find a way to properly correct so no frames are skipped
-        // if (!(output_format_context->flags & AVFMT_NOTIMESTAMPS)) {
-        //   int64_t last_mux_dts = last_mux_dts_list[in_stream->index];
-        //   if (packet->dts != AV_NOPTS_VALUE &&
-        //       packet->pts != AV_NOPTS_VALUE &&
-        //       packet->dts > packet->pts) {
-        //     packet->pts =
-        //     packet->dts = packet->pts + packet->dts + last_mux_dts + 1
-        //             - FFMIN3(packet->pts, packet->dts, last_mux_dts + 1)
-        //             - FFMAX3(packet->pts, packet->dts, last_mux_dts + 1);
-        //   }
-
-        //   if ((in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) &&
-        //       packet->dts != AV_NOPTS_VALUE &&
-        //       last_mux_dts != AV_NOPTS_VALUE
-        //     ) {
-        //       int64_t max = last_mux_dts + !(output_format_context->flags & AVFMT_TS_NONSTRICT);
-        //       if (packet->dts < max) {
-        //           if (packet->pts >= packet->dts) {
-        //             packet->pts = FFMAX(packet->pts, max);
-        //           }
-        //           packet->dts = max;
-        //           if (!error.isUndefined()) {
-        //             error(false, static_cast<std::string>("non monotonicaly increasing DTS values"));
-        //           }
-        //       }
-        //   }
-        // }
-        // last_mux_dts_list[in_stream->index] = packet->dts;
 
         frame_write_index = 0;
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          // printf("av_interleaved_write_frame failed\n");
+          printf("av_interleaved_write_frame failed\n");
           break;
         }
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
@@ -579,65 +396,14 @@ extern "C" {
       return output_avio_context->pos;
     }
 
-    // void ff_read_frame_flush(AVFormatContext *s)
-    // {
-    //     FFFormatContext *const si = ffformatcontext(s);
-
-    //     ff_flush_packet_queue(s);
-
-    //     /* Reset read state for each stream. */
-    //     for (unsigned i = 0; i < s->nb_streams; i++) {
-    //         AVStream *const st  = s->streams[i];
-    //         FFStream *const sti = ffstream(st);
-
-    //         if (sti->parser) {
-    //             av_parser_close(sti->parser);
-    //             sti->parser = NULL;
-    //         }
-    //         sti->last_IP_pts = AV_NOPTS_VALUE;
-    //         sti->last_dts_for_order_check = AV_NOPTS_VALUE;
-    //         if (sti->first_dts == AV_NOPTS_VALUE)
-    //             sti->cur_dts = RELATIVE_TS_BASE;
-    //         else
-    //             /* We set the current DTS to an unspecified origin. */
-    //             sti->cur_dts = AV_NOPTS_VALUE;
-
-    //         sti->probe_packets = s->max_probe_packets;
-
-    //         for (int j = 0; j < MAX_REORDER_DELAY + 1; j++)
-    //             sti->pts_buffer[j] = AV_NOPTS_VALUE;
-
-    //         if (si->inject_global_side_data)
-    //             sti->inject_global_side_data = 1;
-
-    //         sti->skip_samples = 0;
-    //     }
-    // }
-
-    // https://stackoverflow.com/a/3062994/4465603
-    // todo: check if using any of these might help
-    // input_format_context->av_class, this has AVOption, which has {"seek2any", "allow seeking to non-keyframes on demuxer level when supported"
-    // avformat_seek_file, maybe this could be used instead of av_seek_frame ?
     int _seek(int timestamp, int flags) {
       int res;
-      printf("seeking\n");
-      seeking = true;
       if (flags & AVSEEK_FLAG_BACKWARD) {
-        // avio_flush(output_format_context->pb);
-        // avformat_flush(output_format_context);
-
-
-        printf("seeking backwards\n");
         init_output_context(false);
       }
-      seeking = false;
-      
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("av_seek_frame errored\n");
       }
-      // output_format_context->flush_packets
-      // avcodec_flush_buffers
-      printf("seek done\n");
       return 0;
     }
 
@@ -663,7 +429,6 @@ extern "C" {
     val res = read((long)remuxObject.input_format_context->pb->pos, buf_size);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
-    remuxObject.used_input += buf_size;
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
     if (buffer_size == 0) {
       return AVERROR_EOF;
@@ -674,7 +439,6 @@ extern "C" {
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     auto& remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     // printf("WRITE FUNCTION SEEKING %d \n", remuxObject.seeking);
-    if (remuxObject.seeking) return buf_size;
     auto& write = remuxObject.write;
     write(
       (long)remuxObject.input_format_context->pb->pos,

@@ -24,6 +24,7 @@ dist/libav-wasm.js:
 	-s ASSERTIONS=2 \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
+	-I/tmp/ffmpeg-5.1/ \
 	-s INITIAL_MEMORY=150mb \
 	-s TOTAL_MEMORY=125mb \
 	-s TOTAL_STACK=5mb \

@@ -2,5 +2,6 @@
 dist
 emscripten
 FFmpeg
+ffmpeg-5.1
 node_modules
 video.mkv

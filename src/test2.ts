@@ -155,10 +155,6 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       seconds.textContent = video.currentTime.toString()
     }, 100)
 
-    setTimeout(() => {
-      video.play()
-    }, 5_000)
-
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)
 
@@ -274,6 +270,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
       const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
       console.log('seeking pts time', latestChunk?.pts, time, (latestChunk?.pts ?? 0) > time)
+      if ((latestChunk?.pts ?? 0) > time) currentOffset = 0
       await transmuxer.seek(
         Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS) * 1000,
         (latestChunk?.pts ?? 0) > time
@@ -281,9 +278,11 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
           : SEEK_FLAG.NONE
       )
       processingQueue.start()
+      console.group('Processing call')
       for (let i = 0; i < 5; i++) {
         await process()
       }
+      console.groupEnd()
       const bufferedRanges = getTimeRanges()
       for (const range of bufferedRanges) {
         await removeRange(range)
@@ -296,9 +295,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     const process = async () => {
       await processingQueue.add(async () => {
-        console.log('processing')
         await transmuxer.process(1_000_000)
-        console.log('processed')
       })
     }
 
@@ -365,9 +362,11 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
       console.log('latestChunk', latestChunk, currentTime)
       if (latestChunk && (latestChunk.pts >= (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) return
+      console.group('Processing call')
       for (let i = 0; i < 5; i++) {
         await process()
       }
+      console.groupEnd()
       await updateBuffers()
     }, 500)
 
@@ -379,6 +378,33 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       // console.log('\n\n\n\n\n\n\n\n\ntimeupdate', video.currentTime)
       // myEfficientFn(...args)
     })
+
+
+    
+
+    setTimeout(() => {
+      video.play()
+
+      setTimeout(() => {
+        video.pause()
+
+        setTimeout(() => {
+          video.currentTime = 500
+
+          setTimeout(() => {
+            video.currentTime = 1000
+            setTimeout(() => {
+              video.currentTime = 500
+              // setTimeout(() => {
+              //   video.currentTime = 750
+              // }, 2_500)
+            }, 2_500)
+          }, 2_500)
+        }, 2_500)
+      }, 2_500)
+
+
+    }, 2_500)
 
 
     // await new Promise(resolve => setTimeout(resolve, 2000))
