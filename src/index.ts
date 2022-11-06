@@ -248,15 +248,12 @@ export const makeTransmuxer = async ({
 
     // flush buffers
     if (bufferIndex === -1) {
+      if (!unflushedWrite) return responseMessage
       // this case happens right after headerChunk
       if (!GOPBuffer) return responseMessage
       lastChunk = {
-        isHeader: false,
-        offset,
+        ...unflushedWrite,
         buffer: GOPBuffer,
-        pts,
-        duration,
-        pos:  keyframePos
       }
       processBufferChunks = [...processBufferChunks, lastChunk]
       await _write(lastChunk)

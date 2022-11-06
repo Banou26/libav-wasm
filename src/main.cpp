@@ -125,6 +125,18 @@ extern "C" {
         avformat_free_context(output_format_context);
       }
 
+      last_frame_pts = NULL;
+      last_frame_duration = NULL;
+      time_base_num = NULL;
+      time_base_den = NULL;
+      frame_write_index = NULL;
+      last_keyframe_duration = NULL;
+      last_keyframe_pts = NULL;
+      last_keyframe_pos = NULL;
+      keyframe_duration = NULL;
+      keyframe_pts = NULL;
+      keyframe_pos = NULL;
+
       input_avio_context = NULL;
       input_format_context = avformat_alloc_context();
       output_format_context = avformat_alloc_context();

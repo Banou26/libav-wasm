@@ -1,6 +1,6 @@
 import { createFile } from 'mp4box'
 
-import { makeTransmuxer, SEEK_FLAG, SEEK_WHENCE_FLAG } from '.'
+import { makeTransmuxer, SEEK_WHENCE_FLAG } from '.'
 import PQueue from 'p-queue'
 import pThrottle from 'p-throttle'
 
@@ -13,6 +13,34 @@ type Chunk = {
   buffered: boolean
 }
 // , { headers: { Range: 'bytes=0-200000000' } }
+
+const throttleWithLastCall = <T extends (...args: any[]) => any>(time: number, func: T) => {
+	let runningFunction: T | undefined
+  let lastCall: Promise<any> | undefined
+  let lastArguments: any[] | undefined
+
+	return async (...args: Parameters<T>) => {
+    lastArguments = args
+		if (!runningFunction) {
+			try {
+        runningFunction = await func(...args)
+				return runningFunction
+			} finally {
+        await new Promise(resolve => setTimeout(resolve, time))
+        if (!lastCall) return
+        try {
+          lastCall = await func(...lastArguments)
+        } finally {
+          lastCall = undefined
+          runningFunction = undefined
+        }
+        return lastCall
+			}
+		} else {
+      return lastCall
+    }
+	}
+}
 
 fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
   .then(async ({ headers, body }) => {
@@ -49,7 +77,8 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       length: contentLength,
       read: async (offset, size) => {
         const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
-        console.log('read', offset, size, buff)
+        console.log('read', offset, size)
+        // console.log('read', offset, size, buff)
         return buff
       },
       seek: async (currentOffset, offset, whence) => {
@@ -74,7 +103,8 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        console.log('receive write', isHeader, offset, pts, duration, pos, new Uint8Array(buffer))
+        console.log('write', isHeader, offset, pts, duration, pos)
+        // console.log('receive write', isHeader, offset, pts, duration, pos, new Uint8Array(buffer))
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -248,27 +278,23 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
-    const throttle = pThrottle({
-      limit: 1,
-      interval: 1000
-    })
-    
-    const processNeededBufferRange = async () => {
-      console.log('processNeededBufferRange')
+    const processNeededBufferRange = throttleWithLastCall(100, async () => {
+      // console.log('processNeededBufferRange')
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
       while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
-        console.log('process', lastPts, (lastPts! < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)))
+        // console.log('process', lastPts, (lastPts! < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)))
         const newChunks = await process()
         const lastProcessedChunk = newChunks.at(-1)
-        console.log('processed', newChunks)
+        // console.log('processed', newChunks)
         if (!lastProcessedChunk) break
         lastPts = lastProcessedChunk.pts
       }
-    }
+    })
 
-    const seek = throttle(async (time: number) => {
-      video.pause()
+    const seek = throttleWithLastCall(500, async (time: number) => {
+      const isPlaying = !video.paused
+      if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
         processingQueue.size && processingQueue.pending
           ? (
@@ -286,7 +312,6 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       processingQueue.clear()
       await allTasksDone
 
-      // todo: try to make this work??????
       await transmuxer.destroy()
       await transmuxer.init()
 
@@ -295,13 +320,20 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       await process()
 
       chunks = []
-      await clearBufferedRanges()
+      // await clearBufferedRanges()
 
       await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS))
 
       await processNeededBufferRange()
       await updateBufferedRanges()
-      video.play()
+
+      if (isPlaying) await video.play()
+
+      setTimeout(async () => {
+        await processNeededBufferRange()
+        await updateBufferedRanges()
+      }, 100)
+
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -336,8 +368,8 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         chunks
           .filter((chunk) => !neededChunks.includes(chunk))
 
-      console.log('neededChunks', neededChunks)
-      console.log('nonNeededChunks', nonNeededChunks)
+      // console.log('neededChunks', neededChunks)
+      // console.log('nonNeededChunks', nonNeededChunks)
       // console.log('bufferedRanges', bufferedRanges)
       for (const shouldBeUnbufferedChunk of shouldBeUnbufferedChunks) {
         await unbufferChunk(shouldBeUnbufferedChunk)
@@ -383,37 +415,32 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     video.addEventListener('seeking', () => {
       seek(video.currentTime)
     })
-    const throttleUpdateBuffers = pThrottle({
-      limit: 1,
-      interval: 500
-    })
-    video.addEventListener('timeupdate', throttleUpdateBuffers(async () => {
+
+    video.addEventListener('timeupdate', throttleWithLastCall(500, async () => {
       await processNeededBufferRange()
       await updateBufferedRanges()
-      // console.log('\n\n\n\n\n\n\n\n\ntimeupdate', video.currentTime)
-      // myEfficientFn(...args)
     }))
 
     setTimeout(() => {
       video.play()
 
-      setTimeout(() => {
-        // video.pause()
+      // setTimeout(() => {
+      //   // video.pause()
 
-        setTimeout(() => {
-          video.currentTime = 500
+      //   setTimeout(() => {
+      //     video.currentTime = 500
 
-          // setTimeout(() => {
-          //   video.currentTime = 1000
-          //   setTimeout(() => {
-          //     video.currentTime = 500
-          //     // setTimeout(() => {
-          //     //   video.currentTime = 750
-          //     // }, 2_500)
-          //   }, 2_500)
-          // }, 2_500)
-        }, 2_500)
-      }, 2_500)
+      //     // setTimeout(() => {
+      //     //   video.currentTime = 1000
+      //     //   setTimeout(() => {
+      //     //     video.currentTime = 500
+      //     //     // setTimeout(() => {
+      //     //     //   video.currentTime = 750
+      //     //     // }, 2_500)
+      //     //   }, 2_500)
+      //     // }, 2_500)
+      //   }, 2_500)
+      // }, 2_500)
     }, 2_500)
     // }, 5_000)
 
