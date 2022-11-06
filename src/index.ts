@@ -197,9 +197,10 @@ export const makeTransmuxer = async ({
     return responseMessage
   }
 
-  let GOPBuffer: Uint8Array | undefined
-  let unflushedWrite: any
-  let headerBuffer: Uint8Array | undefined
+  let GOPBuffer: Uint8Array | undefined = undefined
+  let unflushedWrite: Chunk | undefined = undefined
+  let headerBuffer: Uint8Array | undefined = undefined
+  let headerFinished = false
   let processBufferChunks: Chunk[] = []
   const write = async ({
     buffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
@@ -217,9 +218,9 @@ export const makeTransmuxer = async ({
     const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
     ;(responseMessage.endpoint.value as Write).response = readResponse
 
-
     // header chunk
     if (bufferIndex === -2) {
+      if (headerFinished) return responseMessage
       if (!headerBuffer) {
         headerBuffer = buffer
         console.log('headerBuffer', headerBuffer)
@@ -240,6 +241,7 @@ export const makeTransmuxer = async ({
         pos: keyframePos
       }
       processBufferChunks = [...processBufferChunks, chunk]
+      headerFinished = true
       await _write(chunk)
       return responseMessage
     }
@@ -318,7 +320,14 @@ export const makeTransmuxer = async ({
   waitForTransmuxerCall()
 
   return {
-    init: () => addTask(() => workerInit()),
+    init: () => addTask(async () => {
+      GOPBuffer = undefined
+      unflushedWrite = undefined
+      headerBuffer = undefined
+      // headerFinished = false
+      processBufferChunks = []
+      await workerInit()
+    }),
     destroy: () => addTask(() => workerDestroy()),
     process: (size: number) => addTask(async() => {
       processBufferChunks = []
@@ -326,7 +335,7 @@ export const makeTransmuxer = async ({
       if (unflushedWrite) {
         const chunk = {
           ...unflushedWrite,
-          buffer: GOPBuffer
+          buffer: GOPBuffer!
         }
         processBufferChunks = [...processBufferChunks, chunk]
         await _write(chunk)
@@ -339,11 +348,11 @@ export const makeTransmuxer = async ({
     }),
     seek: (time: number) => {
       const timestamp = Math.max(0, time) * 1000
-      addTask(async () =>{
-        if (lastChunk && (lastChunk.pts > timestamp)) {
-          await workerDestroy()
-          await workerInit()
-        }
+      addTask(async () => {
+        // if (lastChunk && (lastChunk.pts > timestamp)) {
+        //   await workerDestroy()
+        //   await workerInit()
+        // }
         await workerSeek(
           timestamp,
           SEEK_FLAG.NONE

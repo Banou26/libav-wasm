@@ -287,14 +287,17 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       await allTasksDone
 
       // todo: try to make this work??????
-      // await transmuxer.destroy()
-      // await transmuxer.init()
+      await transmuxer.destroy()
+      await transmuxer.init()
+
+      processingQueue.start()
+      await process()
+      await process()
 
       chunks = []
       await clearBufferedRanges()
 
       await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS))
-      processingQueue.start()
 
       await processNeededBufferRange()
       await updateBufferedRanges()
@@ -356,7 +359,6 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     // @ts-ignore
     await appendBuffer(headerChunk.buffer)
-
 
     // let previousTime = -1
     // setInterval(async () => {
