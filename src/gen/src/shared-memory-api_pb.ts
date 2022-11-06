@@ -305,12 +305,17 @@ export class Write extends Message<Write> {
  */
 export class SeekRequest extends Message<SeekRequest> {
   /**
-   * @generated from field: int32 offset = 1;
+   * @generated from field: int32 current_offset = 1;
+   */
+  currentOffset = 0;
+
+  /**
+   * @generated from field: int32 offset = 2;
    */
   offset = 0;
 
   /**
-   * @generated from field: int32 whence = 2;
+   * @generated from field: int32 whence = 3;
    */
   whence = 0;
 
@@ -322,8 +327,9 @@ export class SeekRequest extends Message<SeekRequest> {
   static readonly runtime = proto3;
   static readonly typeName = "SeekRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
-    { no: 2, name: "whence", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 1, name: "current_offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 2, name: "offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 3, name: "whence", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SeekRequest {

@@ -407,11 +407,11 @@ extern "C" {
       return 0;
     }
 
-    void close () {
+    void destroy () {
+      avio_context_free(&input_avio_context);
       avformat_free_context(input_format_context);
+      avio_context_free(&output_avio_context);
       avformat_free_context(output_format_context);
-      avio_close(input_avio_context);
-      avio_close(output_avio_context);
     }
   };
 
@@ -483,7 +483,7 @@ extern "C" {
       .constructor<emscripten::val>()
       .function("init", &Transmuxer::init)
       .function("process", &Transmuxer::process)
-      .function("close", &Transmuxer::close)
+      .function("destroy", &Transmuxer::destroy)
       .function("seek", &Transmuxer::_seek)
       .function("getInfo", &Transmuxer::getInfo);
   }

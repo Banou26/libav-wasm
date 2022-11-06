@@ -29,7 +29,7 @@ export enum SEEK_WHENCE_FLAG {
 
 export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<Uint8Array>
-  seek: (offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
+  seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
   write: (params: {
@@ -66,6 +66,15 @@ export type MediaInfo = {
   formatName: string,
   mimeType: string,
   duration: number
+}
+
+export type Chunk = {
+  isHeader: boolean
+  offset: number
+  buffer: Uint8Array
+  pts: number
+  duration: number
+  pos: number
 }
 
 // converts ms to 'h:mm:ss.cc' format
@@ -119,8 +128,9 @@ export const makeTransmuxer = async ({
     apiQueue.add<Awaited<ReturnType<T>>>(func)
   
   const subtitles = new Map<number, Subtitle>()
+  let lastChunk: Chunk | undefined
 
-  const { init: workerInit, process: workerProcess, seek: workerSeek, getInfo } =
+  const { init: workerInit, destroy: workerDestroy, process: workerProcess, seek: workerSeek, getInfo } =
     await target(
       'init',
       {
@@ -165,17 +175,12 @@ export const makeTransmuxer = async ({
           const subtitleString = `${subtitle.header.trim()}\n${newSubtitle.dialogues.map(({ dialogue }) => dialogue).join('\n').trim()}`
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
-        attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
-          attachment(filename, mimetype, buffer)
-        },
-        write: async (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number) => {
-          await _write(offset, buffer, pts, duration, pos)
-        }
+        attachment
       }
     )
 
-  const seek = async ({ offset, whence }: SeekRequest) => {
-    const resultOffset = await _seek(offset, whence)
+  const seek = async ({ currentOffset, offset, whence }: SeekRequest) => {
+    const resultOffset = await _seek(currentOffset, offset, whence)
     const messageLength = dataview.getUint32(4)
     const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
     const seekResponse = new SeekResponse({ offset: resultOffset })
@@ -194,6 +199,8 @@ export const makeTransmuxer = async ({
 
   let GOPBuffer: Uint8Array | undefined
   let unflushedWrite: any
+  let headerBuffer: Uint8Array | undefined
+  let processBufferChunks: Chunk[] = []
   const write = async ({
     buffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
     lastFrameDuration, lastFramePts, offset, timebaseDen, timebaseNum
@@ -205,41 +212,52 @@ export const makeTransmuxer = async ({
     const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
     const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
 
+    const messageLength = dataview.getUint32(4)
+    const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
+    const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
+    ;(responseMessage.endpoint.value as Write).response = readResponse
+
+
     // header chunk
     if (bufferIndex === -2) {
-      await _write({
+      if (!headerBuffer) {
+        headerBuffer = buffer
+        console.log('headerBuffer', headerBuffer)
+        return responseMessage
+      } else {
+        const _headerBuffer = headerBuffer
+        headerBuffer = new Uint8Array(headerBuffer.byteLength + buffer.byteLength)
+        headerBuffer.set(_headerBuffer)
+        headerBuffer.set(buffer, _headerBuffer.byteLength)
+        console.log('headerBuffer 2', headerBuffer)
+      }
+      const chunk = {
         isHeader: true,
         offset,
-        buffer,
+        buffer: headerBuffer,
         pts,
         duration,
         pos: keyframePos
-      })
-      const messageLength = dataview.getUint32(4)
-      const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
-      const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
-      ;(responseMessage.endpoint.value as Write).response = readResponse
-      GOPBuffer = undefined
-      unflushedWrite = undefined
+      }
+      processBufferChunks = [...processBufferChunks, chunk]
+      await _write(chunk)
       return responseMessage
     }
 
     // flush buffers
     if (bufferIndex === -1) {
-      const messageLength = dataview.getUint32(4)
-      const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
-      const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
-      ;(responseMessage.endpoint.value as Write).response = readResponse
       // this case happens right after headerChunk
       if (!GOPBuffer) return responseMessage
-      await _write({
+      lastChunk = {
         isHeader: false,
         offset,
         buffer: GOPBuffer,
         pts,
         duration,
         pos:  keyframePos
-      })
+      }
+      processBufferChunks = [...processBufferChunks, lastChunk]
+      await _write(lastChunk)
       GOPBuffer = undefined
       unflushedWrite = undefined
       return responseMessage
@@ -263,10 +281,6 @@ export const makeTransmuxer = async ({
       pos: keyframePos
     }
 
-    const messageLength = dataview.getUint32(4)
-    const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
-    const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
-    ;(responseMessage.endpoint.value as Write).response = readResponse
     return responseMessage
   }
 
@@ -305,18 +319,37 @@ export const makeTransmuxer = async ({
 
   return {
     init: () => addTask(() => workerInit()),
+    destroy: () => addTask(() => workerDestroy()),
     process: (size: number) => addTask(async() => {
+      processBufferChunks = []
       await workerProcess(size)
       if (unflushedWrite) {
-        await _write({
+        const chunk = {
           ...unflushedWrite,
           buffer: GOPBuffer
-        })
+        }
+        processBufferChunks = [...processBufferChunks, chunk]
+        await _write(chunk)
         GOPBuffer = undefined
         unflushedWrite = undefined
       }
+      const writtenChunks = processBufferChunks
+      processBufferChunks = []
+      return writtenChunks
     }),
-    seek: (timestamp: number, flags: SEEK_FLAG) => addTask(() => workerSeek(timestamp, flags)),
+    seek: (time: number) => {
+      const timestamp = Math.max(0, time) * 1000
+      addTask(async () =>{
+        if (lastChunk && (lastChunk.pts > timestamp)) {
+          await workerDestroy()
+          await workerInit()
+        }
+        await workerSeek(
+          timestamp,
+          SEEK_FLAG.NONE
+        )
+      })
+    },
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 }

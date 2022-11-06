@@ -17,6 +17,9 @@ const module = await WASMModule({
   locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
 })
 
+// todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple transmuxer already initialized waiting to seek + process
+// todo: We can keep in memory all of the chunks needed to initialize the transmuxer
+
 // @ts-ignore
 const init = makeCallListener(async (
   { length, sharedArrayBuffer, bufferSize, attachment, subtitle, write }:
@@ -51,6 +54,7 @@ const init = makeCallListener(async (
           case: 'seek',
           value: {
             request: {
+              currentOffset,
               offset,
               whence
             }
@@ -72,7 +76,7 @@ const init = makeCallListener(async (
       if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE) currentOffset = resultOffset
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-      // console.log('worker seek return with ', resultOffset)
+
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
@@ -103,7 +107,6 @@ const init = makeCallListener(async (
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
 
-      // console.log('worker read return with ', resultBuffer)
       return {
         buffer: resultBuffer,
         size: resultBuffer.byteLength
@@ -115,12 +118,6 @@ const init = makeCallListener(async (
       keyframeDuration: number, keyframePts: number, keyframePos: number,
       bufferIndex: number
     ) => {
-      // console.log('worker write called with ',
-      // 'offset', offset, 'arrayBuffer', arrayBuffer,'timebaseNum', timebaseNum,
-      // 'timebaseDen', timebaseDen, 'lastFramePts', lastFramePts,'lastFrameDuration', lastFrameDuration,
-      // 'keyframeDuration', keyframeDuration, 'keyframePts', keyframePts,'keyframePos', keyframePos,
-      // 'bufferIndex', bufferIndex
-      // )
       const request = new ApiMessage({
         endpoint: {
           case: 'write',
@@ -156,21 +153,15 @@ const init = makeCallListener(async (
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
 
-      // console.log('worker write return with ', resultBytesWritten)
       return resultBytesWritten
     }
   })
 
   return {
-    init: () => {
-      transmuxer.init()
-    },
-    seek: (timestamp: number, flags: SEEK_FLAG) => {
-      transmuxer.seek(timestamp, flags)
-    },
-    process: (size: number) => {
-      transmuxer.process(size)
-    },
+    init: () => transmuxer.init(),
+    destroy: () => transmuxer.destroy(),
+    seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
+    process: (size: number) => transmuxer.process(size),
     getInfo: () => transmuxer.getInfo()
   }
 })
