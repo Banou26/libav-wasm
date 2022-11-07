@@ -59,6 +59,8 @@ extern "C" {
     AVIOContext* output_avio_context;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
+    unsigned char* input_avio_buffer;
+    unsigned char* output_avio_buffer;
     long last_frame_pts;
     long last_frame_duration;
     int time_base_num;
@@ -115,15 +117,19 @@ extern "C" {
 
     void init_output_context (bool init) {
       int res;
-      if (!init) {
-        // avio_flush(output_format_context->pb);
-        // avformat_flush(output_format_context);
-        // avio_flush(output_avio_context);
-        avio_context_free(&input_avio_context);
-        avformat_free_context(input_format_context);
-        avio_context_free(&output_avio_context);
-        avformat_free_context(output_format_context);
-      }
+      // if (!init) {
+      //   // avio_flush(output_format_context->pb);
+      //   // avformat_flush(output_format_context);
+      //   // avio_flush(output_avio_context);
+      //   avformat_free_context(input_format_context);
+      //   avformat_close_input(&input_format_context);
+      //   avio_context_free(&input_avio_context);
+      //   avformat_close_input(&output_format_context);
+      //   avformat_free_context(output_format_context);
+      //   avio_context_free(&output_avio_context);
+      //   av_free(input_avio_buffer);
+      //   av_free(output_avio_buffer);
+      // }
 
       last_frame_pts = NULL;
       last_frame_duration = NULL;
@@ -146,9 +152,9 @@ extern "C" {
       number_of_streams = 0;
 
       // Initialize the input avio context
-      unsigned char* buffer = (unsigned char*)av_malloc(buffer_size);
+      input_avio_buffer = (unsigned char*)av_malloc(buffer_size);
       input_avio_context = avio_alloc_context(
-        buffer,
+        input_avio_buffer,
         buffer_size,
         0,
         reinterpret_cast<void*>(this),
@@ -169,9 +175,9 @@ extern "C" {
         return;
       }
       
-      unsigned char* buffer2 = (unsigned char*)av_malloc(buffer_size);
+      output_avio_buffer = (unsigned char*)av_malloc(buffer_size);
       output_avio_context = avio_alloc_context(
-        buffer2,
+        output_avio_buffer,
         buffer_size,
         1,
         reinterpret_cast<void*>(this),
@@ -180,7 +186,6 @@ extern "C" {
         nullptr
       );
 
-      output_format_context = avformat_alloc_context();
       // Initialize the output format stream context as an mp4 file
       avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
       // Set the avio context to the output format context
@@ -214,7 +219,7 @@ extern "C" {
         }
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-          if (!init) continue;
+          // if (!init) continue;
           // print_dict(in_stream->metadata);
           auto codec = avcodec_find_decoder(in_codecpar->codec_id);
           auto codecCtx = avcodec_alloc_context3(codec);
@@ -231,12 +236,13 @@ extern "C" {
               )
             )
           );
+          avcodec_free_context(&codecCtx);
           // printf("HEADER IS ATTACHMENT TYPE, %d %s %s \n", i, filename, mimetype);
           continue;
         }
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-          if (!init) continue;
+          // if (!init) continue;
           // char buf[256];
           auto codec = avcodec_find_decoder(in_codecpar->codec_id);
           auto codecCtx = avcodec_alloc_context3(codec);
@@ -269,6 +275,8 @@ extern "C" {
             static_cast<std::string>(language),
             static_cast<std::string>(title)
           );
+          avcodec_free_context(&codecCtx);
+          av_free(codecCtx->subtitle_header);
           continue;
         }
 
@@ -382,6 +390,7 @@ extern "C" {
           return;
         }
       }
+      av_packet_free(&packet);
       // av_write_trailer(output_format_context);
     }
 
@@ -410,9 +419,9 @@ extern "C" {
 
     int _seek(int timestamp, int flags) {
       int res;
-      if (flags & AVSEEK_FLAG_BACKWARD) {
-        init_output_context(false);
-      }
+      // if (flags & AVSEEK_FLAG_BACKWARD) {
+      //   init_output_context(false);
+      // }
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("av_seek_frame errored\n");
       }
@@ -420,10 +429,24 @@ extern "C" {
     }
 
     void destroy () {
-      avio_context_free(&input_avio_context);
+      // avio_close(input_format_context->pb);
+      // avio_close(output_format_context->pb);
+
       avformat_free_context(input_format_context);
-      avio_context_free(&output_avio_context);
+      // avformat_close_input(&input_format_context);
+      avio_context_free(&input_avio_context);
+      // avformat_close_input(&output_format_context);
       avformat_free_context(output_format_context);
+      avio_context_free(&output_avio_context);
+
+
+      // av_free(input_avio_buffer);
+      // av_free(output_avio_buffer);
+
+      // avio_context_free(&input_avio_context);
+      // avformat_free_context(input_format_context);
+      // avio_context_free(&output_avio_context);
+      // avformat_free_context(output_format_context);
     }
   };
 
