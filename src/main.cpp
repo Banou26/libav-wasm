@@ -432,8 +432,8 @@ extern "C" {
       // avio_close(input_format_context->pb);
       // avio_close(output_format_context->pb);
 
-      avformat_free_context(input_format_context);
-      // avformat_close_input(&input_format_context);
+      avformat_close_input(&input_format_context);
+      // avformat_free_context(input_format_context);
       avio_context_free(&input_avio_context);
       // avformat_close_input(&output_format_context);
       avformat_free_context(output_format_context);

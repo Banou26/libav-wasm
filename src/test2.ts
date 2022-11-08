@@ -293,6 +293,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     })
 
     const seek = throttleWithLastCall(500, async (time: number) => {
+      console.log('seek', time)
       const isPlaying = !video.paused
       if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
@@ -313,6 +314,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       await allTasksDone
 
       await transmuxer.destroy()
+      // await new Promise(resolve => setTimeout(resolve, 500))
       await transmuxer.init()
 
       processingQueue.start()
@@ -329,11 +331,12 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
       if (isPlaying) await video.play()
 
-      setTimeout(async () => {
-        await processNeededBufferRange()
-        await updateBufferedRanges()
-      }, 100)
+      await new Promise(resolve => setTimeout(resolve, 100))
 
+      await processNeededBufferRange()
+      await updateBufferedRanges()
+
+      console.log('seek done', time)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
