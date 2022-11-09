@@ -429,24 +429,14 @@ extern "C" {
     }
 
     void destroy () {
-      // avio_close(input_format_context->pb);
-      // avio_close(output_format_context->pb);
+      // av_free(streams_list);
 
+      // avformat_close_input calls avformat_free_context itself
       avformat_close_input(&input_format_context);
-      // avformat_free_context(input_format_context);
       avio_context_free(&input_avio_context);
-      // avformat_close_input(&output_format_context);
+      
       avformat_free_context(output_format_context);
       avio_context_free(&output_avio_context);
-
-
-      // av_free(input_avio_buffer);
-      // av_free(output_avio_buffer);
-
-      // avio_context_free(&input_avio_context);
-      // avformat_free_context(input_format_context);
-      // avio_context_free(&output_avio_context);
-      // avformat_free_context(output_format_context);
     }
   };
 
