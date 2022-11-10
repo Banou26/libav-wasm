@@ -48,8 +48,8 @@ extern "C" {
     AVIOContext* output_avio_context;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
-    unsigned char* input_avio_buffer;
-    unsigned char* output_avio_buffer;
+    uint8_t* input_avio_buffer;
+    uint8_t* output_avio_buffer;
     long last_frame_pts;
     long last_frame_duration;
     int time_base_num;
@@ -76,7 +76,7 @@ extern "C" {
 
     static void print_dict(const AVDictionary *m)
     {
-        AVDictionaryEntry *t = NULL;
+        AVDictionaryEntry *t = nullptr;
         while ((t = av_dict_get(m, "", t, AV_DICT_IGNORE_SUFFIX)))
             printf("%s %s   ", t->key, t->value);
         printf("\n");
@@ -101,10 +101,10 @@ extern "C" {
     }
 
     void init () {
-      init_output_context(true);
+      init_contexts(true);
     }
 
-    void init_output_context (bool init) {
+    void init_contexts (bool init) {
       int res;
       last_frame_pts = NULL;
       last_frame_duration = NULL;
@@ -118,16 +118,16 @@ extern "C" {
       keyframe_pts = NULL;
       keyframe_pos = NULL;
 
-      input_avio_context = NULL;
+      input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
       output_format_context = avformat_alloc_context();
 
       stream_index = 0;
-      streams_list = NULL;
+      streams_list = nullptr;
       number_of_streams = 0;
 
       // Initialize the input avio context
-      input_avio_buffer = (unsigned char*)av_malloc(buffer_size);
+      input_avio_buffer = static_cast<uint8_t*>(av_malloc(buffer_size));
       input_avio_context = avio_alloc_context(
         input_avio_buffer,
         buffer_size,
@@ -149,9 +149,9 @@ extern "C" {
         printf("ERROR: could not get input_stream info | %s \n", av_err2str(res));
         return;
       }
-      
+
       // Initialize the output avio context
-      output_avio_buffer = (unsigned char*)av_malloc(buffer_size);
+      output_avio_buffer = static_cast<uint8_t*>(av_malloc(buffer_size));
       output_avio_context = avio_alloc_context(
         output_avio_buffer,
         buffer_size,
@@ -204,12 +204,14 @@ extern "C" {
           AVCodecContext* codecCtx = avcodec_alloc_context3(codec);
           avcodec_parameters_to_context(codecCtx, in_codecpar);
           // Get filename and mimetype of the attachment
-          char* filename = av_dict_get(in_stream->metadata, "filename", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          char* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, AV_DICT_IGNORE_SUFFIX)->value;
+          AVDictionaryEntry* filename_entry = av_dict_get(in_stream->metadata, "filename", NULL, AV_DICT_IGNORE_SUFFIX);
+          std::string filename = std::string(filename_entry->value);
+          AVDictionaryEntry* mimetype_entry = av_dict_get(in_stream->metadata, "mimetype", NULL, AV_DICT_IGNORE_SUFFIX);
+          std::string mimetype = std::string(mimetype_entry->value);
           // call the js attachment callback
           attachment(
-            static_cast<std::string>(filename),
-            static_cast<std::string>(mimetype),
+            filename,
+            mimetype,
             emscripten::val(
               emscripten::typed_memory_view(
                 codecCtx->extradata_size,
@@ -230,7 +232,7 @@ extern "C" {
           AVCodecContext* codecCtx = avcodec_alloc_context3(codec);
           avcodec_parameters_to_context(codecCtx, in_codecpar);
           // allocate space for the subtitle extradata(header)
-          codecCtx->subtitle_header = (uint8_t *)av_malloc(codecCtx->extradata_size + 1);
+          codecCtx->subtitle_header = static_cast<uint8_t*>(av_malloc(codecCtx->extradata_size + 1));
           if (!codecCtx->subtitle_header) {
             res = AVERROR(ENOMEM);
             printf("ERROR: could not allocate subtitle headers | %s \n", av_err2str(res));
@@ -247,20 +249,23 @@ extern "C" {
           codecCtx->subtitle_header[codecCtx->extradata_size] = 0;
           codecCtx->subtitle_header_size = codecCtx->extradata_size;
           // Get language and title of the subtitle
-          char* language = av_dict_get(in_stream->metadata, "language", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          char* title = av_dict_get(in_stream->metadata, "title", NULL, AV_DICT_IGNORE_SUFFIX)->value;
-          std::string data = reinterpret_cast<char *>(codecCtx->subtitle_header);
+          AVDictionaryEntry* language_entry = av_dict_get(in_stream->metadata, "language", NULL, AV_DICT_IGNORE_SUFFIX);
+          std::string language = std::string(language_entry->value);
+          AVDictionaryEntry* title_entry = av_dict_get(in_stream->metadata, "title", NULL, AV_DICT_IGNORE_SUFFIX);
+          std::string title = std::string(title_entry->value);
+          std::string data = reinterpret_cast<char*>(codecCtx->subtitle_header);
           // call the js subtitle callback
           subtitle(
             i,
             true,
             data,
-            static_cast<std::string>(language),
-            static_cast<std::string>(title)
+            language,
+            title
           );
           // cleanup
-          avcodec_free_context(&codecCtx);
           av_free(codecCtx->subtitle_header);
+          codecCtx->subtitle_header = NULL;
+          avcodec_free_context(&codecCtx);
           continue;
         }
 
@@ -284,7 +289,7 @@ extern "C" {
         }
       }
 
-      AVDictionary* opts = NULL;
+      AVDictionary* opts = nullptr;
       // Force transmuxing instead of re-encoding by copying the codecs
       av_dict_set(&opts, "c", "copy", 0);
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
@@ -362,7 +367,7 @@ extern "C" {
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
           // call JS write callback with -1 as frame_write_index to signal that the group of frame is finished
           write(
-            (long)input_format_context->pb->pos,
+            static_cast<long>(input_format_context->pb->pos),
             NULL,
             time_base_num,
             time_base_den,
@@ -416,7 +421,7 @@ extern "C" {
       int res;
       // move the JS destroy + init call inside this function to make things cleaner
       // if (flags & AVSEEK_FLAG_BACKWARD) {
-      //   init_output_context(false);
+      //   init_contexts(false);
       // }
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
@@ -425,16 +430,23 @@ extern "C" {
     }
 
     void destroy () {
-      // try to check what else needs to be freed to fix memory leak
-      
-      // av_free(streams_list);
+      av_freep(streams_list);
+      streams_list = nullptr;
 
       // avformat_close_input calls avformat_free_context itself
       avformat_close_input(&input_format_context);
+      input_format_context = nullptr;
       avio_context_free(&input_avio_context);
+      input_avio_context = nullptr;
+      av_free(&input_avio_buffer);
+      input_avio_buffer = nullptr;
       
       avformat_free_context(output_format_context);
+      output_format_context = nullptr;
       avio_context_free(&output_avio_context);
+      output_avio_context = nullptr;
+      av_free(output_avio_buffer);
+      output_avio_buffer = nullptr;
     }
   };
 
@@ -443,13 +455,13 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
-    long result = seek((long)offset, whence).as<long>();
+    long result = seek(static_cast<long>(offset), whence).as<long>();
     return result;
   }
 
   // If emscripten asynchify ever start working for libraries callbacks,
   // replace the blocking write function with an async callback
-  
+
   // Read callback called by AVIOContext
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
@@ -459,7 +471,7 @@ extern "C" {
     //   buffer: Uint8Array,
     //   size: int
     // }
-    val res = read((long)remuxObject.input_format_context->pb->pos, buf_size);
+    val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size);
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     // copy the result buffer into AVIO's buffer
@@ -477,7 +489,7 @@ extern "C" {
     emscripten::val &write = remuxObject.write;
     // call the JS write function
     write(
-      (long)remuxObject.input_format_context->pb->pos,
+      static_cast<long>(remuxObject.input_format_context->pb->pos),
       emscripten::val(
         emscripten::typed_memory_view(
           buf_size,

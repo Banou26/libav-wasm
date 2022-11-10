@@ -3,9 +3,11 @@ import type { Resolvers as WorkerResolvers } from './worker'
 import PQueue from 'p-queue'
 import { call } from 'osra'
 
-import { Operation } from './shared-buffer_generated'
-import { getSharedInterface, notifyInterface, setSharedInterface, State, waitForInterfaceNotification } from './utils'
-import { ApiMessage, Read, ReadRequest, ReadResponse, Seek, SeekRequest, SeekResponse, Write, WriteRequest, WriteResponse } from './gen/src/shared-memory-api_pb'
+import { notifyInterface, State, waitForInterfaceNotification } from './utils'
+import {
+  ApiMessage, Read, ReadRequest, ReadResponse, Seek,
+  SeekRequest, SeekResponse, Write, WriteRequest, WriteResponse
+} from './gen/src/shared-memory-api_pb'
 
 /** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
 export enum SEEK_FLAG {

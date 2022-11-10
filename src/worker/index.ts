@@ -11,7 +11,7 @@ const makeModule = () =>
     locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
   })
 
-let module: ReturnType<typeof makeModule>
+let module: ReturnType<typeof makeModule> = await makeModule()
 
 // todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple transmuxer already initialized waiting to seek + process
 // todo: We can keep in memory all of the chunks needed to initialize the transmuxer
@@ -153,17 +153,18 @@ const init = makeCallListener(async (
     }
   })
 
-  let transmuxer: ReturnType<typeof makeTransmuxer>
+  let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
 
   return {
-    init: async () => {
-      module = await makeModule()
-      transmuxer = makeTransmuxer()
+    init: () => {
+      // module = await makeModule()
+      // transmuxer = makeTransmuxer()
       transmuxer.init()
     },
     destroy: () => {
-      transmuxer = undefined
-      module = undefined
+      transmuxer.destroy()
+      // transmuxer = undefined
+      // module = undefined
     },
     seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
     process: (size: number) => transmuxer.process(size),
