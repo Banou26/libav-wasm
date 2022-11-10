@@ -155,16 +155,18 @@ const init = makeCallListener(async (
 
   let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
 
+  let firstInit = true
   return {
-    init: () => {
-      // module = await makeModule()
-      // transmuxer = makeTransmuxer()
-      transmuxer.init()
+    init: async () => {
+      module = await makeModule()
+      transmuxer = makeTransmuxer()
+      transmuxer.init(firstInit)
+      if (firstInit) firstInit = false
     },
     destroy: () => {
       transmuxer.destroy()
-      // transmuxer = undefined
-      // module = undefined
+      transmuxer = undefined
+      module = undefined
     },
     seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
     process: (size: number) => transmuxer.process(size),

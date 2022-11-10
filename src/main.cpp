@@ -100,11 +100,7 @@ extern "C" {
       error = options["error"];
     }
 
-    void init () {
-      init_contexts(true);
-    }
-
-    void init_contexts (bool init) {
+    void init (bool first_init) {
       int res;
       last_frame_pts = NULL;
       last_frame_duration = NULL;
@@ -120,7 +116,7 @@ extern "C" {
 
       input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
-      output_format_context = avformat_alloc_context();
+      // output_format_context = avformat_alloc_context();
 
       stream_index = 0;
       streams_list = nullptr;
@@ -198,6 +194,7 @@ extern "C" {
 
         // call the JS attachment callback and continue to next stream
         if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+          if (!first_init) continue;
           // Get attachment codec context
           // AVCodec*
           auto codec = avcodec_find_decoder(in_codecpar->codec_id);
@@ -226,6 +223,7 @@ extern "C" {
 
         // call the JS subtitle callback and continue to next stream
         if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+          if (!first_init) continue;
           // Get subtitle codec context
           // AVCodec*
           auto codec = avcodec_find_decoder(in_codecpar->codec_id);
@@ -384,14 +382,11 @@ extern "C" {
         frame_write_index = 0;
         // If we've reached the processing size, we stop here
         if (input_format_context->pb->pos >= start_position + ((int64_t)size)) {
-          return;
+          break;
         }
       }
       // free packet
       av_packet_free(&packet);
-
-      // check if we need to write trailer at some point
-      // av_write_trailer(output_format_context);
     }
 
     InfoObject getInfo () {
@@ -430,23 +425,32 @@ extern "C" {
     }
 
     void destroy () {
+      // check if we need to write trailer at some point
+      // av_write_trailer(output_format_context);
+
       av_freep(streams_list);
       streams_list = nullptr;
 
       // avformat_close_input calls avformat_free_context itself
-      avformat_close_input(&input_format_context);
-      input_format_context = nullptr;
+      // avformat_close_input(&input_format_context);
+
+      // We have to free like this, as reported by https://fftrac-bg.ffmpeg.org/ticket/1357
+      av_free(input_avio_context->buffer);
+      // av_freep(&input_avio_buffer);
+      input_avio_buffer = nullptr;
       avio_context_free(&input_avio_context);
       input_avio_context = nullptr;
-      av_free(&input_avio_buffer);
-      input_avio_buffer = nullptr;
-      
-      avformat_free_context(output_format_context);
-      output_format_context = nullptr;
+      avformat_close_input(&input_format_context);
+      // avformat_free_context(input_format_context);
+      input_format_context = nullptr;
+
+      av_free(output_avio_context->buffer);
       avio_context_free(&output_avio_context);
       output_avio_context = nullptr;
-      av_free(output_avio_buffer);
-      output_avio_buffer = nullptr;
+      avformat_free_context(output_format_context);
+      output_format_context = nullptr;
+      // av_free(output_avio_buffer);
+      // output_avio_buffer = nullptr;
     }
   };
 
