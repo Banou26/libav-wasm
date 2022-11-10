@@ -279,14 +279,11 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
     const processNeededBufferRange = throttleWithLastCall(100, async () => {
-      // console.log('processNeededBufferRange')
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
       while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
-        // console.log('process', lastPts, (lastPts! < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)))
         const newChunks = await process()
         const lastProcessedChunk = newChunks.at(-1)
-        // console.log('processed', newChunks)
         if (!lastProcessedChunk) break
         lastPts = lastProcessedChunk.pts
       }
@@ -314,7 +311,6 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       await allTasksDone
 
       await transmuxer.destroy()
-      // await new Promise(resolve => setTimeout(resolve, 500))
       await transmuxer.init()
 
       processingQueue.start()
@@ -371,9 +367,6 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         chunks
           .filter((chunk) => !neededChunks.includes(chunk))
 
-      // console.log('neededChunks', neededChunks)
-      // console.log('nonNeededChunks', nonNeededChunks)
-      // console.log('bufferedRanges', bufferedRanges)
       for (const shouldBeUnbufferedChunk of shouldBeUnbufferedChunks) {
         await unbufferChunk(shouldBeUnbufferedChunk)
       }
@@ -395,23 +388,6 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     // @ts-ignore
     await appendBuffer(headerChunk.buffer)
 
-    // let previousTime = -1
-    // setInterval(async () => {
-    //   const { currentTime } = video
-    //   if (previousTime === currentTime) return
-    //   previousTime = currentTime
-    //   await updateBufferedRanges()
-    //   const latestChunk = chunks.sort((chunk, chunk2) => chunk.pts - chunk2.pts).at(-1)
-    //   console.log('latestChunk', latestChunk, currentTime)
-    //   if (latestChunk && (latestChunk.pts >= (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) return
-    //   console.group('Processing call')
-    //   for (let i = 0; i < 5; i++) {
-    //     await process()
-    //   }
-    //   console.groupEnd()
-    //   await updateBufferedRanges()
-    // }, 500)
-
     await processNeededBufferRange()
     await updateBufferedRanges()
 
@@ -426,76 +402,5 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     setTimeout(() => {
       video.play()
-
-      // setTimeout(() => {
-      //   // video.pause()
-
-      //   setTimeout(() => {
-      //     video.currentTime = 500
-
-      //     // setTimeout(() => {
-      //     //   video.currentTime = 1000
-      //     //   setTimeout(() => {
-      //     //     video.currentTime = 500
-      //     //     // setTimeout(() => {
-      //     //     //   video.currentTime = 750
-      //     //     // }, 2_500)
-      //     //   }, 2_500)
-      //     // }, 2_500)
-      //   }, 2_500)
-      // }, 2_500)
     }, 2_500)
-    // }, 5_000)
-
-
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // for (let i = 0; i < 10; i++) {
-    //   await process()
-    // }
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // for (let i = 0; i < 10; i++) {
-    //   await process()
-    // }
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // await seek(50)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // for (let i = 0; i < 10; i++) {
-    //   await process()
-    // }
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // for (let i = 0; i < 10; i++) {
-    //   await process()
-    // }
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // for (let i = 0; i < 10; i++) {
-    //   await process()
-    // }
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // for (let i = 0; i < 10; i++) {
-    //   await process()
-    // }
-
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.seek(100_000, SEEK_FLAG.NONE)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.process(4_000_000)
-    // transmuxer.seek(30_000, SEEK_FLAG.AVSEEK_FLAG_BACKWARD)
-    // await new Promise(resolve => setTimeout(resolve, 2000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.process(4_000_000)
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    // transmuxer.process(4_000_000)
-    // setInterval(() => {
-    //   console.log('process')
-    //   transmuxer.process()
-    // }, 5_000)
   })
