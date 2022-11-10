@@ -1,21 +1,17 @@
 import { makeCallListener, registerListener } from 'osra'
 
 import WASMModule from 'libav'
-import PQueue from 'p-queue'
 
-import {  Operation } from '../shared-buffer_generated'
-import { freeInterface, getSharedInterface, notifyInterface, setSharedInterface, State, waitSyncForInterfaceNotification } from '../utils'
+import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification } from '../utils'
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '..'
 import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'
 
-const queue = new PQueue({ concurrency: 1 })
-const queueCall = <T extends (...args: any) => any>(func: T) =>
-  queue.add<Awaited<ReturnType<T>>>(func)
+const makeModule = () =>
+  WASMModule({
+    locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
+  })
 
-
-const module = await WASMModule({
-  locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
-})
+let module: ReturnType<typeof makeModule>
 
 // todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple transmuxer already initialized waiting to seek + process
 // todo: We can keep in memory all of the chunks needed to initialize the transmuxer
@@ -35,7 +31,7 @@ const init = makeCallListener(async (
   const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
 
-  const transmuxer = new module.Transmuxer({
+  const makeTransmuxer = () => new module.Transmuxer({
     length,
     bufferSize,
     error: (critical, message) => {
@@ -157,9 +153,18 @@ const init = makeCallListener(async (
     }
   })
 
+  let transmuxer: ReturnType<typeof makeTransmuxer>
+
   return {
-    init: () => transmuxer.init(),
-    destroy: () => transmuxer.destroy(),
+    init: async () => {
+      module = await makeModule()
+      transmuxer = makeTransmuxer()
+      transmuxer.init()
+    },
+    destroy: () => {
+      transmuxer = undefined
+      module = undefined
+    },
     seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
     process: (size: number) => transmuxer.process(size),
     getInfo: () => transmuxer.getInfo()
