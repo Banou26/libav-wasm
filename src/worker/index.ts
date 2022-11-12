@@ -28,8 +28,10 @@ const init = makeCallListener(async (
     write: (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number, bufferIndex: number) => Promise<void>
   }, extra) => {
 
+  let initBuffers: Uint8Array[] = []
   const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
+  let initRead = 0
 
   const makeTransmuxer = () => new module.Transmuxer({
     length,
@@ -76,6 +78,15 @@ const init = makeCallListener(async (
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
+      if (!firstInit && initRead !== -1) {
+        const resultBuffer = initBuffers[initRead]
+        currentOffset = offset + resultBuffer.byteLength
+        initRead = initRead + 1
+        return {
+          buffer: resultBuffer,
+          size: resultBuffer.byteLength
+        }
+      }
       const request = new ApiMessage({
         endpoint: {
           case: 'read',
@@ -98,6 +109,10 @@ const init = makeCallListener(async (
       const messageLength = dataview.getUint32(4)
       const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
       const resultBuffer = (response.endpoint.value as Read).response!.buffer
+
+      if (firstInit) {
+        initBuffers = [...initBuffers, structuredClone(resultBuffer)]
+      }
 
       currentOffset = offset + resultBuffer.byteLength
       freeInterface(sharedArrayBuffer)
@@ -158,9 +173,11 @@ const init = makeCallListener(async (
   let firstInit = true
   return {
     init: async () => {
+      initRead = 0
       module = await makeModule()
       transmuxer = makeTransmuxer()
       transmuxer.init(firstInit)
+      initRead = -1
       if (firstInit) firstInit = false
     },
     destroy: () => {
