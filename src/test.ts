@@ -1,7 +1,10 @@
+// @ts-ignore
 import { createFile } from 'mp4box'
-
-import { makeTransmuxer, SEEK_WHENCE_FLAG } from '.'
 import PQueue from 'p-queue'
+
+import { SEEK_WHENCE_FLAG } from './utils'
+import { makeTransmuxer } from '.'
+import { MP4Info } from './mp4box'
 
 type Chunk = {
   offset: number
@@ -53,7 +56,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     let mime = 'video/mp4; codecs=\"'
     let info: any | undefined
-    mp4boxfile.onReady = (_info) => {
+    mp4boxfile.onReady = (_info: MP4Info) => {
       console.log('mp4box ready info', _info)
       info = _info
       for (let i = 0; i < info.tracks.length; i++) {
@@ -67,7 +70,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     let headerChunk: Chunk
     let chunks: Chunk[] = []
 
-    const BUFFER_SIZE = 4_000_000
+    const BUFFER_SIZE = 5_000_000
 
     const transmuxer = await makeTransmuxer({
       bufferSize: BUFFER_SIZE,
@@ -95,10 +98,10 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         return -1
       },
       subtitle: (title, language, subtitle) => {
-        // console.log('SUBTITLE HEADER', title, language, subtitle)
+        console.log('SUBTITLE HEADER', title, language, subtitle)
       },
-      attachment: (filename: string, mimetype: string, buffer: Uint8Array) => {
-        // console.log('attachment', filename, mimetype, buffer)
+      attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
+        console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
         console.log('write', isHeader, offset, pts, duration, pos)
@@ -155,6 +158,7 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     video.controls = true
     video.volume = 0
     video.addEventListener('error', ev => {
+      // @ts-ignore
       console.error(ev.target?.error)
     })
     document.body.appendChild(video)
@@ -204,18 +208,18 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       sourceBuffer.addEventListener('error', errorListener, { once: true })
     }
 
-    const getTimeRanges = () =>
-      Array(sourceBuffer.buffered.length)
-        .fill(undefined)
-        .map((_, index) => ({
-          index,
-          start: sourceBuffer.buffered.start(index),
-          end: sourceBuffer.buffered.end(index)
-        }))
+    // const getTimeRanges = () =>
+    //   Array(sourceBuffer.buffered.length)
+    //     .fill(undefined)
+    //     .map((_, index) => ({
+    //       index,
+    //       start: sourceBuffer.buffered.start(index),
+    //       end: sourceBuffer.buffered.end(index)
+    //     }))
 
-    const getTimeRange = (time: number) =>
-      getTimeRanges()
-        .find(({ start, end }) => time >= start && time <= end)
+    // const getTimeRange = (time: number) =>
+    //   getTimeRanges()
+    //     .find(({ start, end }) => time >= start && time <= end)
 
     const appendBuffer = (buffer: ArrayBuffer) =>
       queue.add(() =>
@@ -254,23 +258,23 @@ fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       chunks = chunks.filter(_chunk => _chunk !== chunk)
     }
 
-    const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
-      queue.add(() =>
-        new Promise((resolve, reject) => {
-          setupListeners(resolve, reject)
-          sourceBuffer.remove(
-            Math.max(sourceBuffer.buffered.start(index), start),
-            Math.min(sourceBuffer.buffered.end(index), end)
-          )
-        })
-      )
+    // const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
+    //   queue.add(() =>
+    //     new Promise((resolve, reject) => {
+    //       setupListeners(resolve, reject)
+    //       sourceBuffer.remove(
+    //         Math.max(sourceBuffer.buffered.start(index), start),
+    //         Math.min(sourceBuffer.buffered.end(index), end)
+    //       )
+    //     })
+    //   )
 
-    const clearBufferedRanges = async () => {
-      const bufferedRanges = getTimeRanges()
-      for (const range of bufferedRanges) {
-        await removeRange(range)
-      }
-    }
+    // const clearBufferedRanges = async () => {
+    //   const bufferedRanges = getTimeRanges()
+    //   for (const range of bufferedRanges) {
+    //     await removeRange(range)
+    //   }
+    // }
 
     const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
     const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30

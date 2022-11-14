@@ -165,8 +165,6 @@ extern "C" {
 
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
-      // potentially better alloc?
-      // streams_list = (int *)av_malloc(number_of_streams * sizeof(*streams_list));
 
       if (!streams_list) {
         res = AVERROR(ENOMEM);

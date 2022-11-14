@@ -1,14 +1,14 @@
 import { makeCallListener, registerListener } from 'osra'
 
-import WASMModule from 'libav'
+// @ts-ignore
+import * as WASMModule from 'libav'
 
-import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification } from '../utils'
-import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '..'
+import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification, SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'
 
 const makeModule = () =>
   WASMModule({
-    locateFile: (path: string, scriptDirectory: string) => `/dist/${path.replace('/dist', '')}`
+    locateFile: (path: string) => `/dist/${path.replace('/dist', '')}`
   })
 
 let module: ReturnType<typeof makeModule> = await makeModule()
@@ -18,15 +18,14 @@ let module: ReturnType<typeof makeModule> = await makeModule()
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { length, sharedArrayBuffer, bufferSize, attachment, subtitle, write }:
+  { length, sharedArrayBuffer, bufferSize, attachment, subtitle }:
   {
     length: number
     sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
-    write: (offset:number, buffer: ArrayBufferLike, pts: number, duration: number, pos: number, bufferIndex: number) => Promise<void>
-  }, extra) => {
+  }) => {
 
   let initBuffers: Uint8Array[] = []
   const dataview = new DataView(sharedArrayBuffer)
@@ -36,7 +35,7 @@ const init = makeCallListener(async (
   const makeTransmuxer = () => new module.Transmuxer({
     length,
     bufferSize,
-    error: (critical, message) => {
+    error: (critical: boolean, message: string) => {
       console.log('worker error', critical, message)
     },
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
@@ -81,6 +80,7 @@ const init = makeCallListener(async (
       if (!firstInit && initRead !== -1) {
         const resultBuffer = initBuffers[initRead]
         currentOffset = offset + resultBuffer.byteLength
+        console.log('used cached init buffers', initRead, resultBuffer.byteLength, initBuffers)
         initRead = initRead + 1
         return {
           buffer: resultBuffer,
@@ -198,7 +198,8 @@ const resolvers = {
 export type Resolvers = typeof resolvers
 
 registerListener({
-  target: globalThis,
+  target: globalThis as unknown as Worker,
+  // @ts-ignore
   resolvers
 })
 

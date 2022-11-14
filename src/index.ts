@@ -3,31 +3,11 @@ import type { Resolvers as WorkerResolvers } from './worker'
 import PQueue from 'p-queue'
 import { call } from 'osra'
 
-import { notifyInterface, State, waitForInterfaceNotification } from './utils'
+import { notifyInterface, State, waitForInterfaceNotification, SEEK_FLAG, SEEK_WHENCE_FLAG } from './utils'
 import {
   ApiMessage, Read, ReadRequest, ReadResponse, Seek,
   SeekRequest, SeekResponse, Write, WriteRequest, WriteResponse
 } from './gen/src/shared-memory-api_pb'
-
-/** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
-export enum SEEK_FLAG {
-  NONE = 0,
-  /** seek backward */
-  AVSEEK_FLAG_BACKWARD = 1 << 0,
-  /** seeking based on position in bytes */
-  AVSEEK_FLAG_BYTE = 1 << 1,
-  /** seek to any frame, even non-keyframes */
-  AVSEEK_FLAG_ANY = 1 << 2,
-  /** seeking based on frame number */
-  AVSEEK_FLAG_FRAME = 1 << 3
-}
-
-export enum SEEK_WHENCE_FLAG {
-  SEEK_SET = 0,
-  SEEK_CUR = 1 << 0,
-  SEEK_END = 1 << 1,
-  AVSEEK_SIZE = 1 << 16 //0x10000,
-}
 
 export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<Uint8Array>
@@ -139,7 +119,7 @@ export const makeTransmuxer = async ({
         length,
         sharedArrayBuffer,
         bufferSize,
-        subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
+        subtitle: async (streamIndex, isHeader, data, ...rest) => {
           if (isHeader) {
           const [language, title] = rest as string[]
             subtitles.set(streamIndex, {
@@ -152,7 +132,7 @@ export const makeTransmuxer = async ({
             return
           }
           const subtitle = subtitles.get(streamIndex)
-          if (subtitle?.dialogues.includes(data)) return
+          if (subtitle?.dialogues.some(({ data: _data }) => _data === data)) return
           if (!subtitle) throw new Error('Subtitle data was received but no instance was found.')
           const [startTime, endTime] = rest as number[]
           const [dialogueIndex, layer] = data.split(',')
@@ -177,7 +157,7 @@ export const makeTransmuxer = async ({
           const subtitleString = `${subtitle.header.trim()}\n${newSubtitle.dialogues.map(({ dialogue }) => dialogue).join('\n').trim()}`
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
-        attachment
+        attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
       }
     )
 
@@ -206,12 +186,8 @@ export const makeTransmuxer = async ({
   let processBufferChunks: Chunk[] = []
   const write = async ({
     buffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
-    lastFrameDuration, lastFramePts, offset, timebaseDen, timebaseNum
+    lastFramePts, offset, timebaseDen, timebaseNum
   }: WriteRequest) => {
-    // console.log('libav write',
-    //   'buffer', buffer, 'bufferIndex', bufferIndex, 'keyframeDuration', keyframeDuration, 'keyframePos', keyframePos, 'keyframePts', keyframePts,
-    //   'lastFrameDuration', lastFrameDuration, 'lastFramePts', lastFramePts, 'offset', offset, 'timebaseDen', timebaseDen, 'timebaseNum', timebaseNum
-    // )
     const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
     const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
 
@@ -327,7 +303,13 @@ export const makeTransmuxer = async ({
       processBufferChunks = []
       await workerInit()
     }),
-    destroy: () => addTask(() => workerDestroy()),
+    destroy: (destroyWorker = false) => {
+      if (destroyWorker) {
+        worker.terminate()
+        return
+      }
+      return addTask(() => workerDestroy())
+    },
     process: (size: number) => addTask(async() => {
       processBufferChunks = []
       await workerProcess(size)
