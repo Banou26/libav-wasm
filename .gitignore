@@ -1,7 +1,8 @@
-.parcel-cache
 dist
+build
 emscripten
 FFmpeg
 ffmpeg-5.1
 node_modules
 video.mkv
+video2.mkv

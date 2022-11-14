@@ -11,7 +11,7 @@ const makeModule = () =>
     locateFile: (path: string) => `/dist/${path.replace('/dist', '')}`
   })
 
-let module: ReturnType<typeof makeModule> = await makeModule()
+let module: ReturnType<typeof makeModule>
 
 // todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple transmuxer already initialized waiting to seek + process
 // todo: We can keep in memory all of the chunks needed to initialize the transmuxer
@@ -26,7 +26,7 @@ const init = makeCallListener(async (
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
-
+  if (!module) module = await makeModule()
   let initBuffers: Uint8Array[] = []
   const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0

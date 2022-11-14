@@ -43,7 +43,7 @@ const throttleWithLastCall = <T extends (...args: any[]) => any>(time: number, f
 	}
 }
 
-fetch('../dist/spy13broke.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
+fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
   .then(async ({ headers, body }) => {
     const contentLength = Number(headers.get('Content-Length'))
     const buffer = await new Response(body).arrayBuffer()

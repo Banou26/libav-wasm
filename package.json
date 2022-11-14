@@ -1,16 +1,18 @@
 {
   "name": "@banou26/oz-libav",
-  "version": "0.0.1",
-  "main": "dist/index.js",
+  "version": "0.1.0",
+  "main": "build/index.mjs",
   "files": [
-    "dist/*"
+    "build/*"
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "make-docker": "docker-compose run libav-wasm make",
     "dev-web": "vite --port 1234",
-    "build": "tsc && vite build",
+    "build": "npm run make-docker && npm run copy-package && tsc && vite build && npm run copy-wasm",
+    "copy-package": "copyfiles -u 2 src/build-config/package.json dist",
+    "copy-wasm": "copyfiles -u 1 dist/*.wasm build",
     "preview": "vite preview",
     "flatbuffers": "flatc.exe -o src --ts src/shared-buffer.fbs",
     "proto": "buf-Windows-x86_64.exe generate"
@@ -28,6 +30,7 @@
     "@esbuild-plugins/node-globals-polyfill": "^0.1.1",
     "@esbuild-plugins/node-modules-polyfill": "^0.1.4",
     "concurrently": "^6.0.0",
+    "copyfiles": "^2.4.1",
     "mp4box": "^0.5.2",
     "nodemon": "^2.0.7",
     "rollup-plugin-node-polyfills": "^0.2.1",

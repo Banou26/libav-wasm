@@ -3,26 +3,18 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   build: {
     target: 'esnext',
+    outDir: 'build',
     lib: {
       name: '@banou26/oz-libav',
-      fileName: 'oz-libav',
+      fileName: 'index',
       entry: 'src/index.ts',
       formats: ['es']
     },
-    rollupOptions: {
-      external: ['@bufbuild/protobuf', 'buffer', 'mp4box', 'osra'],
-      output: {
-        format: 'es'
-      }
-    },
     worker: {
       format: 'es',
-      rollupOptions: {
-        external: ['@bufbuild/protobuf', 'buffer', 'mp4box', 'osra'],
-        output: {
-          format: 'es'
-        }
-      }
+    },
+    rollupOptions: {
+      external: ['@bufbuild/protobuf', 'buffer', 'mp4box', 'osra']
     }
   },
   optimizeDeps: {

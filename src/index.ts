@@ -9,6 +9,11 @@ import {
   SeekRequest, SeekResponse, Write, WriteRequest, WriteResponse
 } from './gen/src/shared-memory-api_pb'
 
+export {
+  SEEK_FLAG,
+  SEEK_WHENCE_FLAG
+}
+
 export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<Uint8Array>
   seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>

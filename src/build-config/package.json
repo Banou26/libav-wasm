@@ -1,0 +1,4 @@
+{
+  "name": "libav",
+  "main": "./libav.cjs"
+}
