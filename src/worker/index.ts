@@ -70,10 +70,10 @@ const init = makeCallListener(async (
       const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
       const resultOffset = (response.endpoint.value as Seek).response!.offset
 
-      if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE) currentOffset = resultOffset
+      if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE && resultOffset !== -1) currentOffset = resultOffset
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-
+      console.log('seek result', resultOffset)
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
@@ -174,6 +174,7 @@ const init = makeCallListener(async (
   return {
     init: async () => {
       initRead = 0
+      currentOffset = 0
       module = await makeModule()
       transmuxer = makeTransmuxer()
       transmuxer.init(firstInit)
@@ -184,6 +185,7 @@ const init = makeCallListener(async (
       transmuxer.destroy()
       transmuxer = undefined
       module = undefined
+      currentOffset = 0
     },
     seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
     process: (size: number) => transmuxer.process(size),

@@ -2,7 +2,7 @@
 import { createFile } from 'mp4box'
 import PQueue from 'p-queue'
 
-import { SEEK_WHENCE_FLAG } from './utils'
+import { bufferStream, SEEK_WHENCE_FLAG, throttleWithLastCall } from './utils'
 import { makeTransmuxer } from '.'
 import { MP4Info } from './mp4box'
 
@@ -15,39 +15,32 @@ type Chunk = {
   buffered: boolean
 }
 
-const throttleWithLastCall = <T extends (...args: any[]) => any>(time: number, func: T) => {
-	let runningFunction: T | undefined
-  let lastCall: Promise<any> | undefined
-  let lastArguments: any[] | undefined
+const BUFFER_SIZE = 5_000_000
+const VIDEO_URL = '../video2.mkv'
 
-	return async (...args: Parameters<T>) => {
-    lastArguments = args
-		if (!runningFunction) {
-			try {
-        runningFunction = await func(...args)
-				return runningFunction
-			} finally {
-        await new Promise(resolve => setTimeout(resolve, time))
-        if (!lastCall) return
-        try {
-          lastCall = await func(...lastArguments)
-        } finally {
-          lastCall = undefined
-          runningFunction = undefined
-        }
-        return lastCall
-			}
-		} else {
-      return lastCall
-    }
-	}
-}
+// export const fetchMedia =
+//     (size: number, bufferSize: number, offset: number) =>
+//       fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${size}` } })
+//         .then(res => {
+//           if (!res.body) throw new Error('no body')
+//           return {
+//             ...res,
+//             body: bufferStream({ stream: res.body, size: bufferSize })
+//           }
+//         })
 
-fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
+fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
-    const contentLength = Number(headers.get('Content-Length'))
-    const buffer = await new Response(body).arrayBuffer()
+    if (!body) throw new Error('no body')
+    const contentRangeContentLength = headers.get('Content-Range')?.split('/').at(1)
+    const contentLength =
+      contentRangeContentLength
+        ? Number(contentRangeContentLength)
+        : Number(headers.get('Content-Length'))
 
+    // const buffer = await new Response(body).arrayBuffer()
+
+    // let reader = bufferStream({ stream: body, size: BUFFER_SIZE }).getReader()
     let mp4boxfile = createFile()
     mp4boxfile.onError = (error: Error) => console.error('mp4box error', error)
 
@@ -69,27 +62,58 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
 
     let headerChunk: Chunk
     let chunks: Chunk[] = []
+    let initDone = false
 
-    const BUFFER_SIZE = 5_000_000
 
     const transmuxer = await makeTransmuxer({
       bufferSize: BUFFER_SIZE,
       sharedArrayBufferSize: BUFFER_SIZE + 1_000_000,
       length: contentLength,
       read: async (offset, size) => {
-        const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
-        console.log('read', offset, size)
-        // console.log('read', offset, size, buff)
-        return buff
+
+        // console.group()
+        // console.log('READ TESTTTTTTT', offset, size)
+        // // console.log('read', offset, size)
+        // const buffer2 = await (await fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}` } })).arrayBuffer()
+        // // return new Uint8Array(buffer)
+
+        // // console.log('read', offset, size)
+        // await new Promise(resolve => setTimeout(resolve, 200))
+        // const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
+        // console.log(buffer2)
+        // console.log(buff)
+        // console.groupEnd()
+
+        // return buff
+
+
+        const buffer = await (await fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}` } })).arrayBuffer()
+        console.log('read', offset, size, new Uint8Array(buffer))
+        return new Uint8Array(buffer)
+
+
+        // const { value, done } = await reader.read()
+        // console.log('value', value, done)
+        // if (!value) throw new Error('no value')
+        // if (done) return new Uint8Array(0)
+        // const buff = new Uint8Array(value)
+        // console.log('read', offset, size)
+        // return buff
       },
       seek: async (currentOffset, offset, whence) => {
+        console.log('seek', currentOffset, offset, whence)
         if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
           return currentOffset + offset;
         }
         if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
-          return -1;
+          return -1
         }
         if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
+          // little trick to prevent libav from requesting end of file data on init that might take a while to fetch
+          if (!initDone && offset > (contentLength - 1_000_000)) return -1
+          // await reader.cancel()
+          // const res = await fetchMedia(contentLength, BUFFER_SIZE, offset)
+          // reader = bufferStream({ stream: res.body, size: BUFFER_SIZE }).getReader()
           return offset;
         }
         if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
@@ -98,7 +122,7 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
         return -1
       },
       subtitle: (title, language, subtitle) => {
-        console.log('SUBTITLE HEADER', title, language, subtitle)
+        // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
         console.log('attachment', filename, mimetype, buffer)
@@ -135,6 +159,7 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     console.log('mt transmuxer', transmuxer)
 
     await transmuxer.init()
+    initDone = true
 
     console.log('init finished')
 
@@ -284,6 +309,7 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
       while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
+        // console.log('lastPts', lastPts, currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
         const newChunks = await process()
         const lastProcessedChunk = newChunks.at(-1)
         if (!lastProcessedChunk) break
@@ -292,7 +318,7 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
     })
 
     const seek = throttleWithLastCall(500, async (time: number) => {
-      console.log('seek', time)
+      // console.log('seek', time)
       const isPlaying = !video.paused
       if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
@@ -311,18 +337,25 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       processingQueue.pause()
       processingQueue.clear()
       await allTasksDone
-
+      initDone = false
+      // console.log('destroy')
       await transmuxer.destroy()
+      // console.log('destroy done')
       await transmuxer.init()
-
+      // console.log('init done')
+      initDone = true
       processingQueue.start()
+      // console.log('init processing')
       await process()
       await process()
+      // console.log('init processing done')
 
       chunks = []
       // await clearBufferedRanges()
 
+      // console.log('init seeking')
       await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS))
+      // console.log('init seek processing done')
 
       await processNeededBufferRange()
       await updateBufferedRanges()
@@ -334,7 +367,7 @@ fetch('../video2.mkv') // , { headers: { Range: 'bytes=0-100000000' } }
       await processNeededBufferRange()
       await updateBufferedRanges()
 
-      console.log('seek done', time)
+      // console.log('seek done', time)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
