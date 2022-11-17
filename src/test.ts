@@ -2,7 +2,7 @@
 import { createFile } from 'mp4box'
 import PQueue from 'p-queue'
 
-import { bufferStream, SEEK_WHENCE_FLAG, throttleWithLastCall } from './utils'
+import { SEEK_WHENCE_FLAG, throttleWithLastCall } from './utils'
 import { makeTransmuxer } from '.'
 import { MP4Info } from './mp4box'
 
@@ -18,17 +18,6 @@ type Chunk = {
 const BUFFER_SIZE = 5_000_000
 const VIDEO_URL = '../video2.mkv'
 
-// export const fetchMedia =
-//     (size: number, bufferSize: number, offset: number) =>
-//       fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${size}` } })
-//         .then(res => {
-//           if (!res.body) throw new Error('no body')
-//           return {
-//             ...res,
-//             body: bufferStream({ stream: res.body, size: bufferSize })
-//           }
-//         })
-
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
     if (!body) throw new Error('no body')
@@ -38,9 +27,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
 
-    // const buffer = await new Response(body).arrayBuffer()
-
-    // let reader = bufferStream({ stream: body, size: BUFFER_SIZE }).getReader()
     let mp4boxfile = createFile()
     mp4boxfile.onError = (error: Error) => console.error('mp4box error', error)
 
@@ -50,7 +36,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let mime = 'video/mp4; codecs=\"'
     let info: any | undefined
     mp4boxfile.onReady = (_info: MP4Info) => {
-      console.log('mp4box ready info', _info)
       info = _info
       for (let i = 0; i < info.tracks.length; i++) {
         if (i !== 0) mime += ','
@@ -69,39 +54,18 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       sharedArrayBufferSize: BUFFER_SIZE + 1_000_000,
       length: contentLength,
-      read: async (offset, size) => {
-
-        // console.group()
-        // console.log('READ TESTTTTTTT', offset, size)
-        // // console.log('read', offset, size)
-        // const buffer2 = await (await fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}` } })).arrayBuffer()
-        // // return new Uint8Array(buffer)
-
-        // // console.log('read', offset, size)
-        // await new Promise(resolve => setTimeout(resolve, 200))
-        // const buff = new Uint8Array(buffer.slice(Number(offset), offset + size))
-        // console.log(buffer2)
-        // console.log(buff)
-        // console.groupEnd()
-
-        // return buff
-
-
-        const buffer = await (await fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}` } })).arrayBuffer()
-        console.log('read', offset, size, new Uint8Array(buffer))
-        return new Uint8Array(buffer)
-
-
-        // const { value, done } = await reader.read()
-        // console.log('value', value, done)
-        // if (!value) throw new Error('no value')
-        // if (done) return new Uint8Array(0)
-        // const buff = new Uint8Array(value)
-        // console.log('read', offset, size)
-        // return buff
-      },
+      read: async (offset, size) =>
+        fetch(
+          VIDEO_URL,
+          {
+            headers: {
+              Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}`
+            }
+          }
+        )
+          .then(res => res.arrayBuffer())
+          .then(ab => new Uint8Array(ab)),
       seek: async (currentOffset, offset, whence) => {
-        console.log('seek', currentOffset, offset, whence)
         if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
           return currentOffset + offset;
         }
@@ -111,9 +75,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
           // little trick to prevent libav from requesting end of file data on init that might take a while to fetch
           if (!initDone && offset > (contentLength - 1_000_000)) return -1
-          // await reader.cancel()
-          // const res = await fetchMedia(contentLength, BUFFER_SIZE, offset)
-          // reader = bufferStream({ stream: res.body, size: BUFFER_SIZE }).getReader()
           return offset;
         }
         if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
@@ -125,11 +86,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
-        console.log('attachment', filename, mimetype, buffer)
+        // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        console.log('write', isHeader, offset, pts, duration, pos)
-        // console.log('receive write', isHeader, offset, pts, duration, pos, new Uint8Array(buffer))
+        // console.log('write', isHeader, offset, pts, duration, pos)
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -156,30 +116,23 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ]
       }
     })
-    console.log('mt transmuxer', transmuxer)
 
     await transmuxer.init()
     initDone = true
-
-    console.log('init finished')
 
     // @ts-ignore
     if (!headerChunk) throw new Error('No header chunk found after transmuxer init')
 
     // @ts-ignore
     headerChunk.buffer.buffer.fileStart = 0
-    console.log('APPEND MP4BOX', headerChunk.buffer)
     mp4boxfile.appendBuffer(headerChunk.buffer.buffer)
 
     const duration = (await transmuxer.getInfo()).input.duration / 1_000_000
 
     await infoPromise
 
-    console.log('DURATION', duration)
-
     const video = document.createElement('video')
     const seconds = document.createElement('div')
-    // video.autoplay = true
     video.controls = true
     video.volume = 0
     video.addEventListener('error', ev => {
@@ -233,19 +186,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       sourceBuffer.addEventListener('error', errorListener, { once: true })
     }
 
-    // const getTimeRanges = () =>
-    //   Array(sourceBuffer.buffered.length)
-    //     .fill(undefined)
-    //     .map((_, index) => ({
-    //       index,
-    //       start: sourceBuffer.buffered.start(index),
-    //       end: sourceBuffer.buffered.end(index)
-    //     }))
-
-    // const getTimeRange = (time: number) =>
-    //   getTimeRanges()
-    //     .find(({ start, end }) => time >= start && time <= end)
-
     const appendBuffer = (buffer: ArrayBuffer) =>
       queue.add(() =>
         new Promise<Event>((resolve, reject) => {
@@ -255,11 +195,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       )
 
     const bufferChunk = async (chunk: Chunk) => {
-      // sourceBuffer.appendWindowStart = chunk.pts
-      // sourceBuffer.appendWindowEnd = chunk.pts + chunk.duration
       await appendBuffer(chunk.buffer.buffer)
-      // sourceBuffer.appendWindowStart = Infinity
-      // sourceBuffer.appendWindowEnd = 0
       chunk.buffered = true
     }
 
@@ -283,24 +219,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       chunks = chunks.filter(_chunk => _chunk !== chunk)
     }
 
-    // const removeRange = ({ start, end, index }: { start: number, end: number, index: number }) =>
-    //   queue.add(() =>
-    //     new Promise((resolve, reject) => {
-    //       setupListeners(resolve, reject)
-    //       sourceBuffer.remove(
-    //         Math.max(sourceBuffer.buffered.start(index), start),
-    //         Math.min(sourceBuffer.buffered.end(index), end)
-    //       )
-    //     })
-    //   )
-
-    // const clearBufferedRanges = async () => {
-    //   const bufferedRanges = getTimeRanges()
-    //   for (const range of bufferedRanges) {
-    //     await removeRange(range)
-    //   }
-    // }
-
     const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
     const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
@@ -309,7 +227,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
       while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
-        // console.log('lastPts', lastPts, currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
         const newChunks = await process()
         const lastProcessedChunk = newChunks.at(-1)
         if (!lastProcessedChunk) break
@@ -318,7 +235,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const seek = throttleWithLastCall(500, async (time: number) => {
-      // console.log('seek', time)
       const isPlaying = !video.paused
       if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
@@ -338,24 +254,16 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       processingQueue.clear()
       await allTasksDone
       initDone = false
-      // console.log('destroy')
       await transmuxer.destroy()
-      // console.log('destroy done')
       await transmuxer.init()
-      // console.log('init done')
       initDone = true
       processingQueue.start()
-      // console.log('init processing')
       await process()
       await process()
-      // console.log('init processing done')
 
       chunks = []
-      // await clearBufferedRanges()
 
-      // console.log('init seeking')
       await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS))
-      // console.log('init seek processing done')
 
       await processNeededBufferRange()
       await updateBufferedRanges()
@@ -366,8 +274,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
       await processNeededBufferRange()
       await updateBufferedRanges()
-
-      // console.log('seek done', time)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -414,7 +320,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           await bufferChunk(chunk)
         } catch (err) {
           if (!(err instanceof Event)) throw err
-          // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
           break
         }
       }

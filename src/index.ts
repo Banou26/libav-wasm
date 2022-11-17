@@ -206,14 +206,12 @@ export const makeTransmuxer = async ({
       if (headerFinished) return responseMessage
       if (!headerBuffer) {
         headerBuffer = buffer
-        console.log('headerBuffer', headerBuffer)
         return responseMessage
       } else {
         const _headerBuffer = headerBuffer
         headerBuffer = new Uint8Array(headerBuffer.byteLength + buffer.byteLength)
         headerBuffer.set(_headerBuffer)
         headerBuffer.set(buffer, _headerBuffer.byteLength)
-        console.log('headerBuffer 2', headerBuffer)
       }
       const chunk = {
         isHeader: true,

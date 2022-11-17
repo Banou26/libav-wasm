@@ -73,14 +73,12 @@ const init = makeCallListener(async (
       if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE && resultOffset !== -1) currentOffset = resultOffset
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-      console.log('seek result', resultOffset)
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
       if (!firstInit && initRead !== -1) {
         const resultBuffer = initBuffers[initRead]
         currentOffset = offset + resultBuffer.byteLength
-        console.log('used cached init buffers', initRead, resultBuffer.byteLength, initBuffers)
         initRead = initRead + 1
         return {
           buffer: resultBuffer,

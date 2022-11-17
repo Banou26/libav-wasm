@@ -83,17 +83,21 @@ export const throttleWithLastCall = <T extends (...args: any[]) => any>(time: nu
 export const bufferStream = ({ stream, size: SIZE }: { stream: ReadableStream, size: number }) =>
   new ReadableStream<Uint8Array>({
     start() {
+      // @ts-ignore
       this.reader = stream.getReader()
     },
     async pull(controller) {
+      // @ts-ignore
       const { leftOverData }: { leftOverData: Uint8Array | undefined } = this
 
       const accumulate = async ({ buffer = new Uint8Array(SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
+        // @ts-ignore
         const { value: newBuffer, done } = await this.reader.read()
   
         if (currentSize === 0 && leftOverData) {
           buffer.set(leftOverData)
           currentSize += leftOverData.byteLength
+          // @ts-ignore
           this.leftOverData = undefined
         }
   
@@ -107,6 +111,7 @@ export const bufferStream = ({ stream, size: SIZE }: { stream: ReadableStream, s
         buffer.set(slicedBuffer, currentSize)
   
         if (newSize === SIZE) {
+          // @ts-ignore
           this.leftOverData = newBuffer.slice(SIZE - currentSize)
           return { buffer, currentSize: newSize, done: false }
         }
