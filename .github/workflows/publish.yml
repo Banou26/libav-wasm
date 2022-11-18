@@ -19,7 +19,7 @@ jobs:
     # - uses: satackey/action-docker-layer-caching@v0.0.11
     #   continue-on-error: true
 
-    - run: sudo npm run build
+    - run: npm run build
 
     - name: Upload dist folder artifacts
       uses: actions/upload-artifact@v2
