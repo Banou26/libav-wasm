@@ -276,12 +276,11 @@ export const makeTransmuxer = async ({
 
     await addBlockingTask(async () => {
       const request = requestMessage.endpoint.value?.request
-      // this sometimes happen randomly
-      // todo: either delete/recreate worker or write a response & destroy -> init
-      // or try to fix the issue idk
-      // might be happening because 2 waitForTransmuxerCall are running at the same time
-      // even though addBlockingTask should prevent that
-      if (!request) throw new Error('Shared memory api request is undefined')
+      // this happens randomly and throws an error, but it doesn't break playback
+      if (!request) {
+        setTimeout(waitForTransmuxerCall, 10)
+        return
+      }
 
       const response =
         await (requestMessage.endpoint.case === 'read' ? read(request as ReadRequest)
