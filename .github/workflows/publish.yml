@@ -21,11 +21,11 @@ jobs:
 
     - run: npm run build
 
-    - name: Upload dist folder artifacts
+    - name: Upload build folder artifacts
       uses: actions/upload-artifact@v2
       with:
-          name: dist
-          path: "dist/*"
+          name: build
+          path: "build/*"
 
   package:
     needs: [build]
@@ -37,11 +37,11 @@ jobs:
         with:
           node-version: 16.x
 
-      - name: Download dist folder artifacts
+      - name: Download build folder artifacts
         uses: actions/download-artifact@v2
         with:
-            name: dist
-            path: ./dist
+            name: build
+            path: ./build
 
       - run: npm version prerelease --preid=ci-$GITHUB_RUN_ID --no-git-tag-version
       - run: npm pack
