@@ -5,6 +5,7 @@
   "files": [
     "build/*"
   ],
+  "types": "build/index.d.ts",
   "scripts": {
     "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
