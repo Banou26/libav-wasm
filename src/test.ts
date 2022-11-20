@@ -148,6 +148,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)
+    video.playbackRate = 10
 
     const sourceBuffer: SourceBuffer =
       await new Promise(resolve =>
