@@ -336,7 +336,7 @@ export const makeTransmuxer = async ({
     }),
     seek: (time: number) => {
       const timestamp = Math.max(0, time) * 1000
-      addTask(async () => {
+      return addTask(async () => {
         // if (lastChunk && (lastChunk.pts > timestamp)) {
         //   await workerDestroy()
         //   await workerInit()
