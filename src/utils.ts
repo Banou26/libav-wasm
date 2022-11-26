@@ -62,11 +62,15 @@ export const throttleWithLastCall = <T extends (...args: any[]) => any>(time: nu
 			try {
         runningFunction = await func(...args)
 				return runningFunction
-			} finally {
+			} catch(err) {
+        console.error(err)
+      } finally {
         await new Promise(resolve => setTimeout(resolve, time))
         if (!lastCall) return
         try {
           lastCall = await func(...lastArguments)
+        } catch(err) {
+          console.error(err)
         } finally {
           lastCall = undefined
           runningFunction = undefined
