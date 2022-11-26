@@ -1,6 +1,6 @@
 {
   "name": "@banou26/oz-libav",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "main": "build/index.mjs",
   "files": [
     "build/*"
@@ -11,6 +11,7 @@
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "make-docker": "docker-compose run libav-wasm make",
     "dev-web": "vite --port 1234",
+    "vite-build": "vite build",
     "build": "npm run copy-package && npm run make-docker && vite build && npm run copy-wasm && npm run types",
     "types": "tsc",
     "copy-package": "copyfiles -u 2 ./src/build-config/package.json dist",

@@ -6,9 +6,9 @@ import * as WASMModule from 'libav'
 import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification, SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'
 
-const makeModule = () =>
+const makeModule = (publicPath: string) =>
   WASMModule({
-    locateFile: (path: string) => `/dist/${path.replace('/dist', '')}`
+    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
   })
 
 let module: ReturnType<typeof makeModule>
@@ -18,15 +18,16 @@ let module: ReturnType<typeof makeModule>
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { length, sharedArrayBuffer, bufferSize, attachment, subtitle }:
+  { publicPath, length, sharedArrayBuffer, bufferSize, attachment, subtitle }:
   {
+    publicPath: string
     length: number
     sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
-  if (!module) module = await makeModule()
+  if (!module) module = await makeModule(publicPath)
   let initBuffers: Uint8Array[] = []
   const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
@@ -173,7 +174,7 @@ const init = makeCallListener(async (
     init: async () => {
       initRead = 0
       currentOffset = 0
-      module = await makeModule()
+      module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()
       transmuxer.init(firstInit)
       initRead = -1

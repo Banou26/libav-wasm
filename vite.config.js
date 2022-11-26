@@ -11,9 +11,13 @@ export default defineConfig({
       formats: ['es']
     },
     worker: {
-      format: 'es',
+      formats: ['es']
     },
     rollupOptions: {
+      input: {
+        index: 'src/index.ts',
+        worker: 'src/worker/index.ts'
+      },
       external: ['@bufbuild/protobuf', 'buffer', 'mp4box', 'osra']
     }
   },

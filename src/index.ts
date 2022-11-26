@@ -15,6 +15,10 @@ export {
 }
 
 export type MakeTransmuxerOptions = {
+  /** Path that will be used to locate the .wasm file imported from the worker */
+  publicPath: string
+  /** Path that will be used to locate the javascript worker file */
+  workerPath: string
   read: (offset: number, size: number) => Promise<Uint8Array>
   seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
@@ -72,6 +76,8 @@ const convertTimestamp = (ms: number) =>
     .replace(/^00/, '0')
 
 export const makeTransmuxer = async ({
+  publicPath,
+  workerPath,
   read: _read,
   seek: _seek,
   write: _write,
@@ -84,7 +90,7 @@ export const makeTransmuxer = async ({
   const sharedArrayBuffer = new SharedArrayBuffer(sharedArrayBufferSize)
   const dataview = new DataView(sharedArrayBuffer)
   const uint8Array = new Uint8Array(sharedArrayBuffer)
-  const worker = new Worker(new URL('./worker/index.ts', import.meta.url), { type: 'module' })
+  const worker = new Worker(workerPath, { type: 'module' })
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {
@@ -121,6 +127,7 @@ export const makeTransmuxer = async ({
     await target(
       'init',
       {
+        publicPath,
         length,
         sharedArrayBuffer,
         bufferSize,

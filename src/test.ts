@@ -51,6 +51,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
 
     const transmuxer = await makeTransmuxer({
+      publicPath: '/dist/',
+      workerPath: new URL('./worker/index.ts', import.meta.url).toString(),
       bufferSize: BUFFER_SIZE,
       sharedArrayBufferSize: BUFFER_SIZE + 1_000_000,
       length: contentLength,
