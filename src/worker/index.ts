@@ -1,7 +1,7 @@
 import { makeCallListener, registerListener } from 'osra'
 
 // @ts-ignore
-import * as WASMModule from 'libav'
+import WASMModule from 'libav'
 
 import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification, SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'

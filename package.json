@@ -1,11 +1,10 @@
 {
   "name": "@banou26/oz-libav",
   "version": "0.1.2",
-  "main": "build/index.mjs",
-  "files": [
-    "build/*"
-  ],
+  "main": "build/index.js",
+  "files": ["build"],
   "types": "build/index.d.ts",
+  "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
