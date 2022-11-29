@@ -47,6 +47,10 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, buffer)
     },
     seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
+      if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
+        return -1
+      }
+
       const request = new ApiMessage({
         endpoint: {
           case: 'seek',
@@ -77,7 +81,9 @@ const init = makeCallListener(async (
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
-      if (!firstInit && initRead !== -1) {
+      // console.log('read', firstInit, initRead)
+      if (!firstInit && initRead !== -1 && initBuffers[initRead]) {
+        console.log('initBuffers', initBuffers, initRead)
         const resultBuffer = initBuffers[initRead]
         currentOffset = offset + resultBuffer.byteLength
         initRead = initRead + 1
@@ -172,6 +178,7 @@ const init = makeCallListener(async (
   let firstInit = true
   return {
     init: async () => {
+      console.log('worker init')
       initRead = 0
       currentOffset = 0
       module = await makeModule(publicPath)
@@ -181,12 +188,13 @@ const init = makeCallListener(async (
       if (firstInit) firstInit = false
     },
     destroy: () => {
+      console.log('worker destroy')
       transmuxer.destroy()
       transmuxer = undefined
       module = undefined
       currentOffset = 0
     },
-    seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
+    seek: (timestamp: number, flags: SEEK_FLAG) => console.log('worker seek') || transmuxer.seek(timestamp, flags),
     process: (size: number) => transmuxer.process(size),
     getInfo: () => transmuxer.getInfo()
   }

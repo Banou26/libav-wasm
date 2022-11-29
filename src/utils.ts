@@ -52,31 +52,31 @@ export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayB
 export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => new Uint8Array(sharedArrayBuffer).fill(0)
 
 export const throttleWithLastCall = <T extends (...args: any[]) => any>(time: number, func: T) => {
-	let runningFunction: T | undefined
-  let lastCall: Promise<any> | undefined
-  let lastArguments: any[] | undefined
+	let runningFunction: ReturnType<T> | undefined
+  let lastCall: ReturnType<T> | undefined
+  let lastCallArguments: any[] | undefined
+
+  const checkForLastCall = (result: ReturnType<T>) => {
+    runningFunction = lastCall
+    lastCall = undefined
+    lastCallArguments = undefined
+    setTimeout(() => {
+      if (!lastCall && lastCallArguments) {
+        lastCall =
+          func(...lastCallArguments)
+            .then(checkForLastCall)
+      }
+    }, time)
+    return result
+  }
 
 	return async (...args: Parameters<T>) => {
-    lastArguments = args
+    lastCallArguments = args
 		if (!runningFunction) {
-			try {
-        runningFunction = await func(...args)
-				return runningFunction
-			} catch(err) {
-        console.error(err)
-      } finally {
-        await new Promise(resolve => setTimeout(resolve, time))
-        if (!lastCall) return
-        try {
-          lastCall = await func(...lastArguments)
-        } catch(err) {
-          console.error(err)
-        } finally {
-          lastCall = undefined
-          runningFunction = undefined
-        }
-        return lastCall
-			}
+      runningFunction =
+        func(...args)
+          .then(checkForLastCall)
+      return runningFunction
 		} else {
       return lastCall
     }
