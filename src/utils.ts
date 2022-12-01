@@ -52,7 +52,7 @@ export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayB
 export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => new Uint8Array(sharedArrayBuffer).fill(0)
 
 export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
-	let runningFunction: Promise<ReturnType<T>> | undefined
+  let runningFunction: Promise<ReturnType<T>> | undefined
   let lastCall: Promise<ReturnType<T>> | undefined
   let lastCallArguments: T2 | undefined
 
@@ -69,10 +69,9 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
           lastCall = undefined
           return
         }
-        const funcResult = func(...lastCallArguments)
+        const funcResult = (async () => (func(...lastCallArguments)))()
         lastCallArguments = undefined
-        Promise
-          .resolve(funcResult)
+        funcResult
           .then(resolve)
           .catch(reject)
 
@@ -83,21 +82,20 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
           _reject = reject
         })
   
-        // wrap the result in a promise in case the function doesn't return a promise
         runningFunction =
-          Promise
-            .resolve(funcResult)
+          funcResult
             // @ts-ignore
             .then(checkForLastCall(currentTime, _resolve, _reject))
-      }, time - currentTime - timeStart)
+            .catch(checkForLastCall(timeStart, _resolve, _reject))
+      }, time - (currentTime - timeStart))
       return result
     }
 
-	return (...args: Parameters<T>) => {
+  return (...args: Parameters<T>) => {
     lastCallArguments = args
-		if (!runningFunction) {
+    if (!runningFunction) {
       const timeStart = performance.now()
-      const funcResult = func(...lastCallArguments)
+      const funcResult = (async () => (func(...lastCallArguments)))()
       
       let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
       let _reject: (reason?: any) => void
@@ -108,36 +106,35 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
 
       // wrap the result in a promise in case the function doesn't return a promise
       runningFunction =
-        Promise
-          .resolve(funcResult)
-          // @ts-ignore
+        funcResult
           .then(checkForLastCall(timeStart, _resolve, _reject))
+          .catch(checkForLastCall(timeStart, _resolve, _reject))
 
-      return Promise.resolve(funcResult)
-		} else {
+      return funcResult
+  } else {
       return lastCall
     }
-	}
+  }
 }
 
-setTimeout(() => {
-  let i = 0
-  const throttled = queuedDebounceWithLastCall(1000, () => {
-    const _i = i
-    i = i + 1
-    console.log('throttled called', _i)
-    // await new Promise(resolve => setTimeout(resolve, 500))
-    return _i
-  })
+// setTimeout(() => {
+//   let i = 0
+//   const throttled = queuedDebounceWithLastCall(1000, async () => {
+//     const _i = i
+//     i = i + 1
+//     console.log('throttled called', _i)
+//     await new Promise(resolve => setTimeout(resolve, 500))
+//     return _i
+//   })
 
-  const interval = setInterval(async () => {
-    console.log('call throttled', await throttled())
-  }, 50)
+//   const interval = setInterval(async () => {
+//     console.log('call throttled', await throttled())
+//   }, 100)
 
-  setTimeout(() => {
-    clearInterval(interval)
-  }, 1200)
-})
+//   setTimeout(() => {
+//     clearInterval(interval)
+//   }, 2200)
+// })
 
 // todo: reimplement this into a ReadableByteStream https://web.dev/streams/ once FF gets support
 export const bufferStream = ({ stream, size: SIZE }: { stream: ReadableStream, size: number }) =>

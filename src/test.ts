@@ -20,7 +20,6 @@ const VIDEO_URL = '../video2.mkv'
 
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
-    return
     if (!body) throw new Error('no body')
     const contentRangeContentLength = headers.get('Content-Range')?.split('/').at(1)
     const contentLength =
