@@ -160,6 +160,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         )
       )
 
+    console.log('sourceBuffer', sourceBuffer)
+
     mediaSource.duration = duration
     sourceBuffer.mode = 'segments'
 
@@ -226,8 +228,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
     const processNeededBufferRange = queuedDebounceWithLastCall(0, async (upToTime: number = video.currentTime) => {
-      console.log('processNeededBufferRange...', upToTime)
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
+      console.log('processNeededBufferRange...', upToTime, lastPts)
       while (lastPts === undefined || (lastPts < (upToTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
         console.log('processing...', upToTime, lastPts)
         const newChunks = await process()
@@ -275,13 +277,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
       if (isPlaying) await video.play()
 
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // await new Promise(resolve => setTimeout(resolve, 100))
 
-      await processNeededBufferRange(time)
-      await updateBufferedRanges()
-      console.log('chunks', chunks)
-      const p2 = performance.now()
-      console.log('SEEK TIME:', p2 - p)
+      // await processNeededBufferRange(time)
+      // await updateBufferedRanges()
+      // console.log('chunks', chunks)
+      // const p2 = performance.now()
+      // console.log('SEEK TIME:', p2 - p)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -293,6 +295,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const updateBufferedRanges = async () => {
       const { currentTime } = video
+      console.log('updateBufferedRanges...', currentTime, chunks)
       const neededChunks =
         chunks
           .filter(({ pts, duration }) =>
@@ -326,6 +329,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.buffered) continue
         try {
           await bufferChunk(chunk)
+          console.log('buffer chunk', chunk)
+          for (let i = sourceBuffer.buffered.length; i > 0; i--) {
+            console.log('buffer range', sourceBuffer.buffered.start(i - 1), sourceBuffer.buffered.end(i - 1))
+          }
         } catch (err) {
           if (!(err instanceof Event)) throw err
           break
@@ -352,5 +359,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(() => {
       video.play()
+      setTimeout(() => {
+        video.pause()
+        video.currentTime = 600
+        setTimeout(() => {
+          video.currentTime = 300
+        }, 2_500)
+      }, 2_500)
     }, 2_500)
   })
