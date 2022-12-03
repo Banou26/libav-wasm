@@ -47,6 +47,9 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, buffer)
     },
     seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
+      if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
+        return -1
+      }
       const request = new ApiMessage({
         endpoint: {
           case: 'seek',
@@ -78,6 +81,9 @@ const init = makeCallListener(async (
     },
     read: (offset: number, bufferSize: number) => {
       if (!firstInit && initRead !== -1) {
+        console.log('SHOULD HAVE INIT BUFFERS', initBuffers[initRead], initRead, initBuffers)
+      }
+      if (!firstInit && initRead !== -1 && initBuffers[initRead]) {
         const resultBuffer = initBuffers[initRead]
         currentOffset = offset + resultBuffer.byteLength
         initRead = initRead + 1

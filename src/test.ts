@@ -2,7 +2,7 @@
 import { createFile } from 'mp4box'
 import PQueue from 'p-queue'
 
-import { SEEK_WHENCE_FLAG, throttleWithLastCall } from './utils'
+import { SEEK_WHENCE_FLAG, queuedDebounceWithLastCall } from './utils'
 import { makeTransmuxer } from '.'
 import { MP4Info } from './mp4box'
 
@@ -150,7 +150,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)
-    video.playbackRate = 10
+    // video.playbackRate = 10
 
     const sourceBuffer: SourceBuffer =
       await new Promise(resolve =>
@@ -202,6 +202,26 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       chunk.buffered = true
     }
 
+    const getTimeRanges = () =>
+      Array(sourceBuffer.buffered.length)
+        .fill(undefined)
+        .map((_, index) => ({
+          index,
+          start: sourceBuffer.buffered.start(index),
+          end: sourceBuffer.buffered.end(index)
+        }))
+
+    const getTimeRange = (time: number) =>
+      getTimeRanges()
+        .find(({ start, end }) => time >= start && time <= end)
+    
+    const unbufferRange = async (start: number, end: number) =>
+      queue.add(() =>
+        new Promise((resolve, reject) => {
+          setupListeners(resolve, reject)
+          sourceBuffer.remove(start, end)
+        })
+      )
     
     const unbufferChunk = async (chunk: Chunk) =>
       queue.add(() =>
@@ -222,11 +242,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       chunks = chunks.filter(_chunk => _chunk !== chunk)
     }
 
-    const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
-    const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
+    const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 5
+    const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
-    const processNeededBufferRange = throttleWithLastCall(100, async () => {
+    const processNeededBufferRange = queuedDebounceWithLastCall(0, async () => {
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
       while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
@@ -237,7 +257,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    const seek = throttleWithLastCall(500, async (time: number) => {
+    let skipSeek = false
+    const seek = queuedDebounceWithLastCall(500, async (time: number) => {
+      console.log('SEEKING', time)
+      const ranges = getTimeRanges()
+      for (const range of ranges) {
+        await unbufferRange(range.start, range.end)
+      }
+      const p = performance.now()
       const isPlaying = !video.paused
       if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
@@ -256,27 +283,41 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       processingQueue.pause()
       processingQueue.clear()
       await allTasksDone
-      initDone = false
-      await transmuxer.destroy()
-      await transmuxer.init()
-      initDone = true
+      // initDone = false
+      // await transmuxer.destroy()
+      // await transmuxer.init()
+      // initDone = true
       processingQueue.start()
-      await process()
-      await process()
-
-      chunks = []
-
-      await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS))
+      const seekTime = Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS)
+      if (seekTime > POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) {
+        await process()
+        await process()
+        chunks = []
+        await transmuxer.seek(seekTime)
+      } else {
+        chunks = []
+        await process()
+        await process()
+        console.log('seeking SETTING SKIPSKEEK', skipSeek)
+        // skipSeek = true
+        // video.currentTime = seekTime
+        // await new Promise(resolve => {
+        //   video.addEventListener('seeking', () => {
+        //     skipSeek = false
+        //     resolve(undefined)
+        //   }, { once: true })
+        // })
+        console.log('seeking UNSETTING SKIPSKEEK', skipSeek)
+      }
 
       await processNeededBufferRange()
       await updateBufferedRanges()
 
       if (isPlaying) await video.play()
 
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      await processNeededBufferRange()
-      await updateBufferedRanges()
+      const p2 = performance.now()
+      console.log('chunks', chunks)
+      console.log('SEEK TIME:', p2 - p)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -321,6 +362,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.buffered) continue
         try {
           await bufferChunk(chunk)
+          console.log('buffer chunk', chunk)
+          for (let i = sourceBuffer.buffered.length; i > 0; i--) {
+            console.log('buffer range', sourceBuffer.buffered.start(i - 1), sourceBuffer.buffered.end(i - 1))
+          }
         } catch (err) {
           if (!(err instanceof Event)) throw err
           break
@@ -335,15 +380,28 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await updateBufferedRanges()
 
     video.addEventListener('seeking', () => {
+      console.log('seeking', skipSeek)
+      if (skipSeek) return
       seek(video.currentTime)
     })
 
-    video.addEventListener('timeupdate', throttleWithLastCall(500, async () => {
+    video.addEventListener('timeupdate', queuedDebounceWithLastCall(500, async () => {
       await processNeededBufferRange()
       await updateBufferedRanges()
     }))
 
     setTimeout(() => {
       video.play()
+      // setTimeout(() => {
+      //   // video.pause()
+      //   video.currentTime = 600
+      //   setTimeout(() => {
+      //     video.currentTime = 300
+      //     setTimeout(() => {
+      //       video.currentTime = 1
+      //       // video.play()
+      //     }, 5_000)
+      //   }, 5_000)
+      // }, 5_000)
     }, 2_500)
   })
