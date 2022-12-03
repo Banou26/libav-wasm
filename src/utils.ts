@@ -51,90 +51,37 @@ export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayB
 
 export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => new Uint8Array(sharedArrayBuffer).fill(0)
 
-export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
-  let runningFunction: Promise<ReturnType<T>> | undefined
-  let lastCall: Promise<ReturnType<T>> | undefined
-  let lastCallArguments: T2 | undefined
+export const throttleWithLastCall = <T extends (...args: any[]) => any>(time: number, func: T) => {
+	let runningFunction: T | undefined
+  let lastCall: Promise<any> | undefined
+  let lastArguments: any[] | undefined
 
-  const checkForLastCall = (
-    timeStart: number,
-    resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void,
-    reject: (reason?: any) => void
-  ) =>
-    (result: ReturnType<T>) => {
-      const currentTime = performance.now()
-      setTimeout(() => {
-        if (!lastCallArguments) {
-          runningFunction = undefined
+	return async (...args: Parameters<T>) => {
+    lastArguments = args
+		if (!runningFunction) {
+			try {
+        runningFunction = await func(...args)
+				return runningFunction
+			} catch(err) {
+        console.error(err)
+      } finally {
+        await new Promise(resolve => setTimeout(resolve, time))
+        if (!lastCall) return
+        try {
+          lastCall = await func(...lastArguments)
+        } catch(err) {
+          console.error(err)
+        } finally {
           lastCall = undefined
-          return
+          runningFunction = undefined
         }
-        const funcResult = (async () => (func(...lastCallArguments)))()
-        lastCallArguments = undefined
-        funcResult
-          .then(resolve)
-          .catch(reject)
-
-        let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
-        let _reject: (reason?: any) => void
-        lastCall = new Promise((resolve, reject) => {
-          _resolve = resolve
-          _reject = reject
-        })
-  
-        runningFunction =
-          funcResult
-            // @ts-ignore
-            .then(checkForLastCall(currentTime, _resolve, _reject))
-            .catch(checkForLastCall(timeStart, _resolve, _reject))
-      }, time - (currentTime - timeStart))
-      return result
-    }
-
-  return (...args: Parameters<T>) => {
-    lastCallArguments = args
-    if (!runningFunction) {
-      const timeStart = performance.now()
-      const funcResult = (async () => (func(...lastCallArguments)))()
-      
-      let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
-      let _reject: (reason?: any) => void
-      lastCall = new Promise((resolve, reject) => {
-        _resolve = resolve
-        _reject = reject
-      })
-
-      // wrap the result in a promise in case the function doesn't return a promise
-      runningFunction =
-        funcResult
-          .then(checkForLastCall(timeStart, _resolve, _reject))
-          .catch(checkForLastCall(timeStart, _resolve, _reject))
-
-      return funcResult
-  } else {
+        return lastCall
+			}
+		} else {
       return lastCall
     }
-  }
+	}
 }
-
-// setTimeout(() => {
-//   let i = 0
-//   const throttled = queuedDebounceWithLastCall(1000, async () => {
-//     const _i = i
-//     i = i + 1
-//     console.log('throttled called', _i)
-//     await new Promise(resolve => setTimeout(resolve, 500))
-//     return _i
-//   })
-
-//   const interval = setInterval(async () => {
-//     console.log('call throttled', await throttled())
-//   }, 100)
-
-//   setTimeout(() => {
-//     clearInterval(interval)
-//   }, 2200)
-// })
 
 // todo: reimplement this into a ReadableByteStream https://web.dev/streams/ once FF gets support
 export const bufferStream = ({ stream, size: SIZE }: { stream: ReadableStream, size: number }) =>

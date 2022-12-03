@@ -342,21 +342,14 @@ export const makeTransmuxer = async ({
       return writtenChunks
     }),
     seek: (time: number) => {
+      const timestamp = Math.max(0, time) * 1000
       return addTask(async () => {
-        console.log('lastChunk', lastChunk, time)
-        if (lastChunk && (lastChunk.pts > time)) {
-          console.log('re-init')
-          await workerDestroy()
-          GOPBuffer = undefined
-          unflushedWrite = undefined
-          headerBuffer = undefined
-          // headerFinished = false
-          processBufferChunks = []
-          await workerInit()
-        }
-        console.log('SEEKKKKKKKK NOWWWWWWWWWWWWWWWW')
+        // if (lastChunk && (lastChunk.pts > timestamp)) {
+        //   await workerDestroy()
+        //   await workerInit()
+        // }
         await workerSeek(
-          Math.max(0, time) * 1000,
+          timestamp,
           SEEK_FLAG.NONE
         )
       })
