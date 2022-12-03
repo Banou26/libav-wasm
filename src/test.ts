@@ -90,6 +90,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
+        console.log('WRITE PACKET', pts)
         // console.log('write', isHeader, offset, pts, duration, pos)
         if (isHeader) {
           if (!headerChunk) {
@@ -203,7 +204,27 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       chunk.buffered = true
     }
 
+    const getTimeRanges = () =>
+      Array(sourceBuffer.buffered.length)
+        .fill(undefined)
+        .map((_, index) => ({
+          index,
+          start: sourceBuffer.buffered.start(index),
+          end: sourceBuffer.buffered.end(index)
+        }))
+
+    const getTimeRange = (time: number) =>
+      getTimeRanges()
+        .find(({ start, end }) => time >= start && time <= end)
     
+    const unbufferRange = async (start: number, end: number) =>
+      queue.add(() =>
+        new Promise((resolve, reject) => {
+          setupListeners(resolve, reject)
+          sourceBuffer.remove(start, end)
+        })
+      )
+
     const unbufferChunk = async (chunk: Chunk) =>
       queue.add(() =>
         new Promise((resolve, reject) => {
@@ -264,6 +285,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await allTasksDone
       processingQueue.start()
       chunks = []
+
+      const ranges = getTimeRanges()
+
+      for (const range of ranges) {
+        await unbufferRange(range.start, range.end)
+      }
+
       await transmuxer.seek(Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS))
       console.log('chunks', chunks)
 
@@ -310,7 +338,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             && ((currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) > (pts + duration))
           )
 
-      const shouldBeUnbufferedChunks = 
+      const shouldBeUnbufferedChunks =
         chunks
           .filter(({ buffered }) => buffered)
           .filter((chunk) => !shouldBeBufferedChunks.includes(chunk))
