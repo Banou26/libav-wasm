@@ -133,14 +133,16 @@ export const makeTransmuxer = async ({
         bufferSize,
         subtitle: async (streamIndex, isHeader, data, ...rest) => {
           if (isHeader) {
-          const [language, title] = rest as string[]
-            subtitles.set(streamIndex, {
+            const [language, title] = rest as string[]
+            const subtitle = {
               streamIndex,
               header: data,
               language,
               title,
               dialogues: []
-            })
+            }
+            subtitles.set(streamIndex, subtitle)
+            _subtitle(subtitle.title, subtitle.language, `${subtitle.header.trim()}\n`)
             return
           }
           const subtitle = subtitles.get(streamIndex)
