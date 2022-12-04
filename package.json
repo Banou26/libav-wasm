@@ -1,6 +1,6 @@
 {
   "name": "@banou26/oz-libav",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "main": "build/index.js",
   "files": ["build"],
   "types": "build/index.d.ts",
