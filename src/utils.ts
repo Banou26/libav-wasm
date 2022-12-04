@@ -95,8 +95,8 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
     lastCallArguments = args
     if (!runningFunction) {
       const timeStart = performance.now()
-      const funcResult = (async () => (func(...lastCallArguments)))()
-      
+      const funcResult = (async () => (func(...args)))()
+      lastCallArguments = undefined
       let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
       let _reject: (reason?: any) => void
       lastCall = new Promise((resolve, reject) => {

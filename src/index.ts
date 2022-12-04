@@ -207,7 +207,6 @@ export const makeTransmuxer = async ({
     const responseMessage = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
     const readResponse = new WriteResponse({ bytesWritten: buffer.byteLength })
     ;(responseMessage.endpoint.value as Write).response = readResponse
-
     // header chunk
     if (bufferIndex === -2) {
       if (headerFinished) return responseMessage
@@ -308,7 +307,7 @@ export const makeTransmuxer = async ({
 
   waitForTransmuxerCall()
 
-  return {
+  const result = {
     init: () => addTask(async () => {
       GOPBuffer = undefined
       unflushedWrite = undefined
@@ -338,12 +337,14 @@ export const makeTransmuxer = async ({
         unflushedWrite = undefined
       }
       const writtenChunks = processBufferChunks
+      console.log('writtenChunks', writtenChunks, processBufferChunks)
       processBufferChunks = []
       return writtenChunks
     }),
     seek: (time: number) => {
       return addTask(async () => {
         console.log('lastChunk', lastChunk, time)
+        const p = performance.now()
         if (lastChunk && (lastChunk.pts > time)) {
           console.log('re-init')
           await workerDestroy()
@@ -353,16 +354,24 @@ export const makeTransmuxer = async ({
           // headerFinished = false
           processBufferChunks = []
           await workerInit()
+          const p2 = performance.now()
+          console.log('REINIIIIIIIIIIIIIIIIIIIIIIT', p2 - p)
         }
+        await result.process(bufferSize)
         console.log('SEEKKKKKKKK NOWWWWWWWWWWWWWWWW')
+        const p3 = performance.now()
         await workerSeek(
           Math.max(0, time) * 1000,
           SEEK_FLAG.NONE
         )
+        const p2 = performance.now()
+        console.log('SEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEk', p2 - p3)
       })
     },
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
+
+  return result
 }
 
 export default makeTransmuxer

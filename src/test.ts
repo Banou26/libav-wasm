@@ -91,7 +91,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        // console.log('write', isHeader, offset, pts, duration, pos)
+        console.log('write', isHeader, offset, pts, duration, pos)
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -120,6 +120,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     await transmuxer.init()
+    console.log('transmuxer init done from TEST')
     initDone = true
 
     // @ts-ignore
@@ -249,11 +250,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const processNeededBufferRange = queuedDebounceWithLastCall(0, async () => {
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
+      console.log('processNeededBufferRange', currentTime, lastPts, chunks)
       while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
         const newChunks = await process()
+        console.log('processNeededBufferRange', currentTime, lastPts, newChunks)
         const lastProcessedChunk = newChunks.at(-1)
-        if (!lastProcessedChunk) break
-        lastPts = lastProcessedChunk.pts
+        if (!lastProcessedChunk && ((lastPts ?? 0) + 10) >= duration) break
+        if (lastProcessedChunk) {
+          lastPts = lastProcessedChunk.pts
+        }
       }
     })
 
@@ -261,6 +266,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const seek = queuedDebounceWithLastCall(500, async (time: number) => {
       console.log('SEEKING', time)
       const ranges = getTimeRanges()
+      if (ranges.some(({ start, end }) => time >= start && time <= end)) {
+        console.log('SKIPPED SEEK CUZ ALREADY IN A BUFFERED RANGE')
+        return
+      }
       for (const range of ranges) {
         await unbufferRange(range.start, range.end)
       }
@@ -289,9 +298,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // initDone = true
       processingQueue.start()
       const seekTime = Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS)
+      console.log('seekTime', time, seekTime, seekTime > POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       if (seekTime > POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) {
-        await process()
-        await process()
         chunks = []
         await transmuxer.seek(seekTime)
       } else {
@@ -309,6 +317,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // })
         console.log('seeking UNSETTING SKIPSKEEK', skipSeek)
       }
+      console.log('seeking actual seek done')
+
+      await new Promise(resolve => setTimeout(resolve, 0))
 
       await processNeededBufferRange()
       await updateBufferedRanges()
@@ -392,16 +403,18 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(() => {
       video.play()
-      // setTimeout(() => {
-      //   // video.pause()
-      //   video.currentTime = 600
-      //   setTimeout(() => {
-      //     video.currentTime = 300
-      //     setTimeout(() => {
-      //       video.currentTime = 1
-      //       // video.play()
-      //     }, 5_000)
-      //   }, 5_000)
-      // }, 5_000)
+      setTimeout(() => {
+        video.pause()
+        setTimeout(() => {
+          console.clear()
+          video.currentTime = 600
+          // video.currentTime = 300
+          setTimeout(() => {
+            console.clear()
+            video.currentTime = 300
+            // video.play()
+          }, 5_000)
+        }, 2_500)
+      }, 2_500)
     }, 2_500)
   })

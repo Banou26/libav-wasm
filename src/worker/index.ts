@@ -32,7 +32,6 @@ const init = makeCallListener(async (
   const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
   let initRead = 0
-
   const makeTransmuxer = () => new module.Transmuxer({
     length,
     bufferSize,
@@ -117,12 +116,12 @@ const init = makeCallListener(async (
 
       if (firstInit) {
         initBuffers = [...initBuffers, structuredClone(resultBuffer)]
+        console.log('SETTING INIT BUFFERS', initBuffers[initRead], initRead, initBuffers)
       }
 
       currentOffset = offset + resultBuffer.byteLength
       freeInterface(sharedArrayBuffer)
       notifyInterface(sharedArrayBuffer, State.Idle)
-
       return {
         buffer: resultBuffer,
         size: resultBuffer.byteLength
@@ -134,6 +133,7 @@ const init = makeCallListener(async (
       keyframeDuration: number, keyframePts: number, keyframePos: number,
       bufferIndex: number
     ) => {
+      // console.log('worker write', offset, arrayBuffer, timebaseNum, timebaseDen, lastFramePts, lastFrameDuration, keyframeDuration, keyframePts, keyframePos, bufferIndex)
       const request = new ApiMessage({
         endpoint: {
           case: 'write',
@@ -182,12 +182,18 @@ const init = makeCallListener(async (
       currentOffset = 0
       module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()
+      const p = performance.now()
       transmuxer.init(firstInit)
+      // transmuxer.process(5_000)
+      // transmuxer.process(5_000)
+      console.log('init took', performance.now() - p)
       initRead = -1
       if (firstInit) firstInit = false
     },
     destroy: () => {
+      const p = performance.now()
       transmuxer.destroy()
+      console.log('destroy took', performance.now() - p)
       transmuxer = undefined
       module = undefined
       currentOffset = 0
