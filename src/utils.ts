@@ -86,6 +86,7 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
           funcResult
             // @ts-ignore
             .then(checkForLastCall(currentTime, _resolve, _reject))
+            // @ts-ignore
             .catch(checkForLastCall(timeStart, _resolve, _reject))
       }, time - (currentTime - timeStart))
       return result
@@ -104,10 +105,11 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
         _reject = reject
       })
 
-      // wrap the result in a promise in case the function doesn't return a promise
       runningFunction =
         funcResult
+            // @ts-ignore
           .then(checkForLastCall(timeStart, _resolve, _reject))
+            // @ts-ignore
           .catch(checkForLastCall(timeStart, _resolve, _reject))
 
       return funcResult
