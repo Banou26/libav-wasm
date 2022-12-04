@@ -91,7 +91,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        console.log('write', isHeader, offset, pts, duration, pos)
+        // console.log('write', isHeader, offset, pts, duration, pos)
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -120,7 +120,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     await transmuxer.init()
-    console.log('transmuxer init done from TEST')
     initDone = true
 
     // @ts-ignore
@@ -247,13 +246,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
-    const processNeededBufferRange = queuedDebounceWithLastCall(0, async () => {
+    const processNeededBufferRange = queuedDebounceWithLastCall(0, async (maxPts?: number) => {
       const currentTime = video.currentTime
       let lastPts = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)?.pts
-      console.log('processNeededBufferRange', currentTime, lastPts, chunks)
-      while (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS))) {
+      while (
+        (maxPts === undefined ? true : (lastPts ?? 0) < maxPts)
+        && (lastPts === undefined || (lastPts < (currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)))
+      ) {
         const newChunks = await process()
-        console.log('processNeededBufferRange', currentTime, lastPts, newChunks)
         const lastProcessedChunk = newChunks.at(-1)
         if (!lastProcessedChunk && ((lastPts ?? 0) + 10) >= duration) break
         if (lastProcessedChunk) {
@@ -263,17 +263,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     let skipSeek = false
+    // todo: add error checker & retry to seek a bit earlier
     const seek = queuedDebounceWithLastCall(500, async (time: number) => {
-      console.log('SEEKING', time)
       const ranges = getTimeRanges()
       if (ranges.some(({ start, end }) => time >= start && time <= end)) {
-        console.log('SKIPPED SEEK CUZ ALREADY IN A BUFFERED RANGE')
         return
       }
       for (const range of ranges) {
         await unbufferRange(range.start, range.end)
       }
-      const p = performance.now()
       const isPlaying = !video.paused
       if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
@@ -292,43 +290,25 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       processingQueue.pause()
       processingQueue.clear()
       await allTasksDone
-      // initDone = false
-      // await transmuxer.destroy()
-      // await transmuxer.init()
-      // initDone = true
       processingQueue.start()
       const seekTime = Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS)
-      console.log('seekTime', time, seekTime, seekTime > POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       if (seekTime > POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) {
         chunks = []
         await transmuxer.seek(seekTime)
       } else {
         chunks = []
+        await transmuxer.destroy()
+        await transmuxer.init()
         await process()
         await process()
-        console.log('seeking SETTING SKIPSKEEK', skipSeek)
-        // skipSeek = true
-        // video.currentTime = seekTime
-        // await new Promise(resolve => {
-        //   video.addEventListener('seeking', () => {
-        //     skipSeek = false
-        //     resolve(undefined)
-        //   }, { once: true })
-        // })
-        console.log('seeking UNSETTING SKIPSKEEK', skipSeek)
       }
-      console.log('seeking actual seek done')
 
       await new Promise(resolve => setTimeout(resolve, 0))
 
-      await processNeededBufferRange()
+      await processNeededBufferRange(time + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       await updateBufferedRanges()
 
       if (isPlaying) await video.play()
-
-      const p2 = performance.now()
-      console.log('chunks', chunks)
-      console.log('SEEK TIME:', p2 - p)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -373,10 +353,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.buffered) continue
         try {
           await bufferChunk(chunk)
-          console.log('buffer chunk', chunk)
-          for (let i = sourceBuffer.buffered.length; i > 0; i--) {
-            console.log('buffer range', sourceBuffer.buffered.start(i - 1), sourceBuffer.buffered.end(i - 1))
-          }
         } catch (err) {
           if (!(err instanceof Event)) throw err
           break
@@ -391,27 +367,29 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await updateBufferedRanges()
 
     video.addEventListener('seeking', () => {
-      console.log('seeking', skipSeek)
       if (skipSeek) return
       seek(video.currentTime)
     })
 
-    video.addEventListener('timeupdate', queuedDebounceWithLastCall(500, async () => {
-      await processNeededBufferRange()
+    const timeUpdateWork = queuedDebounceWithLastCall(500, async (time: number) => {
+      await processNeededBufferRange(time + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       await updateBufferedRanges()
-    }))
+    })
+
+    video.addEventListener('timeupdate', () => {
+      timeUpdateWork(video.currentTime)
+    })
 
     setTimeout(() => {
       video.play()
       setTimeout(() => {
         video.pause()
         setTimeout(() => {
-          console.clear()
           video.currentTime = 600
           // video.currentTime = 300
           setTimeout(() => {
-            console.clear()
-            video.currentTime = 300
+            video.currentTime = 10
+            // video.currentTime = 300
             // video.play()
           }, 5_000)
         }, 2_500)

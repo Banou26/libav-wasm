@@ -79,9 +79,6 @@ const init = makeCallListener(async (
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
-      if (!firstInit && initRead !== -1) {
-        console.log('SHOULD HAVE INIT BUFFERS', initBuffers[initRead], initRead, initBuffers)
-      }
       if (!firstInit && initRead !== -1 && initBuffers[initRead]) {
         const resultBuffer = initBuffers[initRead]
         currentOffset = offset + resultBuffer.byteLength
@@ -116,7 +113,6 @@ const init = makeCallListener(async (
 
       if (firstInit) {
         initBuffers = [...initBuffers, structuredClone(resultBuffer)]
-        console.log('SETTING INIT BUFFERS', initBuffers[initRead], initRead, initBuffers)
       }
 
       currentOffset = offset + resultBuffer.byteLength
@@ -182,18 +178,12 @@ const init = makeCallListener(async (
       currentOffset = 0
       module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()
-      const p = performance.now()
       transmuxer.init(firstInit)
-      // transmuxer.process(5_000)
-      // transmuxer.process(5_000)
-      console.log('init took', performance.now() - p)
       initRead = -1
       if (firstInit) firstInit = false
     },
     destroy: () => {
-      const p = performance.now()
       transmuxer.destroy()
-      console.log('destroy took', performance.now() - p)
       transmuxer = undefined
       module = undefined
       currentOffset = 0
