@@ -1,7 +1,7 @@
 import { makeCallListener, registerListener } from 'osra'
 
 // @ts-ignore
-import WASMModule from 'libav'
+import WASMModule from '../../dist'
 
 import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification, SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'
@@ -28,6 +28,7 @@ const init = makeCallListener(async (
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
   if (!module) module = await makeModule(publicPath)
+  console.log(module)
   let initBuffers: Uint8Array[] = []
   const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
@@ -79,6 +80,12 @@ const init = makeCallListener(async (
       return resultOffset
     },
     read: (offset: number, bufferSize: number) => {
+      if (!offset && !bufferSize) {
+        console.log('called tryying async read')
+        return new Promise(resolve => {
+          setTimeout(() => resolve(1), 1000)
+        })
+      }
       if (!firstInit && initRead !== -1 && initBuffers[initRead]) {
         const resultBuffer = initBuffers[initRead]
         currentOffset = offset + resultBuffer.byteLength

@@ -468,6 +468,8 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &read = remuxObject.read;
+    auto res2 = read().await().as<int>();
+    printf("ASYNC READ RES %d \n", res2);
     // call the JS read function and get its result as
     // {
     //   buffer: Uint8Array,

@@ -17,16 +17,21 @@
 dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
+	-sEXPORT_ES6 \
 	-O3 \
+	-g \
+	-gsource-map \
+	--source-map-base http://localhost:1234/dist/ \
+	-s ASSERTIONS=2 \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-5.1/ \
 	-s INITIAL_MEMORY=150mb \
 	-s TOTAL_MEMORY=125mb \
-	-s TOTAL_STACK=5mb \
+	-s STACK_SIZE=50mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
 	-s NO_DYNAMIC_EXECUTION=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
-	-o dist/libav.cjs \
+	-o dist/libav.js \
 	src/main.cpp
