@@ -6,6 +6,7 @@ import { makeCallListener, registerListener } from 'osra'
 import WASMModule from '../../dist'
 
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
+import PQueue from 'p-queue'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
@@ -134,62 +135,81 @@ const init = makeCallListener(async (
 
   let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
 
-  let firstInit = true
-  const result = {
-    init: async () => {
+  const blockingQueue = new PQueue({ concurrency: 1 })
+  const addTask = <T extends (...args: any) => any>(func: T) =>
+    blockingQueue.add<Awaited<ReturnType<T>>>(func)
+
+  const init = async () => {
+    blockingQueue.clear()
+    GOPBuffer = undefined
+    unflushedWrite = undefined
+    headerBuffer = undefined
+    processBufferChunks = []
+    initRead = 0
+    currentOffset = 0
+    module = await makeModule(publicPath)
+    transmuxer = makeTransmuxer()
+    await transmuxer.init(firstInit)
+    initRead = -1
+    if (firstInit) firstInit = false
+  }
+
+  const destroy = async () => {
+    await transmuxer.destroy()
+    transmuxer = undefined
+    module = undefined
+    currentOffset = 0
+  }
+
+  const _seek = async (time: number) => {
+    console.log('time', time)
+    console.log('lastChunk', lastChunk)
+    if (lastChunk && (lastChunk.pts > time)) {
+      console.log('DESTROY')
+      await destroy()
       GOPBuffer = undefined
       unflushedWrite = undefined
       headerBuffer = undefined
       processBufferChunks = []
-      initRead = 0
-      currentOffset = 0
-      module = await makeModule(publicPath)
-      transmuxer = makeTransmuxer()
-      await transmuxer.init(firstInit)
-      initRead = -1
-      if (firstInit) firstInit = false
-    },
-    destroy: () => {
-      transmuxer.destroy()
-      transmuxer = undefined
-      module = undefined
-      currentOffset = 0
-    },
-    seek: async (timestamp: number) => {
-      const time = Math.max(0, timestamp) * 1000
-      if (lastChunk && (lastChunk.pts > time)) {
-        await result.destroy()
-        GOPBuffer = undefined
-        unflushedWrite = undefined
-        headerBuffer = undefined
-        processBufferChunks = []
-        await result.init()
+      console.log('INIT')
+      await init()
+    }
+    await process(bufferSize)
+    await transmuxer.seek(
+      Math.max(0, time) * 1000,
+      SEEK_FLAG.NONE
+    )
+    await process(bufferSize)
+  }
+
+  const process = async (size: number) => {
+    processBufferChunks = []
+    await transmuxer.process(size)
+    if (unflushedWrite) {
+      const chunk = {
+        ...unflushedWrite,
+        buffer: GOPBuffer!
       }
-      await result.process(bufferSize)
-      await transmuxer.seek(
-        time,
-        SEEK_FLAG.NONE
-      )
-    },
-    process: async (size: number) => {
-      processBufferChunks = []
-      await transmuxer.process(size)
-      if (unflushedWrite) {
-        const chunk = {
-          ...unflushedWrite,
-          buffer: GOPBuffer!
-        }
-        processBufferChunks = [...processBufferChunks, chunk]
-        await write({...chunk, buffer: new Uint8Array(chunk.buffer).buffer })
-        GOPBuffer = undefined
-        unflushedWrite = undefined
-      }
-      const writtenChunks = processBufferChunks
-      processBufferChunks = []
-      return writtenChunks.map(chunk => ({...chunk, buffer: new Uint8Array(chunk.buffer).buffer }))
-      
-    },
-    getInfo: () => transmuxer.getInfo()
+      processBufferChunks = [...processBufferChunks, chunk]
+      await write({...chunk, buffer: new Uint8Array(chunk.buffer).buffer })
+      GOPBuffer = undefined
+      unflushedWrite = undefined
+    }
+    const writtenChunks = processBufferChunks
+    processBufferChunks = []
+    return writtenChunks.map(chunk => ({...chunk, buffer: new Uint8Array(chunk.buffer).buffer }))
+    
+  }
+
+  const getInfo = () => transmuxer.getInfo()
+
+  let firstInit = true
+  const result = {
+    init: () => addTask(init),
+    destroy: () => addTask(destroy),
+    seek: (timestamp: number) => addTask(() => _seek(timestamp)),
+    process: (size: number) => addTask(() => process(size)),
+    getInfo: () => addTask(getInfo)
   }
   return result
 })

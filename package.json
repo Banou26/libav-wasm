@@ -17,17 +17,7 @@
     "types": "tsc",
     "copy-package": "copyfiles -u 2 ./src/build-config/package.json dist",
     "copy-wasm": "copyfiles -u 1 dist/*.wasm build && shx mv ./build/index2.js ./build/worker.js && shx mv ./build/worker/index.d.ts ./build/worker.d.ts",
-    "preview": "vite preview",
-    "flatbuffers": "flatc.exe -o src --ts src/shared-buffer.fbs",
-    "proto": "buf-Windows-x86_64.exe generate"
-  },
-  "_scripts": {
-    "build": "npx --yes make-dir-cli ./dist && npm run make-docker && npm run build-web",
-    "build-web": "npx tsc src/index.ts --outDir dist",
-    "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
-    "dev-web": "parcel src/index.html",
-    "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
-    "make-docker": "docker-compose run libav-wasm make"
+    "preview": "vite preview"
   },
   "devDependencies": {
     "@esbuild-plugins/node-globals-polyfill": "^0.1.1",
