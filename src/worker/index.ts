@@ -18,12 +18,14 @@ let module: ReturnType<typeof makeModule>
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { publicPath, length, sharedArrayBuffer, bufferSize, attachment, subtitle }:
+  { publicPath, length, sharedArrayBuffer, bufferSize, read, seek, attachment, subtitle }:
   {
     publicPath: string
     length: number
     sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
+    read: (offset: number, size: number) => Promise<ArrayBuffer>
+    seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
@@ -46,88 +48,12 @@ const init = makeCallListener(async (
       const buffer = new ArrayBuffer(_buffer.byteLength)
       attachment(filename, mimetype, buffer)
     },
-    seek: (offset: number, whence: SEEK_WHENCE_FLAG) => {
-      if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
-        return -1
-      }
-      const request = new ApiMessage({
-        endpoint: {
-          case: 'seek',
-          value: {
-            request: {
-              currentOffset,
-              offset,
-              whence
-            }
-          }
-        }
-      })
-      const uint8Array = new Uint8Array(sharedArrayBuffer)
-      const requestBuffer = request.toBinary()
-      dataview.setUint32(4, requestBuffer.byteLength)
-      uint8Array.set(requestBuffer, 8)
-
-      notifyInterface(sharedArrayBuffer, State.Requested)
-      waitSyncForInterfaceNotification(sharedArrayBuffer, State.Requested)
-
-      const messageLength = dataview.getUint32(4)
-      const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
-      const resultOffset = (response.endpoint.value as Seek).response!.offset
-
-      if (whence !== SEEK_WHENCE_FLAG.AVSEEK_SIZE && resultOffset !== -1) currentOffset = resultOffset
-      freeInterface(sharedArrayBuffer)
-      notifyInterface(sharedArrayBuffer, State.Idle)
-      return resultOffset
-    },
-    read: (offset: number, bufferSize: number) => {
-      if (!offset && !bufferSize) {
-        console.log('called tryying async read')
-        return new Promise(resolve => {
-          setTimeout(() => resolve(1), 1000)
-        })
-      }
-      if (!firstInit && initRead !== -1 && initBuffers[initRead]) {
-        const resultBuffer = initBuffers[initRead]
-        currentOffset = offset + resultBuffer.byteLength
-        initRead = initRead + 1
-        return {
-          buffer: resultBuffer,
-          size: resultBuffer.byteLength
-        }
-      }
-      const request = new ApiMessage({
-        endpoint: {
-          case: 'read',
-          value: {
-            request: {
-              offset,
-              bufferSize
-            }
-          }
-        }
-      })
-      const uint8Array = new Uint8Array(sharedArrayBuffer)
-      const requestBuffer = request.toBinary()
-      dataview.setUint32(4, requestBuffer.byteLength)
-      uint8Array.set(requestBuffer, 8)
-
-      notifyInterface(sharedArrayBuffer, State.Requested)
-      waitSyncForInterfaceNotification(sharedArrayBuffer, State.Requested)
-
-      const messageLength = dataview.getUint32(4)
-      const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
-      const resultBuffer = (response.endpoint.value as Read).response!.buffer
-
-      if (firstInit) {
-        initBuffers = [...initBuffers, structuredClone(resultBuffer)]
-      }
-
-      currentOffset = offset + resultBuffer.byteLength
-      freeInterface(sharedArrayBuffer)
-      notifyInterface(sharedArrayBuffer, State.Idle)
+    seek: (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
+    read: async (offset: number, bufferSize: number) => {
+      const buffer = await read(offset, bufferSize)
       return {
-        buffer: resultBuffer,
-        size: resultBuffer.byteLength
+        buffer,
+        size: buffer.byteLength
       }
     },
     write: (

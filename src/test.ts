@@ -65,8 +65,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             }
           }
         )
-          .then(res => res.arrayBuffer())
-          .then(ab => new Uint8Array(ab)),
+          .then(res => res.arrayBuffer()),
       seek: async (currentOffset, offset, whence) => {
         if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
           return currentOffset + offset;

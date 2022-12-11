@@ -457,7 +457,7 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
-    long result = seek(static_cast<long>(offset), whence).as<long>();
+    long result = seek(static_cast<long>(offset), whence).await().as<long>();
     return result;
   }
 
@@ -468,14 +468,12 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &read = remuxObject.read;
-    auto res2 = read().await().as<int>();
-    printf("ASYNC READ RES %d \n", res2);
     // call the JS read function and get its result as
     // {
     //   buffer: Uint8Array,
     //   size: int
     // }
-    val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size);
+    val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     // copy the result buffer into AVIO's buffer

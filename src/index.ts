@@ -19,7 +19,7 @@ export type MakeTransmuxerOptions = {
   publicPath: string
   /** Path that will be used to locate the javascript worker file */
   workerPath: string
-  read: (offset: number, size: number) => Promise<Uint8Array>
+  read: (offset: number, size: number) => Promise<ArrayBuffer>
   seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
@@ -172,6 +172,8 @@ export const makeTransmuxer = async ({
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
+        read: (offset, bufferSize) => _read(offset, bufferSize),
+        seek: (currentOffset, offset, whence) => _seek(currentOffset, offset, whence),
       }
     )
 
