@@ -185,7 +185,7 @@ const init = makeCallListener(async (
       currentOffset = 0
       module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()
-      transmuxer.init(firstInit)
+      await transmuxer.init(firstInit)
       initRead = -1
       if (firstInit) firstInit = false
     },
