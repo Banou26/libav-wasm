@@ -18,22 +18,10 @@ export default defineConfig({
         index: 'src/index.ts',
         worker: 'src/worker/index.ts'
       },
-      external: ['@bufbuild/protobuf', 'buffer', 'mp4box', 'osra']
+      external: ['buffer', 'mp4box', 'osra']
     }
   },
   optimizeDeps: {
     include: ['libav']
-  },
-  plugins: [
-    {
-      name: 'configure-response-headers',
-      configureServer: (server) => {
-        server.middlewares.use((_req, res, next) => {
-          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
-          res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
-          next()
-        })
-      }
-    }
-  ]
+  }
 })
