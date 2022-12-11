@@ -359,6 +359,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     }
 
+
     // @ts-ignore
     await appendBuffer(headerChunk.buffer)
 

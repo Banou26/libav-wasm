@@ -506,7 +506,7 @@ extern "C" {
       remuxObject.last_keyframe_pts,
       remuxObject.last_keyframe_pos,
       remuxObject.frame_write_index
-    );
+    ).await();
     // Set previous pts/pos/duration needed to calculate the real timestamps
     remuxObject.last_keyframe_duration = remuxObject.keyframe_duration;
     remuxObject.last_keyframe_pts = remuxObject.keyframe_pts;

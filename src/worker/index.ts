@@ -3,8 +3,7 @@ import { makeCallListener, registerListener } from 'osra'
 // @ts-ignore
 import WASMModule from '../../dist'
 
-import { freeInterface, notifyInterface, State, waitSyncForInterfaceNotification, SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
-import { ApiMessage, Read, Seek, Write } from '../gen/src/shared-memory-api_pb'
+import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
@@ -18,13 +17,18 @@ let module: ReturnType<typeof makeModule>
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { publicPath, length, sharedArrayBuffer, bufferSize, read, seek, attachment, subtitle }:
+  { publicPath, length, bufferSize, read, seek, write, attachment, subtitle }:
   {
     publicPath: string
     length: number
-    sharedArrayBuffer: SharedArrayBuffer
     bufferSize: number
     read: (offset: number, size: number) => Promise<ArrayBuffer>
+    write: (params: {
+      offset: number, arrayBuffer: ArrayBuffer, timebaseNum: number,
+      timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
+      keyframeDuration: number, keyframePts: number, keyframePos: number,
+      bufferIndex: number
+    }) => Promise<void> | void
     seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
@@ -32,7 +36,6 @@ const init = makeCallListener(async (
   if (!module) module = await makeModule(publicPath)
   console.log(module)
   let initBuffers: Uint8Array[] = []
-  const dataview = new DataView(sharedArrayBuffer)
   let currentOffset = 0
   let initRead = 0
   const makeTransmuxer = () => new module.Transmuxer({
@@ -48,7 +51,7 @@ const init = makeCallListener(async (
       const buffer = new ArrayBuffer(_buffer.byteLength)
       attachment(filename, mimetype, buffer)
     },
-    seek: (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
+    seek: async (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
     read: async (offset: number, bufferSize: number) => {
       const buffer = await read(offset, bufferSize)
       return {
@@ -57,49 +60,16 @@ const init = makeCallListener(async (
       }
     },
     write: (
-      offset: number, arrayBuffer: Uint8Array, timebaseNum: number,
+      offset: number, buffer: Uint8Array, timebaseNum: number,
       timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
       keyframeDuration: number, keyframePts: number, keyframePos: number,
       bufferIndex: number
-    ) => {
-      // console.log('worker write', offset, arrayBuffer, timebaseNum, timebaseDen, lastFramePts, lastFrameDuration, keyframeDuration, keyframePts, keyframePos, bufferIndex)
-      const request = new ApiMessage({
-        endpoint: {
-          case: 'write',
-          value: {
-            request: {
-              buffer: arrayBuffer,
-              bufferIndex,
-              keyframeDuration,
-              keyframePts,
-              keyframePos,
-              lastFrameDuration,
-              lastFramePts,
-              offset,
-              timebaseDen,
-              timebaseNum
-            }
-          }
-        }
-      })
-
-      const uint8Array = new Uint8Array(sharedArrayBuffer)
-      const requestBuffer = request.toBinary()
-      dataview.setUint32(4, requestBuffer.byteLength)
-      uint8Array.set(requestBuffer, 8)
-
-      notifyInterface(sharedArrayBuffer, State.Requested)
-      waitSyncForInterfaceNotification(sharedArrayBuffer, State.Requested)
-
-      const messageLength = dataview.getUint32(4)
-      const response = ApiMessage.fromBinary(uint8Array.slice(8, 8 + messageLength))
-      const resultBytesWritten = (response.endpoint.value as Write).response!.bytesWritten
-
-      freeInterface(sharedArrayBuffer)
-      notifyInterface(sharedArrayBuffer, State.Idle)
-
-      return resultBytesWritten
-    }
+    ) => write({
+      offset, arrayBuffer: new Uint8Array(structuredClone(buffer)).buffer, timebaseNum,
+      timebaseDen, lastFramePts, lastFrameDuration,
+      keyframeDuration, keyframePts, keyframePos,
+      bufferIndex
+    })
   })
 
   let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
