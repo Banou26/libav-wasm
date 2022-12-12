@@ -54,7 +54,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       publicPath: '/dist/',
       workerPath: new URL('./worker/index.ts', import.meta.url).toString(),
       bufferSize: BUFFER_SIZE,
-      sharedArrayBufferSize: BUFFER_SIZE + 1_000_000,
       length: contentLength,
       read: async (offset, size) =>
         fetch(
@@ -65,8 +64,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             }
           }
         )
-          .then(res => res.arrayBuffer())
-          .then(ab => new Uint8Array(ab)),
+          .then(res => res.arrayBuffer()),
       seek: async (currentOffset, offset, whence) => {
         if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
           return currentOffset + offset;
@@ -91,7 +89,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        // console.log('write', isHeader, offset, pts, duration, pos)
+        // console.log('write', isHeader, offset, pts, duration, pos, buffer)
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -292,6 +290,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await allTasksDone
       processingQueue.start()
       const seekTime = Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS)
+      const p = performance.now()
       if (seekTime > POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) {
         chunks = []
         await transmuxer.seek(seekTime)
@@ -307,7 +306,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
       await processNeededBufferRange(time + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       await updateBufferedRanges()
-
+      const p2 = performance.now()
+      console.log('seek time', p2 - p)
       if (isPlaying) await video.play()
     })
 
@@ -360,6 +360,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     }
 
+
     // @ts-ignore
     await appendBuffer(headerChunk.buffer)
 
@@ -383,7 +384,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     setTimeout(() => {
       video.play()
       setTimeout(() => {
-        video.pause()
+        // video.pause()
         setTimeout(() => {
           video.currentTime = 600
           // video.currentTime = 300

@@ -1,4 +1,5 @@
 {
   "name": "libav",
-  "main": "./libav.cjs"
+  "main": "./libav.js",
+  "type": "module"
 }

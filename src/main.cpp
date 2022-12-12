@@ -457,7 +457,7 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
-    long result = seek(static_cast<long>(offset), whence).as<long>();
+    long result = seek(static_cast<long>(offset), whence).await().as<long>();
     return result;
   }
 
@@ -473,7 +473,7 @@ extern "C" {
     //   buffer: Uint8Array,
     //   size: int
     // }
-    val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size);
+    val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
     // copy the result buffer into AVIO's buffer
@@ -506,7 +506,7 @@ extern "C" {
       remuxObject.last_keyframe_pts,
       remuxObject.last_keyframe_pos,
       remuxObject.frame_write_index
-    );
+    ).await();
     // Set previous pts/pos/duration needed to calculate the real timestamps
     remuxObject.last_keyframe_duration = remuxObject.keyframe_duration;
     remuxObject.last_keyframe_pts = remuxObject.keyframe_pts;
