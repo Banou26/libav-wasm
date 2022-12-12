@@ -1,4 +1,10 @@
 
+export enum State {
+  Idle = 0,
+  Requested = 1,
+  Responded = 2
+}
+
 /** https://ffmpeg.org/doxygen/trunk/avformat_8h.html#ac736f8f4afc930ca1cda0b43638cc678 */
 export enum SEEK_FLAG {
   NONE = 0,
@@ -18,6 +24,32 @@ export enum SEEK_WHENCE_FLAG {
   SEEK_END = 1 << 1,
   AVSEEK_SIZE = 1 << 16 //0x10000,
 }
+
+export const notifyInterface = (sharedArrayBuffer: SharedArrayBuffer, value: State) => {
+  const int32Array = new Int32Array(sharedArrayBuffer)
+  int32Array.set([value], 0)
+  return Atomics.notify(int32Array, 0)
+}
+
+export const waitForInterfaceNotification = (
+  sharedArrayBuffer: SharedArrayBuffer,
+  value: State
+): Promise<'ok' | 'timed-out'> | 'not-equal' => {
+    const int32Array = new Int32Array(sharedArrayBuffer)
+    const result = Atomics.waitAsync(int32Array, 0, value as unknown as bigint, 1_000)
+
+    if (result.value === 'not-equal') {
+      return result.value
+    }
+    return result.value as Promise<"ok" | "timed-out">
+  }
+
+export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayBuffer, value: State) => {
+  const int32Array = new Int32Array(sharedArrayBuffer)
+  return Atomics.wait(int32Array, 0, value)
+}
+
+export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => new Uint8Array(sharedArrayBuffer).fill(0)
 
 export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
   let runningFunction: Promise<ReturnType<T>> | undefined

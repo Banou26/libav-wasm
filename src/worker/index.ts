@@ -1,12 +1,9 @@
-import type { Chunk } from '..'
-
 import { makeCallListener, registerListener } from 'osra'
 
 // @ts-ignore
 import WASMModule from '../../dist'
 
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
-import PQueue from 'p-queue'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
@@ -26,21 +23,21 @@ const init = makeCallListener(async (
     length: number
     bufferSize: number
     read: (offset: number, size: number) => Promise<ArrayBuffer>
-    write: (chunk: Omit<Chunk, 'buffer'> & { buffer: ArrayBuffer }) => Promise<void> | void
+    write: (params: {
+      offset: number, arrayBuffer: ArrayBuffer, timebaseNum: number,
+      timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
+      keyframeDuration: number, keyframePts: number, keyframePos: number,
+      bufferIndex: number
+    }) => Promise<void> | void
     seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
   if (!module) module = await makeModule(publicPath)
+  console.log(module)
   let initBuffers: Uint8Array[] = []
   let currentOffset = 0
   let initRead = 0
-  let lastChunk: Chunk | undefined
-  let GOPBuffer: Uint8Array | undefined = undefined
-  let unflushedWrite: Chunk | undefined = undefined
-  let headerBuffer: Uint8Array | undefined = undefined
-  let headerFinished = false
-  let processBufferChunks: Chunk[] = []
   const makeTransmuxer = () => new module.Transmuxer({
     length,
     bufferSize,
@@ -62,156 +59,42 @@ const init = makeCallListener(async (
         size: buffer.byteLength
       }
     },
-    write: async (
-      offset: number, _buffer: Uint8Array, timebaseNum: number,
+    write: (
+      offset: number, buffer: Uint8Array, timebaseNum: number,
       timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
       keyframeDuration: number, keyframePts: number, keyframePos: number,
       bufferIndex: number
-    ) => {
-      const buffer = structuredClone(new Uint8Array(_buffer))
-      const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
-      const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
-      // header chunk
-      if (bufferIndex === -2) {
-        if (headerFinished) return
-        if (!headerBuffer) {
-          headerBuffer = buffer
-          return
-        } else {
-          const _headerBuffer = headerBuffer
-          headerBuffer = new Uint8Array(headerBuffer.byteLength + buffer.byteLength)
-          headerBuffer.set(_headerBuffer)
-          headerBuffer.set(buffer, _headerBuffer.byteLength)
-        }
-        const chunk = {
-          isHeader: true,
-          offset,
-          buffer: headerBuffer,
-          pts,
-          duration,
-          pos: keyframePos
-        }
-        processBufferChunks = [...processBufferChunks, chunk]
-        headerFinished = true
-        await write({...chunk, buffer: new Uint8Array(chunk.buffer).buffer })
-        return
-      }
-
-      // flush buffers
-      if (bufferIndex === -1) {
-        if (!unflushedWrite) return
-        // this case happens right after headerChunk
-        if (!GOPBuffer) return
-        lastChunk = {
-          ...unflushedWrite,
-          buffer: GOPBuffer,
-        }
-        processBufferChunks = [...processBufferChunks, lastChunk]
-        await write({...lastChunk, buffer: new Uint8Array(lastChunk.buffer).buffer })
-        GOPBuffer = undefined
-        unflushedWrite = undefined
-        return
-      }
-
-      if (!GOPBuffer) {
-        GOPBuffer = buffer
-      } else {
-        const _buffer = GOPBuffer
-        GOPBuffer = new Uint8Array(GOPBuffer.byteLength + buffer.byteLength)
-        GOPBuffer.set(_buffer)
-        GOPBuffer.set(buffer, _buffer.byteLength)
-      }
-
-      unflushedWrite = {
-        isHeader: false,
-        offset,
-        buffer: buffer,
-        pts,
-        duration,
-        pos: keyframePos
-      }
-    }
+    ) => write({
+      offset, arrayBuffer: new Uint8Array(structuredClone(buffer)).buffer, timebaseNum,
+      timebaseDen, lastFramePts, lastFrameDuration,
+      keyframeDuration, keyframePts, keyframePos,
+      bufferIndex
+    })
   })
 
   let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
 
-  const blockingQueue = new PQueue({ concurrency: 1 })
-  const addTask = <T extends (...args: any) => any>(func: T) =>
-    blockingQueue.add<Awaited<ReturnType<T>>>(func)
-
-  const init = async () => {
-    blockingQueue.clear()
-    GOPBuffer = undefined
-    unflushedWrite = undefined
-    headerBuffer = undefined
-    processBufferChunks = []
-    initRead = 0
-    currentOffset = 0
-    module = await makeModule(publicPath)
-    transmuxer = makeTransmuxer()
-    await transmuxer.init(firstInit)
-    initRead = -1
-    if (firstInit) firstInit = false
-  }
-
-  const destroy = async () => {
-    await transmuxer.destroy()
-    transmuxer = undefined
-    module = undefined
-    currentOffset = 0
-  }
-
-  const _seek = async (time: number) => {
-    console.log('time', time)
-    console.log('lastChunk', lastChunk)
-    if (lastChunk && (lastChunk.pts > time)) {
-      console.log('DESTROY')
-      await destroy()
-      GOPBuffer = undefined
-      unflushedWrite = undefined
-      headerBuffer = undefined
-      processBufferChunks = []
-      console.log('INIT')
-      await init()
-    }
-    await process(bufferSize)
-    await transmuxer.seek(
-      Math.max(0, time) * 1000,
-      SEEK_FLAG.NONE
-    )
-    await process(bufferSize)
-  }
-
-  const process = async (size: number) => {
-    processBufferChunks = []
-    await transmuxer.process(size)
-    if (unflushedWrite) {
-      const chunk = {
-        ...unflushedWrite,
-        buffer: GOPBuffer!
-      }
-      processBufferChunks = [...processBufferChunks, chunk]
-      await write({...chunk, buffer: new Uint8Array(chunk.buffer).buffer })
-      GOPBuffer = undefined
-      unflushedWrite = undefined
-    }
-    const writtenChunks = processBufferChunks
-    processBufferChunks = []
-    return writtenChunks.map(chunk => ({...chunk, buffer: new Uint8Array(chunk.buffer).buffer }))
-    
-  }
-
-  const getInfo = () => transmuxer.getInfo()
-
   let firstInit = true
-  const result = {
-    init: () => addTask(init),
-    destroy: () => addTask(destroy),
-    seek: (timestamp: number) => addTask(() => _seek(timestamp)),
-    process: (size: number) => addTask(() => process(size)),
-    getInfo: () => addTask(getInfo)
+  return {
+    init: async () => {
+      initRead = 0
+      currentOffset = 0
+      module = await makeModule(publicPath)
+      transmuxer = makeTransmuxer()
+      await transmuxer.init(firstInit)
+      initRead = -1
+      if (firstInit) firstInit = false
+    },
+    destroy: () => {
+      transmuxer.destroy()
+      transmuxer = undefined
+      module = undefined
+      currentOffset = 0
+    },
+    seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
+    process: (size: number) => transmuxer.process(size),
+    getInfo: () => transmuxer.getInfo()
   }
-  return result
 })
 
 const resolvers = {
