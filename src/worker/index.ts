@@ -35,9 +35,7 @@ const init = makeCallListener(async (
   }) => {
   if (!module) module = await makeModule(publicPath)
   console.log(module)
-  let initBuffers: Uint8Array[] = []
   let currentOffset = 0
-  let initRead = 0
   const makeTransmuxer = () => new module.Transmuxer({
     length,
     bufferSize,
@@ -77,12 +75,10 @@ const init = makeCallListener(async (
   let firstInit = true
   return {
     init: async () => {
-      initRead = 0
       currentOffset = 0
       module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()
       await transmuxer.init(firstInit)
-      initRead = -1
       if (firstInit) firstInit = false
     },
     destroy: () => {

@@ -226,7 +226,7 @@ export const makeTransmuxer = async ({
 
   const workerQueue = new PQueue({ concurrency: 1 })
 
-  const addWorkerTask = <T extends (...args: any) => any>(func: T) =>
+  const addWorkerTask = <T extends (...args: any[]) => any>(func: T) =>
     (...args: Parameters<T>) =>
       workerQueue.add<Awaited<ReturnType<T>>>(() => func(...args))
     
