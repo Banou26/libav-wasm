@@ -1,6 +1,6 @@
 {
   "name": "@banou26/oz-libav",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "main": "build/index.js",
   "files": [
     "build"
