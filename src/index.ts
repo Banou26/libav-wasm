@@ -28,7 +28,6 @@ export type MakeTransmuxerOptions = {
     pos: number
   }) => Promise<void> | void
   length: number
-  sharedArrayBufferSize: number
   bufferSize: number
 }
 

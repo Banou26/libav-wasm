@@ -34,7 +34,6 @@ const init = makeCallListener(async (
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
   if (!module) module = await makeModule(publicPath)
-  console.log(module)
   let currentOffset = 0
   const makeTransmuxer = () => new module.Transmuxer({
     length,
