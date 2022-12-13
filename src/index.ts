@@ -104,7 +104,7 @@ export const makeTransmuxer = async ({
   const subtitles = new Map<number, Subtitle>()
   let lastChunk: Chunk | undefined
 
-  const { init: workerInit, destroy: workerDestroy, process: workerProcess, seek: workerSeek, getInfo } =
+  const { init: _workerInit, destroy: _workerDestroy, process: _workerProcess, seek: _workerSeek, getInfo: _getInfo } =
     await target(
       'init',
       {
@@ -158,10 +158,6 @@ export const makeTransmuxer = async ({
           arrayBuffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
           lastFramePts, offset, timebaseDen, timebaseNum
         }) => {
-          console.log('write',
-            arrayBuffer, bufferIndex, keyframeDuration, keyframePos, keyframePts,
-            lastFramePts, offset, timebaseDen, timebaseNum
-          )
           const pts = ((keyframePts - keyframeDuration) / timebaseDen) / timebaseNum
           const duration = (((lastFramePts) / timebaseDen) / timebaseNum) - pts
 
@@ -227,6 +223,18 @@ export const makeTransmuxer = async ({
         }
       }
     )
+
+  const workerQueue = new PQueue({ concurrency: 1 })
+
+  const addWorkerTask = <T extends (...args: any) => any>(func: T) =>
+    (...args: Parameters<T>) =>
+      workerQueue.add<Awaited<ReturnType<T>>>(() => func(...args))
+    
+  const workerInit = addWorkerTask(_workerInit)
+  const workerDestroy = addWorkerTask(_workerDestroy)
+  const workerProcess = addWorkerTask(_workerProcess)
+  const workerSeek = addWorkerTask(_workerSeek)
+  const getInfo = addWorkerTask(_getInfo)
 
   let GOPBuffer: Uint8Array | undefined = undefined
   let unflushedWrite: Chunk | undefined = undefined
