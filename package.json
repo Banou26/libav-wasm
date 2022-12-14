@@ -20,17 +20,14 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "@esbuild-plugins/node-globals-polyfill": "^0.1.1",
-    "@esbuild-plugins/node-modules-polyfill": "^0.1.4",
+    "@rollup/plugin-commonjs": "^23.0.4",
     "concurrently": "^6.0.0",
     "copyfiles": "^2.4.1",
     "mp4box": "^0.5.2",
     "nodemon": "^2.0.7",
-    "rollup-plugin-node-polyfills": "^0.2.1",
     "shx": "^0.3.4",
-    "typescript": "^4.8.4",
-    "vite": "^3.1.8",
-    "vite-plugin-wasm": "^3.1.0"
+    "typescript": "^4.9.4",
+    "vite": "^4.0.1"
   },
   "dependencies": {
     "libav": "file:dist",

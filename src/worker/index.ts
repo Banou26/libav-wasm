@@ -1,7 +1,7 @@
 import { makeCallListener, registerListener } from 'osra'
 
 // @ts-ignore
-import WASMModule from '../../dist'
+import WASMModule from 'libav'
 
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 

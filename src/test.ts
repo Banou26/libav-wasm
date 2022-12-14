@@ -54,7 +54,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       publicPath: '/dist/',
       workerPath: new URL('./worker/index.ts', import.meta.url).toString(),
       bufferSize: BUFFER_SIZE,
-      sharedArrayBufferSize: BUFFER_SIZE + 1_000_000,
       length: contentLength,
       read: async (offset, size) =>
         fetch(

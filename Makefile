@@ -17,7 +17,6 @@
 dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
-	-sEXPORT_ES6 \
 	-O3 \
 	-g \
 	-gsource-map \

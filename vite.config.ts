@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import commonjs from '@rollup/plugin-commonjs'
 
 export default defineConfig({
   build: {
@@ -10,9 +11,6 @@ export default defineConfig({
       entry: 'src/index.ts',
       formats: ['es']
     },
-    worker: {
-      formats: ['es']
-    },
     rollupOptions: {
       input: {
         index: 'src/index.ts',
@@ -21,6 +19,9 @@ export default defineConfig({
       external: ['buffer', 'mp4box', 'osra']
     }
   },
+  plugins: [
+    commonjs()
+  ],
   optimizeDeps: {
     include: ['libav']
   }

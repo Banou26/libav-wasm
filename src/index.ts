@@ -81,7 +81,7 @@ export const makeTransmuxer = async ({
   length,
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
-  const worker = new Worker(workerPath, { type: 'module' })
+  const worker = new Worker(new URL(workerPath, import.meta.url), { type: import.meta.env.DEV ? 'module' : 'classic' })
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {
@@ -295,5 +295,3 @@ export const makeTransmuxer = async ({
 
   return result
 }
-
-export default makeTransmuxer
