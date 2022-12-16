@@ -18,10 +18,6 @@ dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
 	-O3 \
-	-g \
-	-gsource-map \
-	--source-map-base http://localhost:1234/dist/ \
-	-s ASSERTIONS=2 \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-5.1/ \
