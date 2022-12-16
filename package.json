@@ -11,7 +11,7 @@
     "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "make-docker": "docker-compose run libav-wasm make",
-    "dev-web": "vite --port 1234",
+    "dev-web": "vite --port 4560",
     "vite-build": "vite build",
     "build": "npm run copy-package && npm run make-docker && vite build && npm run types && npm run copy-wasm",
     "types": "tsc",

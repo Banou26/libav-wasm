@@ -88,7 +88,8 @@ extern "C" {
       std::string hostStdString(str);
       std::string sdbxAppHost("sdbx.app");
       std::string localhostProxyHost("localhost:2345");
-      if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) && strcmp(str, "localhost:1234") != 0 && !strstr(hostStdString.c_str(), localhostProxyHost.c_str())) return;
+      std::string localhostAppTest("localhost:4560");
+      if (strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) && strcmp(str, "localhost:1234") != 0 && !strstr(hostStdString.c_str(), localhostProxyHost.c_str()) && !strstr(hostStdString.c_str(), localhostAppTest.c_str())) return;
 
       input_length = options["length"].as<int>();
       buffer_size = options["bufferSize"].as<int>();
