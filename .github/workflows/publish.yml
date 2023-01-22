@@ -7,13 +7,13 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v2
-    - name: Use Node.js 16.x
+    - name: Use Node.js 19.x
       uses: actions/setup-node@v1
       with:
-        node-version: 16.x
+        node-version: 19.x
     - run: npm ci
     
     # - uses: satackey/action-docker-layer-caching@v0.0.11
@@ -29,13 +29,13 @@ jobs:
 
   package:
     needs: [build]
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
-      - name: Use Node.js 16.x
+      - name: Use Node.js 19.x
         uses: actions/setup-node@v1
         with:
-          node-version: 16.x
+          node-version: 19.x
 
       - name: Download build folder artifacts
         uses: actions/download-artifact@v2
@@ -55,7 +55,7 @@ jobs:
   publish:
     name: "Publish to GitHub Packages"
     needs: [package]
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-22.04
     if: github.repository_owner == 'banou26'
     steps:
     - name: Download package artifact
@@ -64,7 +64,7 @@ jobs:
           name: package
     - uses: actions/setup-node@v1
       with:
-        node-version: 16.x
+        node-version: 19.x
         registry-url: https://npm.pkg.github.com/
         scope: "@banou26"
     - run: echo "registry=https://npm.pkg.github.com/@banou26" >> .npmrc
