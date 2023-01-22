@@ -17,7 +17,7 @@
 dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
-	-O3 \
+	-Os \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-5.1/ \
