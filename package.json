@@ -1,5 +1,5 @@
 {
-  "name": "@banou26/oz-libav",
+  "name": "@banou26/libav-wasm",
   "version": "0.1.7",
   "main": "build/index.js",
   "files": [

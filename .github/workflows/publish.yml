@@ -73,4 +73,4 @@ jobs:
         NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
     # - uses: actions/delete-package-versions@v1
     #   with:
-    #     package-name: 'oz-libav'
+    #     package-name: 'libav-wasm'

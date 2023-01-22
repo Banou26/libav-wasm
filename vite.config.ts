@@ -6,7 +6,6 @@ export default defineConfig((env) => ({
     target: 'esnext',
     outDir: 'build',
     lib: {
-      name: '@banou26/oz-libav',
       fileName: 'index',
       entry: 'src/index.ts',
       formats: ['es']
