@@ -8,7 +8,7 @@
   "types": "build/index.d.ts",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
+    "dev": "npm i ./dist && concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "make-docker": "docker-compose run libav-wasm make",
     "dev-web": "vite --port 4560",
