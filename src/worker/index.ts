@@ -44,9 +44,10 @@ const init = makeCallListener(async (
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
       subtitle(streamIndex, isHeader, data, ...rest)
     },
-    attachment: (filename: string, mimetype: string, _buffer: ArrayBuffer) => {
-      const buffer = new ArrayBuffer(_buffer.byteLength)
-      attachment(filename, mimetype, buffer)
+    attachment: (filename: string, mimetype: string, _buffer: Uint8Array) => {
+      const uint8 = structuredClone(_buffer) as Uint8Array
+      const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
+      attachment(filename, mimetype, arraybuffer)
     },
     seek: async (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
     read: async (offset: number, bufferSize: number) => {
