@@ -17,15 +17,15 @@
 dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
-	-O0 \
+	-Oz \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-5.1/ \
-	-s WASM=0 \
+	-s FILESYSTEM=0 \
 	-s ENVIRONMENT=web \
-	-s INITIAL_MEMORY=200mb \
-	-s TOTAL_MEMORY=175mb \
-	-s STACK_SIZE=100mb \
+	-s INITIAL_MEMORY=150mb \
+	-s TOTAL_MEMORY=125mb \
+	-s STACK_SIZE=50mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \

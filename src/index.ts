@@ -81,12 +81,10 @@ export const makeTransmuxer = async ({
   length,
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
-  const worker = new Worker(new URL(workerPath, import.meta.url), { type: 'module' })
-
-  // const workerUrl = new URL(workerPath, import.meta.url)
-  // const blob = new Blob([`importScripts(${JSON.stringify(workerUrl)})`], { type: 'application/javascript' })
-  // const url = URL.createObjectURL(blob)
-  // const worker = new Worker(url)
+  const workerUrl = new URL(workerPath, import.meta.url)
+  const blob = new Blob([`importScripts(${JSON.stringify(workerUrl)})`], { type: 'application/javascript' })
+  const url = URL.createObjectURL(blob)
+  const worker = new Worker(url)
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {

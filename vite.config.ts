@@ -5,7 +5,6 @@ export default defineConfig((env) => ({
   build: {
     target: 'esnext',
     outDir: 'build',
-    minify: false,
     lib: {
       fileName: 'index',
       entry: 'src/index.ts',
@@ -13,8 +12,7 @@ export default defineConfig((env) => ({
     },
     rollupOptions: {
       input: {
-        index: 'src/index.ts',
-        worker: 'src/worker/index.ts'
+        index: 'src/index.ts'
       },
       external: ['buffer', 'mp4box', 'osra']
     }
@@ -25,8 +23,5 @@ export default defineConfig((env) => ({
         ? []
         : [commonjs()]
     )
-  ],
-  optimizeDeps: {
-    include: ['libav']
-  }
+  ]
 }))

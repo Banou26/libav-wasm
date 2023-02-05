@@ -6,7 +6,11 @@ export default defineConfig((env) => ({
     emptyOutDir: false,
     target: 'esnext',
     outDir: 'build',
-    minify: false
+    lib: {
+      fileName: 'worker',
+      entry: 'src/worker/index.ts',
+      formats: ['es']
+    }
   },
   plugins: [
     ...(
@@ -14,8 +18,5 @@ export default defineConfig((env) => ({
         ? []
         : [commonjs()]
     )
-  ],
-  optimizeDeps: {
-    include: ['libav']
-  }
+  ]
 }))
