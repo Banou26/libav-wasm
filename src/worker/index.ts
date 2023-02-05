@@ -3,11 +3,24 @@ import { makeCallListener, registerListener } from 'osra'
 // @ts-ignore
 import WASMModule from 'libav'
 
+console.log('WASMModule', WASMModule)
+
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
-    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
+    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
+    env: {
+      memoryBase: 0,
+      tableBase: 0,
+      memory: new WebAssembly.Memory({initial: 256}),
+      table: new WebAssembly.Table({initial: 0, element: 'anyfunc'})
+    },
+    imports: {
+        imported_func: function(arg) {
+            console.log(arg);
+        }
+    }
   })
 
 let module: ReturnType<typeof makeModule>
@@ -33,7 +46,9 @@ const init = makeCallListener(async (
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
+  console.log('making module')
   if (!module) module = await makeModule(publicPath)
+  console.log('made module')
   let currentOffset = 0
   const makeTransmuxer = () => new module.Transmuxer({
     length,
@@ -52,6 +67,7 @@ const init = makeCallListener(async (
     seek: async (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
     read: async (offset: number, bufferSize: number) => {
       const buffer = await read(offset, bufferSize)
+      console.log('read buffer', buffer)
       return {
         buffer,
         size: buffer.byteLength
@@ -70,11 +86,14 @@ const init = makeCallListener(async (
     })
   })
 
+  console.log('making transmuxer')
   let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
+  console.log('made transmuxer')
 
   let firstInit = true
   return {
     init: async () => {
+      console.log('worker init')
       currentOffset = 0
       module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()

@@ -3,21 +3,10 @@ import commonjs from '@rollup/plugin-commonjs'
 
 export default defineConfig((env) => ({
   build: {
+    emptyOutDir: false,
     target: 'esnext',
     outDir: 'build',
-    minify: false,
-    lib: {
-      fileName: 'index',
-      entry: 'src/index.ts',
-      formats: ['es']
-    },
-    rollupOptions: {
-      input: {
-        index: 'src/index.ts',
-        worker: 'src/worker/index.ts'
-      },
-      external: ['buffer', 'mp4box', 'osra']
-    }
+    minify: false
   },
   plugins: [
     ...(

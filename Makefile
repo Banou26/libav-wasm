@@ -21,12 +21,13 @@ dist/libav-wasm.js:
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-5.1/ \
-	-s INITIAL_MEMORY=150mb \
-	-s TOTAL_MEMORY=125mb \
-	-s STACK_SIZE=50mb \
+	-s WASM=0 \
+	-s ENVIRONMENT=web \
+	-s INITIAL_MEMORY=200mb \
+	-s TOTAL_MEMORY=175mb \
+	-s STACK_SIZE=100mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
-	-s NO_DYNAMIC_EXECUTION=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
 	src/main.cpp

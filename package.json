@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "npm i ./dist && concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
+    "build-worker": "vite build --config vite-worker.config.ts",
     "make-docker": "docker-compose run libav-wasm make",
-    "dev-web": "vite --port 4560",
+    "dev-web": "vite --port 1234",
     "vite-build": "vite build",
     "build": "npm run copy-package && npm run make-docker && npm i ./dist && vite build && npm run types && npm run copy-wasm && npm remove libav",
     "types": "tsc",
@@ -29,6 +30,7 @@
     "vite": "^4.0.4"
   },
   "dependencies": {
+    "libav": "file:dist",
     "mp4box": "^0.5.2",
     "osra": "^0.0.8",
     "p-queue": "^7.3.0"

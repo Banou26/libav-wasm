@@ -81,19 +81,12 @@ export const makeTransmuxer = async ({
   length,
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
-  // todo: remove this workaround once https://github.com/vitejs/vite/issues/8470 is fixed
-  const worker =
-    await new Promise<Worker>((resolve, reject) => {
-      const worker = new Worker(new URL(workerPath, import.meta.url))
-      const onMessage = (message: MessageEvent) => {
-        if (message.data !== 'init') return
-        resolve(worker)
-        worker.removeEventListener('message', onMessage)
-      }
-      worker.addEventListener('message', onMessage)
-      worker.addEventListener('error', reject)
-    })
-    .catch(() => new Worker(new URL(workerPath, import.meta.url), { type: 'module' }))
+  const worker = new Worker(new URL(workerPath, import.meta.url), { type: 'module' })
+
+  // const workerUrl = new URL(workerPath, import.meta.url)
+  // const blob = new Blob([`importScripts(${JSON.stringify(workerUrl)})`], { type: 'application/javascript' })
+  // const url = URL.createObjectURL(blob)
+  // const worker = new Worker(url)
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {

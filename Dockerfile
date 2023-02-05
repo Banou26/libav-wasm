@@ -1,4 +1,4 @@
-FROM emscripten/emsdk:3.1.28 as build
+FROM emscripten/emsdk:3.1.31 as build
 
 # ARG LASS_VERSION=0.16.0
 ARG X264_VERSION=20191217-2245-stable
