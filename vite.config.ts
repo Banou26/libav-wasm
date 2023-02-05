@@ -11,9 +11,6 @@ export default defineConfig((env) => ({
       formats: ['es']
     },
     rollupOptions: {
-      input: {
-        index: 'src/index.ts'
-      },
       external: ['buffer', 'mp4box', 'osra']
     }
   },

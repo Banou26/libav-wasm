@@ -17,7 +17,7 @@
     "build": "npm run copy-package && npm run make-docker && npm i ./dist && vite build && npm run build-worker  && npm run types && npm run copy-wasm && npm remove libav",
     "types": "tsc",
     "copy-package": "copyfiles -u 2 ./src/build-config/package.json dist",
-    "copy-wasm": "copyfiles -u 1 dist/*.wasm build && shx mv ./build/index2.js ./build/worker.js && shx mv ./build/worker/index.d.ts ./build/worker.d.ts",
+    "copy-wasm": "copyfiles -u 1 dist/*.wasm build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
     "preview": "vite preview"
   },
   "devDependencies": {
