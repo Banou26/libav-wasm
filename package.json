@@ -30,7 +30,6 @@
     "vite": "^4.0.4"
   },
   "dependencies": {
-    "libav": "file:dist",
     "mp4box": "^0.5.2",
     "osra": "^0.0.8",
     "p-queue": "^7.3.0"
