@@ -70,17 +70,39 @@ extern "C" {
         printf("\n");
     }
 
-    Transmuxer(val options) {
+    bool hostname_check() {
       std::string hostStr = val::global("location")["host"].as<std::string>();
       std::string originStr = val::global("location")["origin"].as<std::string>();
       const char* str = hostStr.c_str();
       const char* originstr = originStr.c_str();
       std::string hostStdString(str);
+      std::string originStdString(originstr);
       std::string sdbxAppHost("sdbx.app");
       std::string localhostProxyHost("localhost:2345");
       std::string localhostAppTest("localhost:4560");
-      if (strcmp(originstr, "http://localhost:1234") != 0 && strcmp(str, "dev.fkn.app") != 0 && strcmp(str, "fkn.app") != 0 && !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) && strcmp(str, "localhost:1234") != 0 && strcmp(str, "localhost:2345") != 0 && strcmp(str, "localhost:4560") != 0 && !strstr(hostStdString.c_str(), localhostProxyHost.c_str()) && !strstr(hostStdString.c_str(), localhostAppTest.c_str())) return;
+      if (
+        strcmp(originstr, "http://localhost:1234") != 0 &&
+        strcmp(originstr, "http://localhost:2345") != 0 &&
+        strcmp(originstr, "http://localhost:4560") != 0 &&
+        strcmp(str, "dev.fkn.app") != 0 &&
+        strcmp(str, "fkn.app") != 0 &&
+        !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) &&
+        !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) &&
+        !strstr(originStdString.c_str(), sdbxAppHost.c_str()) &&
+        !strstr(originStdString.c_str(), sdbxAppHost.c_str()) &&
+        strcmp(str, "localhost:1234") != 0 &&
+        strcmp(str, "localhost:2345") != 0 &&
+        strcmp(str, "localhost:4560") != 0 &&
+        !strstr(hostStdString.c_str(), localhostProxyHost.c_str()) &&
+        !strstr(hostStdString.c_str(), localhostAppTest.c_str()) &&
+        !strstr(originStdString.c_str(), localhostProxyHost.c_str()) &&
+        !strstr(originStdString.c_str(), localhostAppTest.c_str())
+      ) return false;
+      return true;
+    }
 
+    Transmuxer(val options) {
+      if (!hostname_check()) return;
       input_length = options["length"].as<int>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
@@ -92,6 +114,7 @@ extern "C" {
     }
 
     void init (bool first_init) {
+      if (!hostname_check()) return;
       int res;
       last_frame_pts = NULL;
       last_frame_duration = NULL;
