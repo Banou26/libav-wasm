@@ -14,7 +14,8 @@ export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
   publicPath: string
   /** Path that will be used to locate the javascript worker file */
-  workerPath: string
+  workerUrl: string
+  workerOptions?: WorkerOptions
   read: (offset: number, size: number) => Promise<ArrayBuffer>
   seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
@@ -72,7 +73,8 @@ const convertTimestamp = (ms: number) =>
 
 export const makeTransmuxer = async ({
   publicPath,
-  workerPath,
+  workerUrl,
+  workerOptions, 
   read: _read,
   seek: _seek,
   write: _write,
@@ -81,10 +83,7 @@ export const makeTransmuxer = async ({
   length,
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
-  const workerUrl = new URL(workerPath, import.meta.url)
-  const blob = new Blob([`importScripts(${JSON.stringify(workerUrl)})`], { type: 'application/javascript' })
-  const url = URL.createObjectURL(blob)
-  const worker = new Worker(url)
+  const worker = new Worker(workerUrl, workerOptions)
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {
