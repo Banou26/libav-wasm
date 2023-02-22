@@ -16,7 +16,8 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 5_000_000
-const VIDEO_URL = '../video2.mkv'
+// const VIDEO_URL = '../video2.mkv'
+const VIDEO_URL = '../vid.mkv'
 
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
@@ -49,10 +50,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let chunks: Chunk[] = []
     let initDone = false
 
+    const workerUrl2 = new URL('../build/worker.js', import.meta.url).toString()
+    const blob = new Blob([`importScripts(${JSON.stringify(workerUrl2)})`], { type: 'application/javascript' })
+    const workerUrl = URL.createObjectURL(blob)
 
     const transmuxer = await makeTransmuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
-      workerPath: new URL('../build/worker.js', import.meta.url).toString(),
+      workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       read: async (offset, size) =>
