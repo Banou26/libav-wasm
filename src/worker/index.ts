@@ -88,6 +88,7 @@ const init = makeCallListener(async (
       currentOffset = 0
     },
     seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
+    // todo: For some reason transmuxer was undefined on firefox after a pretty normal seek(not fast seeking or anything), refactor this to prevent issues like this
     process: (size: number) => transmuxer.process(size),
     getInfo: () => transmuxer.getInfo()
   }
