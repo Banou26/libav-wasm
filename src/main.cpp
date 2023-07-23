@@ -1,5 +1,6 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
+#include "obfuscate.h"
 
 using namespace emscripten;
 
@@ -77,27 +78,28 @@ extern "C" {
       const char* originstr = originStr.c_str();
       std::string hostStdString(str);
       std::string originStdString(originstr);
-      std::string sdbxAppHost("sdbx.app");
-      std::string localhostProxyHost("localhost:2345");
-      std::string localhostAppTest("localhost:4560");
+      std::string sdbxAppHost(AY_OBFUSCATE("sdbx.app"));
+      std::string localhostProxyHost(AY_OBFUSCATE("localhost:2345"));
+      std::string localhostAppTest(AY_OBFUSCATE("localhost:4560"));
       if (
-        strcmp(originstr, "http://localhost:1234") != 0 &&
-        strcmp(originstr, "http://localhost:2345") != 0 &&
-        strcmp(originstr, "http://localhost:4560") != 0 &&
-        strcmp(str, "dev.fkn.app") != 0 &&
-        strcmp(str, "fkn.app") != 0 &&
+        strcmp(originstr, AY_OBFUSCATE("http://localhost:1234")) != 0 &&
+        strcmp(originstr, AY_OBFUSCATE("http://localhost:2345")) != 0 &&
+        strcmp(originstr, AY_OBFUSCATE("http://localhost:4560")) != 0 &&
+        strcmp(str, AY_OBFUSCATE("dev.fkn.app")) != 0 &&
+        strcmp(str, AY_OBFUSCATE("fkn.app")) != 0 &&
         !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) &&
         !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) &&
         !strstr(originStdString.c_str(), sdbxAppHost.c_str()) &&
         !strstr(originStdString.c_str(), sdbxAppHost.c_str()) &&
-        strcmp(str, "localhost:1234") != 0 &&
-        strcmp(str, "localhost:2345") != 0 &&
-        strcmp(str, "localhost:4560") != 0 &&
+        strcmp(str, AY_OBFUSCATE("localhost:1234")) != 0 &&
+        strcmp(str, AY_OBFUSCATE("localhost:2345")) != 0 &&
+        strcmp(str, AY_OBFUSCATE("localhost:4560")) != 0 &&
         !strstr(hostStdString.c_str(), localhostProxyHost.c_str()) &&
         !strstr(hostStdString.c_str(), localhostAppTest.c_str()) &&
         !strstr(originStdString.c_str(), localhostProxyHost.c_str()) &&
         !strstr(originStdString.c_str(), localhostAppTest.c_str())
       ) return false;
+      
       return true;
     }
 
