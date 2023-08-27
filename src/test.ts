@@ -118,6 +118,22 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             buffered: false
           }
         ]
+        // fix the duration of chunks by inferring it from the next chunk
+        chunks =
+          chunks
+            .map((chunk, index) => {
+              if (index === chunks.length - 1) return chunk
+              return {
+                ...chunk,
+                duration:
+                  Math.max(
+                    chunk.duration <= 0
+                      ? chunks[index + 1].pts - chunk.pts <= 0 ? chunks[index + 1].duration : chunks[index + 1].pts - chunk.pts
+                      : chunk.duration,
+                    0.1
+                  )
+              }
+            })
       }
     })
 
@@ -385,17 +401,25 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(() => {
       video.play()
-      setTimeout(() => {
-        video.pause()
-        setTimeout(() => {
-          video.currentTime = 600
-          // video.currentTime = 300
-          setTimeout(() => {
-            video.currentTime = 10
-            // video.currentTime = 300
-            // video.play()
-          }, 5_000)
-        }, 2_500)
-      }, 2_500)
-    }, 2_500)
+      video.playbackRate = 5
+      // setTimeout(() => {
+      //   video.currentTime = 10
+      //   setTimeout(() => {
+      //     video.currentTime = 15
+      //   }, 1_000)
+      // }, 1_000)
+
+      // setTimeout(() => {
+      //   video.pause()
+      //   setTimeout(() => {
+      //     video.currentTime = 600
+      //     // video.currentTime = 300
+      //     setTimeout(() => {
+      //       video.currentTime = 10
+      //       // video.currentTime = 300
+      //       // video.play()
+      //     }, 5_000)
+      //   }, 2_500)
+      // }, 2_500)
+    }, 1_000)
   })
