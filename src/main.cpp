@@ -56,6 +56,9 @@ extern "C" {
     int input_length;
     int buffer_size;
     int video_stream_index;
+    double duration;
+    double total_duration;
+    bool is_flushing;
     val read = val::undefined();
     val attachment = val::undefined();
     val subtitle = val::undefined();
@@ -178,6 +181,7 @@ extern "C" {
       avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
       // Set the avio context to the output format context
       output_format_context->pb = output_avio_context;
+      // output_format_context->flags |= AVFMT_FLAG_CUSTOM_IO;
 
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
@@ -324,6 +328,7 @@ extern "C" {
       AVFrame* pFrame;
       AVStream *in_stream, *out_stream;
       int64_t start_position = input_format_context->pb->pos;
+      duration = 0;
 
       // loop through the packet frames until we reach the processed size
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
@@ -357,6 +362,15 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
+        // printf("packet->duration: %f \n", packet->duration * av_q2d(out_stream->time_base));
+
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          double packet_duration = packet->duration * av_q2d(out_stream->time_base);
+          duration += packet_duration;
+          // printf("video packet->duration: %f \n", packet->duration * av_q2d(out_stream->time_base));
+        }
+
+        // printf("duration: %f \n", duration);
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
           time_base_num = out_stream->time_base.num;
@@ -364,9 +378,17 @@ extern "C" {
           keyframe_duration = packet->duration;
           keyframe_pts = packet->pts;
           keyframe_pos = packet->pos;
+          printf("GOP duration: %f %f \n", total_duration, duration);
+          total_duration = total_duration + duration;
         } else if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
           last_frame_pts = packet->pts;
           last_frame_duration = packet->duration;
+        }
+
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe && frame_write_index == 0) {
+          is_flushing = true;
+          avio_flush(output_format_context->pb);
+          printf("FLUSH \n");
         }
 
         // set frame write index to 0 to signal that this is the first write for this group of frames
@@ -521,9 +543,15 @@ extern "C" {
       remuxObject.last_keyframe_duration,
       remuxObject.last_keyframe_pts,
       remuxObject.last_keyframe_pos,
-      remuxObject.frame_write_index
+      remuxObject.frame_write_index,
+      remuxObject.duration
     ).await();
     // Set previous pts/pos/duration needed to calculate the real timestamps
+    printf("writeFunction, is flushing: %d, %d \n", remuxObject.is_flushing, buf_size);
+    remuxObject.is_flushing = false;
+
+
+
     remuxObject.last_keyframe_duration = remuxObject.keyframe_duration;
     remuxObject.last_keyframe_pts = remuxObject.keyframe_pts;
     remuxObject.last_keyframe_pos = remuxObject.keyframe_pos;

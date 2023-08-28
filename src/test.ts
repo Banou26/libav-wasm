@@ -16,8 +16,7 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 5_000_000
-// const VIDEO_URL = '../video2.mkv'
-const VIDEO_URL = '../vid.mkv'
+const VIDEO_URL = '../video3.mkv'
 
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
@@ -125,13 +124,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               if (index === chunks.length - 1) return chunk
               return {
                 ...chunk,
-                duration:
-                  Math.max(
-                    chunk.duration <= 0
-                      ? chunks[index + 1].pts - chunk.pts <= 0 ? chunks[index + 1].duration : chunks[index + 1].pts - chunk.pts
-                      : chunk.duration,
-                    0.1
-                  )
+                // duration:
+                //   Math.max(
+                //     chunk.duration <= 0
+                //       ? chunks[index + 1].pts - chunk.pts <= 0 ? chunks[index + 1].duration : chunks[index + 1].pts - chunk.pts
+                //       : chunk.duration,
+                //     0.1
+                //   )
               }
             })
       }
@@ -260,8 +259,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       chunks = chunks.filter(_chunk => _chunk !== chunk)
     }
 
-    const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 5
-    const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
+    const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
+    const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 25
     const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
     const processNeededBufferRange = queuedDebounceWithLastCall(0, async (maxPts?: number) => {
@@ -361,6 +360,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         chunks
           .filter((chunk) => !neededChunks.includes(chunk))
 
+      console.log('updateBufferedRanges', neededChunks, chunks, getTimeRanges())
+
       for (const shouldBeUnbufferedChunk of shouldBeUnbufferedChunks) {
         await unbufferChunk(shouldBeUnbufferedChunk)
       }
@@ -398,10 +399,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     video.addEventListener('timeupdate', () => {
       timeUpdateWork(video.currentTime)
     })
+    
+    // setInterval(() => {
+    //   console.log('chunks', chunks)
+    // }, 1_000)
 
     setTimeout(() => {
       video.play()
-      video.playbackRate = 5
+      video.playbackRate = 2
       // setTimeout(() => {
       //   video.currentTime = 10
       //   setTimeout(() => {
