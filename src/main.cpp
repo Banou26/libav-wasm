@@ -39,26 +39,22 @@ extern "C" {
     AVFormatContext* input_format_context;
     uint8_t* input_avio_buffer;
     uint8_t* output_avio_buffer;
-    long last_frame_pts;
-    long last_frame_duration;
-    int time_base_num;
-    int time_base_den;
-    int frame_write_index;
-    long last_keyframe_duration;
-    long last_keyframe_pts;
-    long last_keyframe_pos;
-    long keyframe_duration;
-    long keyframe_pts;
-    long keyframe_pos;
     int stream_index;
     int *streams_list;
     int number_of_streams;
     int input_length;
     int buffer_size;
     int video_stream_index;
-    double duration;
-    double total_duration;
+
+    bool is_header;
     bool is_flushing;
+    long prev_pos;
+    double prev_pts;
+    double prev_duration;
+    long pos;
+    double pts;
+    double duration;
+
     val read = val::undefined();
     val attachment = val::undefined();
     val subtitle = val::undefined();
@@ -121,17 +117,7 @@ extern "C" {
     void init (bool first_init) {
       if (!hostname_check()) return;
       int res;
-      last_frame_pts = NULL;
-      last_frame_duration = NULL;
-      time_base_num = NULL;
-      time_base_den = NULL;
-      frame_write_index = NULL;
-      last_keyframe_duration = NULL;
-      last_keyframe_pts = NULL;
-      last_keyframe_pos = NULL;
-      keyframe_duration = NULL;
-      keyframe_pts = NULL;
-      keyframe_pos = NULL;
+      is_header = true;
 
       input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
@@ -312,14 +298,20 @@ extern "C" {
       // Fragment the MP4 output
       av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
 
-      // Set frame write index to signal that this is the mp4 headers being written out
-      frame_write_index = -2;
-
       // Writes the header of the output
       if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
         printf("ERROR: could not write output header | %s \n", av_err2str(res));
         return;
       }
+      write(
+        static_cast<long>(input_format_context->pb->pos),
+        NULL,
+        is_header,
+        true,
+        0,
+        0,
+        0
+      );
     }
 
     void process(int size) {
@@ -364,58 +356,39 @@ extern "C" {
 
         // printf("packet->duration: %f \n", packet->duration * av_q2d(out_stream->time_base));
 
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          double packet_duration = packet->duration * av_q2d(out_stream->time_base);
-          duration += packet_duration;
-          // printf("video packet->duration: %f \n", packet->duration * av_q2d(out_stream->time_base));
-        }
-
         // printf("duration: %f \n", duration);
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
-          time_base_num = out_stream->time_base.num;
-          time_base_den = out_stream->time_base.den;
-          keyframe_duration = packet->duration;
-          keyframe_pts = packet->pts;
-          keyframe_pos = packet->pos;
-          printf("GOP duration: %f %f \n", total_duration, duration);
-          total_duration = total_duration + duration;
-        } else if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          last_frame_pts = packet->pts;
-          last_frame_duration = packet->duration;
-        }
+          bool was_header = is_header;
+          if (was_header) {
+            is_header = false;
+          } else {
+            is_flushing = true;
+          }
 
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe && frame_write_index == 0) {
-          is_flushing = true;
+          prev_duration = duration;
+          prev_pts = pts;
+          prev_pos = pos;
+
+          duration = 0;
+
+          pts = packet->pts * av_q2d(out_stream->time_base);
+          pos = packet->pos;
           avio_flush(output_format_context->pb);
-          printf("FLUSH \n");
         }
 
-        // set frame write index to 0 to signal that this is the first write for this group of frames
-        frame_write_index = 0;
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          duration += packet->duration * av_q2d(out_stream->time_base);
+        }
+
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
           break;
         }
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
-          // call JS write callback with -1 as frame_write_index to signal that the group of frame is finished
-          write(
-            static_cast<long>(input_format_context->pb->pos),
-            NULL,
-            time_base_num,
-            time_base_den,
-            last_frame_pts,
-            last_frame_duration,
-            last_keyframe_duration,
-            last_keyframe_pts,
-            last_keyframe_pos,
-            -1
-          );
-        }
+
         // free packet
         av_packet_unref(packet);
-        frame_write_index = 0;
         // If we've reached the processing size, we stop here
         if (input_format_context->pb->pos >= start_position + ((int64_t)size)) {
           break;
@@ -536,27 +509,15 @@ extern "C" {
           buf
         )
       ),
-      remuxObject.time_base_num,
-      remuxObject.time_base_den,
-      remuxObject.last_frame_pts,
-      remuxObject.last_frame_duration,
-      remuxObject.last_keyframe_duration,
-      remuxObject.last_keyframe_pts,
-      remuxObject.last_keyframe_pos,
-      remuxObject.frame_write_index,
-      remuxObject.duration
+      remuxObject.is_header,
+      remuxObject.is_flushing,
+      remuxObject.prev_pos,
+      remuxObject.prev_pts,
+      remuxObject.prev_duration
     ).await();
-    // Set previous pts/pos/duration needed to calculate the real timestamps
-    printf("writeFunction, is flushing: %d, %d \n", remuxObject.is_flushing, buf_size);
-    remuxObject.is_flushing = false;
 
-
-
-    remuxObject.last_keyframe_duration = remuxObject.keyframe_duration;
-    remuxObject.last_keyframe_pts = remuxObject.keyframe_pts;
-    remuxObject.last_keyframe_pos = remuxObject.keyframe_pos;
-    if (remuxObject.frame_write_index >= 0) {
-      remuxObject.frame_write_index = remuxObject.frame_write_index + 1;
+    if (remuxObject.is_flushing) {
+      remuxObject.is_flushing = false;
     }
 
     return buf_size;

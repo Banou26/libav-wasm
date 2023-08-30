@@ -24,10 +24,8 @@ const init = makeCallListener(async (
     bufferSize: number
     read: (offset: number, size: number) => Promise<ArrayBuffer>
     write: (params: {
-      offset: number, arrayBuffer: ArrayBuffer, timebaseNum: number,
-      timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
-      keyframeDuration: number, keyframePts: number, keyframePos: number,
-      bufferIndex: number
+      offset: number, arrayBuffer: ArrayBuffer, isHeader: boolean,
+      position: number, pts: number, duration: number
     }) => Promise<void> | void
     seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
@@ -35,6 +33,7 @@ const init = makeCallListener(async (
   }) => {
   if (!module) module = await makeModule(publicPath)
   let currentOffset = 0
+  let currentBuffer = new Uint8Array(0)
   const makeTransmuxer = () => new module.Transmuxer({
     length,
     bufferSize,
@@ -57,17 +56,29 @@ const init = makeCallListener(async (
         size: buffer.byteLength
       }
     },
-    write: (
-      offset: number, buffer: Uint8Array, timebaseNum: number,
-      timebaseDen: number, lastFramePts: number, lastFrameDuration: number,
-      keyframeDuration: number, keyframePts: number, keyframePos: number,
-      bufferIndex: number
-    ) => write({
-      offset, arrayBuffer: new Uint8Array(structuredClone(buffer)).buffer, timebaseNum,
-      timebaseDen, lastFramePts, lastFrameDuration,
-      keyframeDuration, keyframePts, keyframePos,
-      bufferIndex
-    })
+    write: async (
+      offset: number, buffer: Uint8Array,
+      isHeader: boolean, isFlushing: boolean,
+      position: number, pts: number, duration: number
+    ) => {
+      if (isFlushing && currentBuffer.byteLength > 0) {
+        await write({
+          isHeader,
+          offset,
+          arrayBuffer: currentBuffer.buffer,
+          position,
+          pts,
+          duration
+        })
+        currentBuffer = new Uint8Array(0)
+        if (isHeader) return
+      }
+
+      const newBuffer = new Uint8Array(currentBuffer.byteLength + buffer.byteLength)
+      newBuffer.set(currentBuffer)
+      newBuffer.set(structuredClone(buffer), currentBuffer.byteLength)
+      currentBuffer = newBuffer
+    }
   })
 
   let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
@@ -76,6 +87,7 @@ const init = makeCallListener(async (
   return {
     init: async () => {
       currentOffset = 0
+      currentBuffer = new Uint8Array(0)
       module = await makeModule(publicPath)
       transmuxer = makeTransmuxer()
       await transmuxer.init(firstInit)
@@ -86,6 +98,7 @@ const init = makeCallListener(async (
       transmuxer = undefined
       module = undefined
       currentOffset = 0
+      currentBuffer = new Uint8Array(0)
     },
     seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
     // todo: For some reason transmuxer was undefined on firefox after a pretty normal seek(not fast seeking or anything), refactor this to prevent issues like this

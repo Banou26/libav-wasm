@@ -92,7 +92,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        // console.log('write', isHeader, offset, pts, duration, pos)
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -124,13 +123,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               if (index === chunks.length - 1) return chunk
               return {
                 ...chunk,
-                // duration:
-                //   Math.max(
-                //     chunk.duration <= 0
-                //       ? chunks[index + 1].pts - chunk.pts <= 0 ? chunks[index + 1].duration : chunks[index + 1].pts - chunk.pts
-                //       : chunk.duration,
-                //     0.1
-                //   )
+                duration:
+                  Math.max(
+                    chunk.duration <= 0
+                      ? chunks[index + 1].pts - chunk.pts
+                      : chunk.duration,
+                    0.1
+                  )
               }
             })
       }
@@ -406,7 +405,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(() => {
       video.play()
-      video.playbackRate = 2
+      video.playbackRate = 4
       // setTimeout(() => {
       //   video.currentTime = 10
       //   setTimeout(() => {
