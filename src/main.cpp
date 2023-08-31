@@ -118,6 +118,7 @@ extern "C" {
       if (!hostname_check()) return;
       int res;
       is_header = true;
+      duration = 0;
 
       input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
@@ -320,7 +321,6 @@ extern "C" {
       AVFrame* pFrame;
       AVStream *in_stream, *out_stream;
       int64_t start_position = input_format_context->pb->pos;
-      duration = 0;
 
       // loop through the packet frames until we reach the processed size
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
