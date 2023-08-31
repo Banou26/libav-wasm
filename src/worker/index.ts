@@ -51,6 +51,7 @@ const init = makeCallListener(async (
     seek: async (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
     read: async (offset: number, bufferSize: number) => {
       const buffer = await read(offset, bufferSize)
+      currentOffset = offset + buffer.byteLength
       return {
         buffer,
         size: buffer.byteLength
