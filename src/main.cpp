@@ -354,9 +354,11 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-        // printf("packet->duration: %f \n", packet->duration * av_q2d(out_stream->time_base));
+        // In some files, the dts is set to INT64_MIN, which throws warnings and potentially throws on av_interleaved_write_frame
+        if (packet->dts == (int64_t)9223372036854775808ULL) {
+          packet->dts = 0;
+        }
 
-        // printf("duration: %f \n", duration);
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
           bool was_header = is_header;
