@@ -315,12 +315,12 @@ extern "C" {
       );
     }
 
-    void process(int size) {
+    void process(double time_to_process) {
       int res;
       AVPacket* packet = av_packet_alloc();
       AVFrame* pFrame;
       AVStream *in_stream, *out_stream;
-      int64_t start_position = input_format_context->pb->pos;
+      double start_process_pts = 0;
 
       // loop through the packet frames until we reach the processed size
       while ((res = av_read_frame(input_format_context, packet)) >= 0) {
@@ -380,6 +380,10 @@ extern "C" {
         }
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          if (!start_process_pts) {
+            start_process_pts = packet->pts * av_q2d(out_stream->time_base);
+          }
+          // start_process_pts = av_rescale_q(packet->pts, in_stream->time_base, AV_TIME_BASE_Q);
           duration += packet->duration * av_q2d(out_stream->time_base);
         }
 
@@ -392,7 +396,12 @@ extern "C" {
         // free packet
         av_packet_unref(packet);
         // If we've reached the processing size, we stop here
-        if (input_format_context->pb->pos >= start_position + ((int64_t)size)) {
+        if (
+          in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+          is_keyframe &&
+          pts >= start_process_pts + time_to_process
+        ) {
+          start_process_pts = 0;
           break;
         }
       }
@@ -429,6 +438,12 @@ extern "C" {
       // if (flags & AVSEEK_FLAG_BACKWARD) {
       //   init_contexts(false);
       // }
+      prev_duration = 0;
+      prev_pts = 0;
+      prev_pos = 0;
+      duration = 0;
+      pts = 0;
+      pos = 0;
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
       }

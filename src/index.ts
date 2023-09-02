@@ -208,9 +208,9 @@ export const makeTransmuxer = async ({
       }
       return addTask(() => workerDestroy())
     },
-    process: (size: number) => addTask(async () => {
+    process: (timeToProcess: number) => addTask(async () => {
       processBufferChunks = []
-      await workerProcess(size)
+      await workerProcess(timeToProcess)
       const writtenChunks = processBufferChunks
       processBufferChunks = []
       return writtenChunks

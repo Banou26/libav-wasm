@@ -355,7 +355,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         await transmuxer.destroy()
         await transmuxer.init()
         await process()
-        await process()
       }
 
       await new Promise(resolve => setTimeout(resolve, 0))
@@ -389,7 +388,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const process = () =>
       processingQueue.add(() =>
-        transmuxer.process(BUFFER_SIZE)
+        transmuxer.process(POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       )
 
     const updateBufferedRanges = async () => {
