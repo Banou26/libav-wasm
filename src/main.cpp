@@ -386,7 +386,7 @@ extern "C" {
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
-          break;
+          continue;
         }
 
         // free packet
