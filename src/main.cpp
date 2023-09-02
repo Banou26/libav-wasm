@@ -355,9 +355,9 @@ extern "C" {
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         // In some files, the dts is set to INT64_MIN, which throws warnings and potentially throws on av_interleaved_write_frame
-        if (packet->dts == (int64_t)9223372036854775808ULL) {
-          packet->dts = 0;
-        }
+        // if (packet->dts == (int64_t)9223372036854775808ULL) {
+        //   packet->dts = 0;
+        // }
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
