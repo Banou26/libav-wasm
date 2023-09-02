@@ -59,6 +59,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       read: async (offset, size) =>
+        console.log('read', offset, size) ||
         fetch(
           VIDEO_URL,
           {
@@ -92,6 +93,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
+        console.log('write', { isHeader, offset, buffer, pts, duration, pos })
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
@@ -116,22 +118,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             buffered: false
           }
         ]
-        // fix the duration of chunks by inferring it from the next chunk
-        chunks =
-          chunks
-            .map((chunk, index) => {
-              if (index === chunks.length - 1) return chunk
-              return {
-                ...chunk,
-                duration:
-                  Math.max(
-                    chunk.duration <= 0
-                      ? chunks[index + 1].pts - chunk.pts
-                      : chunk.duration,
-                    0.1
-                  )
-              }
-            })
       }
     })
 
@@ -150,6 +136,42 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await infoPromise
 
     const video = document.createElement('video')
+
+    const allVideoEvents = [
+      'abort',
+      'canplay',
+      'canplaythrough',
+      'durationchange',
+      'emptied',
+      'encrypted',
+      'ended',
+      'error',
+      'interruptbegin',
+      'interruptend',
+      'loadeddata',
+      'loadedmetadata',
+      'loadstart',
+      'mozaudioavailable',
+      'pause',
+      'play',
+      'playing',
+      'progress',
+      'ratechange',
+      'seeked',
+      'seeking',
+      'stalled',
+      'suspend',
+      'timeupdate',
+      'volumechange',
+      'waiting'
+    ]
+
+    for (const event of allVideoEvents) {
+      video.addEventListener(event, ev => {
+        console.log('video event', event, ev)
+      })
+    }
+
     const seconds = document.createElement('div')
     video.controls = true
     video.volume = 0
@@ -214,9 +236,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       )
 
     const bufferChunk = async (chunk: Chunk) => {
+      console.log('buffering chunk', chunk)
       await appendBuffer(chunk.buffer.buffer)
       chunk.buffered = true
     }
+
+    console.log('sourceBuffer', sourceBuffer)
 
     const getTimeRanges = () =>
       Array(sourceBuffer.buffered.length)
@@ -278,9 +303,25 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    let skipSeek = false
     // todo: add error checker & retry to seek a bit earlier
-    const seek = queuedDebounceWithLastCall(500, async (time: number) => {
+    const seek = queuedDebounceWithLastCall(500, async (time: number, shouldResume = false) => {
+      // await new Promise((resolve, reject) => {
+      //   const unregisterListeners = () => {
+      //     video.removeEventListener('seeked', seekedListener)
+      //     video.removeEventListener('error', errorListener)
+      //   }
+      //   const seekedListener = () => {
+      //     unregisterListeners()
+      //     resolve(undefined)
+      //   }
+      //   const errorListener = (ev: Event) => {
+      //     unregisterListeners()
+      //     reject(ev)
+      //   }
+      //   video.addEventListener('seeked', seekedListener, { once: true })
+      //   video.addEventListener('error', errorListener, { once: true })
+      // })
+      console.log('SEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEK', time)
       const ranges = getTimeRanges()
       if (ranges.some(({ start, end }) => time >= start && time <= end)) {
         return
@@ -288,8 +329,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       for (const range of ranges) {
         await unbufferRange(range.start, range.end)
       }
-      const isPlaying = !video.paused
-      if (isPlaying) video.pause()
       const allTasksDone = new Promise(resolve => {
         processingQueue.size && processingQueue.pending
           ? (
@@ -323,8 +362,27 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
       await processNeededBufferRange(time + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       await updateBufferedRanges()
+      
+      mediaSource.duration = duration
 
-      if (isPlaying) await video.play()
+      await new Promise((resolve, reject) => {
+        video.addEventListener('canplaythrough', async (event) => {
+          if (shouldResume) await video.play()
+          resolve(undefined)
+        }, { once: true })
+        setTimeout(() => {
+          reject('timeout')
+        }, 1_000)
+      })
+
+      // if (isPlaying) await video.play()
+      // setTimeout(async () => {
+      //   console.log('SEEK FIX CHECK', time, video.currentTime)
+      //   if (!video.paused) return
+      //   video.currentTime = time + 0.01
+      //   console.log('APPLY SEEK FIX')
+      //   if (isPlaying) await video.play()
+      // }, 100)
     })
 
     const processingQueue = new PQueue({ concurrency: 1 })
@@ -359,12 +417,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         chunks
           .filter((chunk) => !neededChunks.includes(chunk))
 
-      console.log('updateBufferedRanges', neededChunks, chunks, getTimeRanges())
+      // console.log('updateBufferedRanges', chunks, neededChunks, getTimeRanges(), nonNeededChunks, shouldBeUnbufferedChunks)
 
       for (const shouldBeUnbufferedChunk of shouldBeUnbufferedChunks) {
         await unbufferChunk(shouldBeUnbufferedChunk)
       }
       for (const nonNeededChunk of nonNeededChunks) {
+        // if (nonNeededChunk.buffered) await unbufferChunk(nonNeededChunk)
         await removeChunk(nonNeededChunk)
       }
       for (const chunk of shouldBeBufferedChunks) {
@@ -376,8 +435,28 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           break
         }
       }
+      const firstChunk = neededChunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(0)
+      const lastChunk = neededChunks.sort(({ pts, duration }, { pts: pts2, duration: duration2 }) => (pts + duration) - (pts2 + duration2)).at(-1)
+      const lowestAllowedStart =
+        firstChunk
+          ? Math.max(firstChunk?.pts - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS, 0)
+          : undefined
+      const highestAllowedEnd =
+        lastChunk
+          ? Math.min(lastChunk.pts + lastChunk.duration + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS, duration)
+          : undefined
+      const ranges = getTimeRanges()
+      console.log('ranges', ranges, lowestAllowedStart, highestAllowedEnd, neededChunks, chunks)
+      for (const { start, end } of ranges) {
+        if (!lowestAllowedStart || !highestAllowedEnd) continue
+        if (lowestAllowedStart !== undefined && start < lowestAllowedStart) {
+          await unbufferRange(start, lowestAllowedStart)
+        }
+        if (highestAllowedEnd !== undefined && end > highestAllowedEnd) {
+          await unbufferRange(highestAllowedEnd, end)
+        }
+      }
     }
-
 
     // @ts-ignore
     await appendBuffer(headerChunk.buffer)
@@ -386,8 +465,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await updateBufferedRanges()
 
     video.addEventListener('seeking', () => {
-      if (skipSeek) return
-      seek(video.currentTime)
+      const isPlaying = !video.paused
+      video.pause()
+      seek(video.currentTime, isPlaying)
     })
 
     const timeUpdateWork = queuedDebounceWithLastCall(500, async (time: number) => {
@@ -399,31 +479,37 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       timeUpdateWork(video.currentTime)
     })
     
-    // setInterval(() => {
-    //   console.log('chunks', chunks)
-    // }, 1_000)
-
-    setTimeout(() => {
-      video.play()
-      video.playbackRate = 4
-      // setTimeout(() => {
-      //   video.currentTime = 10
-      //   setTimeout(() => {
-      //     video.currentTime = 15
-      //   }, 1_000)
-      // }, 1_000)
-
-      // setTimeout(() => {
-      //   video.pause()
-      //   setTimeout(() => {
-      //     video.currentTime = 600
-      //     // video.currentTime = 300
-      //     setTimeout(() => {
-      //       video.currentTime = 10
-      //       // video.currentTime = 300
-      //       // video.play()
-      //     }, 5_000)
-      //   }, 2_500)
-      // }, 2_500)
+    setInterval(() => {
+      // console.log('chunks', chunks)
+      console.log('timeRanges', getTimeRanges())
     }, 1_000)
+
+    video.addEventListener('canplaythrough', () => {
+      video.playbackRate = 1
+      video.play()
+    }, { once: true })
+
+    // setTimeout(() => {
+    //   video.play()
+    //   video.playbackRate = 1
+    //   // setTimeout(() => {
+    //   //   video.currentTime = 10
+    //   //   setTimeout(() => {
+    //   //     video.currentTime = 15
+    //   //   }, 1_000)
+    //   // }, 1_000)
+
+    //   // setTimeout(() => {
+    //   //   video.pause()
+    //   //   setTimeout(() => {
+    //   //     video.currentTime = 600
+    //   //     // video.currentTime = 300
+    //   //     setTimeout(() => {
+    //   //       video.currentTime = 10
+    //   //       // video.currentTime = 300
+    //   //       // video.play()
+    //   //     }, 5_000)
+    //   //   }, 2_500)
+    //   // }, 2_500)
+    // }, 1_000)
   })
