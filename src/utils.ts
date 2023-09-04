@@ -73,7 +73,10 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
         lastCallArguments = undefined
         funcResult
           .then(resolve)
-          .catch(reject)
+          .catch((err) => {
+            console.error(err)
+            reject(err)
+          })
 
         let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
         let _reject: (reason?: any) => void
@@ -87,7 +90,10 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
             // @ts-ignore
             .then(checkForLastCall(currentTime, _resolve, _reject))
             // @ts-ignore
-            .catch(checkForLastCall(timeStart, _resolve, _reject))
+            .catch(err => {
+              console.error(err)
+              return checkForLastCall(timeStart, _resolve, _reject)(err)
+            })
       }, time - (currentTime - timeStart))
       return result
     }
@@ -110,7 +116,10 @@ export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args:
             // @ts-ignore
           .then(checkForLastCall(timeStart, _resolve, _reject))
             // @ts-ignore
-          .catch(checkForLastCall(timeStart, _resolve, _reject))
+          .catch(err => {
+            console.error(err)
+            return checkForLastCall(timeStart, _resolve, _reject)(err)
+          })
 
       return funcResult
   } else {

@@ -381,7 +381,7 @@ extern "C" {
           pos = packet->pos;
           avio_flush(output_format_context->pb);
           auto codec = avcodec_find_decoder(in_stream->codecpar->codec_id);
-          printf("packet info: is_keyframe %d, codec_type %s packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts, packet->dts, packet->duration, packet->pos);
+          // printf("packet info: is_keyframe %d, codec_type %s packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts, packet->dts, packet->duration, packet->pos);
           // printf("packet info: is_keyframe %d, codec_type %s packet->pts: %f | packet->dts: %f | packet->duration: %f | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts * av_q2d(out_stream->time_base), packet->dts * av_q2d(out_stream->time_base), packet->duration * av_q2d(out_stream->time_base), packet->pos);
         }
 

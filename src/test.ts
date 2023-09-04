@@ -12,7 +12,6 @@ type Chunk = {
   pts: number
   duration: number
   pos: number
-  buffered: boolean
 }
 
 const BUFFER_SIZE = 5_000_000
@@ -105,8 +104,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               buffer: new Uint8Array(buffer),
               pts,
               duration,
-              pos,
-              buffered: false
+              pos
             }
           }
           return
@@ -118,8 +116,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             buffer: new Uint8Array(buffer),
             pts,
             duration,
-            pos,
-            buffered: false
+            pos
           }
         ]
       }
@@ -227,7 +224,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         unregisterListeners()
       }
       const errorListener = (ev: Event) => {
-        reject(ev),
+        console.error(ev)
+        reject(ev)
         unregisterListeners()
       }
       const unregisterListeners = () => {
@@ -248,8 +246,17 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         })
       )
 
-    const bufferChunk = (chunk: Chunk) => appendBuffer(chunk.buffer.buffer)
-    // const bufferChunk = (chunk: Chunk) => console.log('bufferChunk', chunk) || appendBuffer(chunk.buffer.buffer)
+    // const bufferChunk = (chunk: Chunk) => appendBuffer(chunk.buffer.buffer)
+    const bufferChunk = async (chunk: Chunk) => {
+      console.log('bufferChunk', getTimeRanges().map(range => `${range.start}-${range.end}`).join(' '), chunk)
+      try {
+        await appendBuffer(chunk.buffer.buffer)
+      } catch (err) {
+        console.error(err)
+        throw err
+      }
+      console.log('bufferedChunk', getTimeRanges().map(range => `${range.start}-${range.end}`).join(' '))
+    }
 
     const getTimeRanges = () =>
       Array(sourceBuffer.buffered.length)
@@ -287,9 +294,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       if (ranges.some(({ start, end }) => time >= start && time <= end)) {
         return
       }
-      for (const range of ranges) {
-        await unbufferRange(range.start, range.end)
-      }
       const allTasksDone = new Promise(resolve => {
         processingQueue.size && processingQueue.pending
           ? (
@@ -311,7 +315,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const seekTime = Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       await transmuxer.seek(seekTime)
       await process(POST_SEEK_NEEDED_BUFFERS_IN_SECONDS + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
-      await updateBufferedRanges(time)
+      // await updateBufferedRanges(time)
+      sourceBuffer.timestampOffset = seekTime
+      for (const range of ranges) {
+        await unbufferRange(range.start, range.end)
+      }
+      for (const chunk of chunks) {
+        if (chunk.pts <= seekTime) continue
+        await bufferChunk(chunk)
+      }
     })
 
     const updateBufferedRanges = async (time: number) => {
@@ -346,17 +358,17 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       for (const nonNeededChunk of nonNeededChunks) {
         await removeChunk(nonNeededChunk)
       }
-      const firstChunk = neededChunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(0)
-      const lastChunk = neededChunks.sort(({ pts, duration }, { pts: pts2, duration: duration2 }) => (pts + duration) - (pts2 + duration2)).at(-1)
+      // const firstChunk = neededChunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(0)
+      // const lastChunk = neededChunks.sort(({ pts, duration }, { pts: pts2, duration: duration2 }) => (pts + duration) - (pts2 + duration2)).at(-1)
       
-      if (firstChunk && lastChunk) {
-        console.log('firstChunk & lastChunk', firstChunk.pts, lastChunk.pts + lastChunk.duration)
-        sourceBuffer.appendWindowStart = Math.max(time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS, 0)
-        sourceBuffer.appendWindowEnd = Math.min(time + PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS, duration)
-      } else {
-        sourceBuffer.appendWindowStart = 0
-        sourceBuffer.appendWindowEnd = Infinity
-      }
+      // if (firstChunk && lastChunk) {
+      //   console.log('firstChunk & lastChunk', firstChunk.pts, lastChunk.pts + lastChunk.duration)
+      //   sourceBuffer.appendWindowStart = Math.max(time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS, 0)
+      //   sourceBuffer.appendWindowEnd = Math.min(time + PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS, duration)
+      // } else {
+      //   sourceBuffer.appendWindowStart = 0
+      //   sourceBuffer.appendWindowEnd = Infinity
+      // }
       console.log('shouldBeBufferedChunks', shouldBeBufferedChunks)
       for (const chunk of shouldBeBufferedChunks) {
         // if (chunk.buffered) continue

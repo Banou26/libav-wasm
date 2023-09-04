@@ -222,6 +222,7 @@ export const makeTransmuxer = async ({
         //   processBufferChunks = []
         //   await workerInit()
         // }
+        processBufferChunks = []
         await workerSeek(
           Math.max(0, time) * 1000,
           SEEK_FLAG.NONE
