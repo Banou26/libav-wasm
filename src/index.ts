@@ -217,11 +217,11 @@ export const makeTransmuxer = async ({
     }),
     seek: (time: number) => {
       return addTask(async () => {
-        if (lastChunk && (lastChunk.pts > time)) {
-          await workerDestroy()
-          processBufferChunks = []
-          await workerInit()
-        }
+        // if (lastChunk && (lastChunk.pts > time)) {
+        //   await workerDestroy()
+        //   processBufferChunks = []
+        //   await workerInit()
+        // }
         await workerSeek(
           Math.max(0, time) * 1000,
           SEEK_FLAG.NONE

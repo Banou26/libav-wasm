@@ -54,6 +54,7 @@ extern "C" {
     long pos;
     double pts;
     double duration;
+    bool first_frame = true;
 
     val read = val::undefined();
     val attachment = val::undefined();
@@ -119,6 +120,7 @@ extern "C" {
       int res;
       is_header = true;
       duration = 0;
+      first_frame = true;
 
       input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
@@ -355,9 +357,10 @@ extern "C" {
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         // In some files, the dts is set to INT64_MIN, which throws warnings and potentially throws on av_interleaved_write_frame
-        // if (packet->dts == (int64_t)9223372036854775808ULL) {
-        //   packet->dts = 0;
-        // }
+        if (packet->dts == AV_NOPTS_VALUE) {
+          // packet->dts = packet->pts;
+          // printf("NO DTS, packet info: is_keyframe %d, packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, packet->pts, packet->dts, packet->duration, packet->pos);
+        }
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
@@ -377,6 +380,9 @@ extern "C" {
           pts = packet->pts * av_q2d(out_stream->time_base);
           pos = packet->pos;
           avio_flush(output_format_context->pb);
+          auto codec = avcodec_find_decoder(in_stream->codecpar->codec_id);
+          printf("packet info: is_keyframe %d, codec_type %s packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts, packet->dts, packet->duration, packet->pos);
+          // printf("packet info: is_keyframe %d, codec_type %s packet->pts: %f | packet->dts: %f | packet->duration: %f | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts * av_q2d(out_stream->time_base), packet->dts * av_q2d(out_stream->time_base), packet->duration * av_q2d(out_stream->time_base), packet->pos);
         }
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -433,6 +439,10 @@ extern "C" {
     }
 
     int _seek(int timestamp, int flags) {
+      destroy();
+      init(true);
+
+
       int res;
       // move the JS destroy + init call inside this function to make things cleaner
       // if (flags & AVSEEK_FLAG_BACKWARD) {
@@ -486,6 +496,7 @@ extern "C" {
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
     long result = seek(static_cast<long>(offset), whence).await().as<long>();
+    printf("SEEK FUNCTION %ld \n", result);
     return result;
   }
 
@@ -504,6 +515,7 @@ extern "C" {
     val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
+    printf("READ FUNCTION %d \n", buffer_size);
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
     // If result buffer size is 0, we reached the end of the file
@@ -537,6 +549,7 @@ extern "C" {
       remuxObject.is_flushing = false;
     }
 
+    printf("WRITE FUNCTION %d \n", buf_size);
     return buf_size;
   }
 
