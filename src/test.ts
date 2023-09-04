@@ -324,6 +324,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.pts <= seekTime) continue
         await bufferChunk(chunk)
       }
+      video.currentTime = time
     })
 
     const updateBufferedRanges = async (time: number) => {
