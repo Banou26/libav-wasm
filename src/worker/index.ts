@@ -63,7 +63,7 @@ const init = makeCallListener(async (
       position: number, pts: number, duration: number
     ) => {
       if (isFlushing && currentBuffer.byteLength > 0) {
-        await write({
+        write({
           isHeader,
           offset,
           arrayBuffer: currentBuffer.buffer,

@@ -15,9 +15,9 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 5_000_000
-const VIDEO_URL = '../video.mkv'
-const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
-const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 25
+const VIDEO_URL = '../video3.mkv'
+const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
+const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 20
 const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
 
@@ -359,8 +359,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       for (const nonNeededChunk of nonNeededChunks) {
         await removeChunk(nonNeededChunk)
       }
-      // const firstChunk = neededChunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(0)
-      // const lastChunk = neededChunks.sort(({ pts, duration }, { pts: pts2, duration: duration2 }) => (pts + duration) - (pts2 + duration2)).at(-1)
+      const firstChunk = neededChunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(0)
+      const lastChunk = neededChunks.sort(({ pts, duration }, { pts: pts2, duration: duration2 }) => (pts + duration) - (pts2 + duration2)).at(-1)
       
       // if (firstChunk && lastChunk) {
       //   console.log('firstChunk & lastChunk', firstChunk.pts, lastChunk.pts + lastChunk.duration)
@@ -376,7 +376,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         try {
           // console.log('RANGES', getTimeRanges().map(({ start, end }) => `${start} - ${end}`))
           await bufferChunk(chunk)
-          // console.log('RANGES 2', getTimeRanges().map(({ start, end }) => `${start} - ${end}`))
+          console.log('RANGES 2', getTimeRanges().map(({ start, end }) => `${start} - ${end}`))
         } catch (err) {
           console.error(err)
           if (!(err instanceof Event)) throw err
@@ -384,26 +384,26 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         }
       }
 
-      // const lowestAllowedStart =
-      //   firstChunk
-      //     ? Math.max(firstChunk?.pts - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS, 0)
-      //     : undefined
-      // const highestAllowedEnd =
-      //   lastChunk
-      //     ? Math.min(lastChunk.pts + lastChunk.duration + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS, duration)
-      //     : undefined
-      // const ranges = getTimeRanges()
-      // console.log('ranges', ranges, lowestAllowedStart, highestAllowedEnd, neededChunks, chunks)
-      // for (const { start, end } of ranges) {
-      //   if (!lowestAllowedStart || !highestAllowedEnd) continue
-      //   // console.log('range', start, end)
-      //   if (lowestAllowedStart !== undefined && start < lowestAllowedStart) {
-      //     await unbufferRange(start, lowestAllowedStart)
-      //   }
-      //   if (highestAllowedEnd !== undefined && end > highestAllowedEnd) {
-      //     await unbufferRange(highestAllowedEnd, end)
-      //   }
-      // }
+      const lowestAllowedStart =
+        firstChunk
+          ? Math.max(firstChunk?.pts - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS, 0)
+          : undefined
+      const highestAllowedEnd =
+        lastChunk
+          ? Math.min(lastChunk.pts + lastChunk.duration + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS, duration)
+          : undefined
+      const ranges = getTimeRanges()
+      console.log('ranges', ranges, lowestAllowedStart, highestAllowedEnd, neededChunks, chunks)
+      for (const { start, end } of ranges) {
+        if (!lowestAllowedStart || !highestAllowedEnd) continue
+        // console.log('range', start, end)
+        if (lowestAllowedStart !== undefined && start < lowestAllowedStart) {
+          await unbufferRange(start, lowestAllowedStart)
+        }
+        if (highestAllowedEnd !== undefined && end > highestAllowedEnd) {
+          await unbufferRange(highestAllowedEnd, end)
+        }
+      }
     }
 
     await appendBuffer(headerChunk.buffer)

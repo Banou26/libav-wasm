@@ -440,14 +440,9 @@ extern "C" {
 
     int _seek(int timestamp, int flags) {
       destroy();
-      init(true);
-
+      init(false);
 
       int res;
-      // move the JS destroy + init call inside this function to make things cleaner
-      // if (flags & AVSEEK_FLAG_BACKWARD) {
-      //   init_contexts(false);
-      // }
       prev_duration = 0;
       prev_pts = 0;
       prev_pos = 0;
