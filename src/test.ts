@@ -324,6 +324,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.pts <= seekTime) continue
         await bufferChunk(chunk)
       }
+      mediaSource.duration = duration
       video.currentTime = time
     })
 
