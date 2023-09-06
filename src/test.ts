@@ -60,8 +60,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
-      read: async (offset, size) =>
-        // console.log('read', { offset, size }) ||
+      read: (offset, size) =>
         fetch(
           VIDEO_URL,
           {
@@ -324,7 +323,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.pts <= seekTime) continue
         await bufferChunk(chunk)
       }
-      mediaSource.duration = duration
+      // mediaSource.duration = duration
       video.currentTime = time
     })
 
