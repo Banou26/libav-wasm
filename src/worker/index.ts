@@ -44,7 +44,7 @@ const init = makeCallListener(async (
       subtitle(streamIndex, isHeader, data, ...rest)
     },
     attachment: (filename: string, mimetype: string, _buffer: Uint8Array) => {
-      const uint8 = structuredClone(_buffer) as Uint8Array
+      const uint8 = new Uint8Array(_buffer)
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
@@ -77,7 +77,7 @@ const init = makeCallListener(async (
 
       const newBuffer = new Uint8Array(currentBuffer.byteLength + buffer.byteLength)
       newBuffer.set(currentBuffer)
-      newBuffer.set(structuredClone(buffer), currentBuffer.byteLength)
+      newBuffer.set(new Uint8Array(buffer), currentBuffer.byteLength)
       currentBuffer = newBuffer
     }
   })

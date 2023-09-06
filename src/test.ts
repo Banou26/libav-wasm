@@ -174,11 +174,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       'waiting'
     ]
 
-    for (const event of allVideoEvents) {
-      video.addEventListener(event, ev => {
-        console.log('video event', event, ev)
-      })
-    }
+    // for (const event of allVideoEvents) {
+    //   video.addEventListener(event, ev => {
+    //     console.log('video event', event, ev)
+    //   })
+    // }
 
     const seconds = document.createElement('div')
     video.controls = true
@@ -248,14 +248,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     // const bufferChunk = (chunk: Chunk) => appendBuffer(chunk.buffer.buffer)
     const bufferChunk = async (chunk: Chunk) => {
-      console.log('bufferChunk', getTimeRanges().map(range => `${range.start}-${range.end}`).join(' '), chunk)
+      // console.log('bufferChunk', getTimeRanges().map(range => `${range.start}-${range.end}`).join(' '), chunk)
       try {
         await appendBuffer(chunk.buffer.buffer)
       } catch (err) {
         console.error(err)
         throw err
       }
-      console.log('bufferedChunk', getTimeRanges().map(range => `${range.start}-${range.end}`).join(' '))
+      // console.log('bufferedChunk', getTimeRanges().map(range => `${range.start}-${range.end}`).join(' '))
     }
 
     const getTimeRanges = () =>
@@ -330,7 +330,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const updateBufferedRanges = async (time: number) => {
       const ranges1 = getTimeRanges()
-      console.log('updateBufferedRanges', ranges1, chunks)
+      // console.log('updateBufferedRanges', ranges1, chunks)
       const neededChunks =
         chunks
           .filter(({ pts, duration }) =>
@@ -371,13 +371,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       //   sourceBuffer.appendWindowStart = 0
       //   sourceBuffer.appendWindowEnd = Infinity
       // }
-      console.log('shouldBeBufferedChunks', shouldBeBufferedChunks)
+      // console.log('shouldBeBufferedChunks', shouldBeBufferedChunks)
       for (const chunk of shouldBeBufferedChunks) {
         // if (chunk.buffered) continue
         try {
           // console.log('RANGES', getTimeRanges().map(({ start, end }) => `${start} - ${end}`))
           await bufferChunk(chunk)
-          console.log('RANGES 2', getTimeRanges().map(({ start, end }) => `${start} - ${end}`))
+          // console.log('RANGES 2', getTimeRanges().map(({ start, end }) => `${start} - ${end}`))
         } catch (err) {
           console.error(err)
           if (!(err instanceof Event)) throw err
@@ -394,7 +394,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           ? Math.min(lastChunk.pts + lastChunk.duration + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS, duration)
           : undefined
       const ranges = getTimeRanges()
-      console.log('ranges', ranges, lowestAllowedStart, highestAllowedEnd, neededChunks, chunks)
+      // console.log('ranges', ranges, lowestAllowedStart, highestAllowedEnd, neededChunks, chunks)
       for (const { start, end } of ranges) {
         if (!lowestAllowedStart || !highestAllowedEnd) continue
         // console.log('range', start, end)
@@ -413,11 +413,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     // console.log('ranges', getTimeRanges())
-    console.groupCollapsed('process 30')
+    // console.groupCollapsed('process 30')
     await process(30)
-    console.groupEnd()
+    // console.groupEnd()
     await updateBufferedRanges(0)
-    console.log('ranges', getTimeRanges())
+    // console.log('ranges', getTimeRanges())
 
     // console.groupCollapsed('process 10')
     // await process(10)
@@ -431,9 +431,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     // console.groupEnd()
     // await updateBufferedRanges(0)
 
-    setInterval(() => {
-      console.log('ranges', getTimeRanges())
-    }, 5_000)
+    // setInterval(() => {
+    //   console.log('ranges', getTimeRanges())
+    // }, 5_000)
 
     const timeUpdateWork = queuedDebounceWithLastCall(500, async (time: number) => {
       const lastChunk = chunks.sort(({ pts }, { pts: pts2 }) => pts - pts2).at(-1)
@@ -453,7 +453,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     }, { once: true })
 
     video.addEventListener('seeking', () => {
-      console.log('SEEKING', video.currentTime)
+      // console.log('SEEKING', video.currentTime)
       seek(video.currentTime)
     })
   })

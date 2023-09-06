@@ -379,17 +379,12 @@ extern "C" {
 
           pts = packet->pts * av_q2d(out_stream->time_base);
           pos = packet->pos;
-          avio_flush(output_format_context->pb);
-          auto codec = avcodec_find_decoder(in_stream->codecpar->codec_id);
-          // printf("packet info: is_keyframe %d, codec_type %s packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts, packet->dts, packet->duration, packet->pos);
-          // printf("packet info: is_keyframe %d, codec_type %s packet->pts: %f | packet->dts: %f | packet->duration: %f | packet->pos: %lld \n", is_keyframe, codec->name, packet->pts * av_q2d(out_stream->time_base), packet->dts * av_q2d(out_stream->time_base), packet->duration * av_q2d(out_stream->time_base), packet->pos);
         }
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
           if (!start_process_pts) {
             start_process_pts = packet->pts * av_q2d(out_stream->time_base);
           }
-          // start_process_pts = av_rescale_q(packet->pts, in_stream->time_base, AV_TIME_BASE_Q);
           duration += packet->duration * av_q2d(out_stream->time_base);
         }
 
@@ -491,7 +486,6 @@ extern "C" {
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
     long result = seek(static_cast<long>(offset), whence).await().as<long>();
-    printf("SEEK FUNCTION %ld \n", result);
     return result;
   }
 
@@ -510,7 +504,6 @@ extern "C" {
     val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
-    printf("READ FUNCTION %d \n", buffer_size);
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
     // If result buffer size is 0, we reached the end of the file
@@ -544,7 +537,6 @@ extern "C" {
       remuxObject.is_flushing = false;
     }
 
-    printf("WRITE FUNCTION %d \n", buf_size);
     return buf_size;
   }
 
