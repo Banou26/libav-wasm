@@ -438,7 +438,7 @@ extern "C" {
       destroy();
       init(false);
 
-      process(1);
+      process(0.01);
 
       int res;
       prev_duration = 0;
