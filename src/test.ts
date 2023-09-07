@@ -209,7 +209,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           { once: true }
         )
       )
-    // console.log('sourceBuffer', sourceBuffer)
 
     const queue = new PQueue({ concurrency: 1 })
 
@@ -314,8 +313,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const seekTime = Math.max(0, time - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS)
       await transmuxer.seek(seekTime)
       await process(POST_SEEK_NEEDED_BUFFERS_IN_SECONDS + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS)
-      // await updateBufferedRanges(time)
-      sourceBuffer.timestampOffset = seekTime
       for (const range of ranges) {
         await unbufferRange(range.start, range.end)
       }
@@ -323,7 +320,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (chunk.pts <= seekTime) continue
         await bufferChunk(chunk)
       }
-      // mediaSource.duration = duration
       video.currentTime = time
     })
 

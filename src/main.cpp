@@ -230,7 +230,6 @@ extern "C" {
 
         // call the JS subtitle callback and continue to next stream
         if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-          if (!first_init) continue;
           // Get subtitle codec context
           // AVCodec*
           auto codec = avcodec_find_decoder(in_codecpar->codec_id);
@@ -259,14 +258,16 @@ extern "C" {
           AVDictionaryEntry* title_entry = av_dict_get(in_stream->metadata, "title", NULL, AV_DICT_IGNORE_SUFFIX);
           std::string title = std::string(title_entry->value);
           std::string data = reinterpret_cast<char*>(codecCtx->subtitle_header);
-          // call the js subtitle callback
-          subtitle(
-            i,
-            true,
-            data,
-            language,
-            title
-          );
+          if (first_init) {
+            // call the js subtitle callback
+            subtitle(
+              i,
+              true,
+              data,
+              language,
+              title
+            );
+          }
           // cleanup
           av_free(codecCtx->subtitle_header);
           codecCtx->subtitle_header = NULL;
@@ -436,6 +437,8 @@ extern "C" {
     int _seek(int timestamp, int flags) {
       destroy();
       init(false);
+
+      process(1);
 
       int res;
       prev_duration = 0;
