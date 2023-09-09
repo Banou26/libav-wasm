@@ -5,6 +5,7 @@ export default defineConfig((env) => ({
   build: {
     target: 'esnext',
     outDir: 'build',
+    minify: false,
     lib: {
       fileName: 'index',
       entry: 'src/index.ts',

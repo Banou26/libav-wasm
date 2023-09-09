@@ -15,7 +15,8 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 5_000_000
-const VIDEO_URL = '../video3.mkv'
+const VIDEO_URL = '../video4.mkv'
+// const VIDEO_URL = '../spidey.mkv'
 const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
 const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 20
 const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
@@ -143,6 +144,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await infoPromise
 
     const video = document.createElement('video')
+    video.width = 1440
 
     const allVideoEvents = [
       'abort',

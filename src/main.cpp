@@ -42,7 +42,7 @@ extern "C" {
     int stream_index;
     int *streams_list;
     int number_of_streams;
-    int input_length;
+    // float input_length;
     int buffer_size;
     int video_stream_index;
 
@@ -105,7 +105,7 @@ extern "C" {
 
     Transmuxer(val options) {
       if (!hostname_check()) return;
-      input_length = options["length"].as<int>();
+      // input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
       attachment = options["attachment"];
@@ -318,25 +318,127 @@ extern "C" {
       );
     }
 
+    // void process_subtitle_packet(AVPacket* packet, AVStream* in_stream, AVStream* out_stream) {
+    //   long start = packet->pts;
+    //   long end = start + packet->duration;
+    //   std::string data = reinterpret_cast<char *>(packet->data);
+    //   // call JS subtitle callback
+    //   subtitle(
+    //     packet->stream_index,
+    //     false,
+    //     data,
+    //     start,
+    //     end
+    //   );
+    // }
+
+    // void process_audio_packet(AVPacket* packet, AVStream* in_stream, AVStream* out_stream) {
+    //   int res;
+    //   av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+    //   if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+    //     printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
+    //   }
+    //   av_packet_unref(packet);
+    // }
+
+    // void process_video_packet(AVPacket* packet, AVStream* in_stream, AVStream* out_stream) {
+    //   int res;
+    //   bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
+
+    //   // Rescale the PTS/DTS from the input time base to the output time base
+    //   av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+
+    //   // Set needed pts/pos/duration needed to calculate the real timestamps
+    //   if (is_keyframe) {
+    //     bool was_header = is_header;
+    //     if (was_header) {
+    //       is_header = false;
+    //     } else {
+    //       is_flushing = true;
+    //     }
+
+    //     prev_duration = duration;
+    //     prev_pts = pts;
+    //     prev_pos = pos;
+
+    //     duration = 0;
+
+    //     pts = packet->pts * av_q2d(out_stream->time_base);
+    //     pos = packet->pos;
+    //   }
+
+    //   // if (!start_process_pts) {
+    //   //   start_process_pts = packet->pts * av_q2d(out_stream->time_base);
+    //   // }
+    //   duration += packet->duration * av_q2d(out_stream->time_base);
+
+    //   // Write the frames to the output context
+    //   if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+    //     printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
+    //     return;
+    //   }
+    //   // free packet
+    //   av_packet_free(packet);
+    // }
+
+    // void process_packet() {
+    //   AVPacket* packet = av_packet_alloc();
+    //   int res;
+    //   if ((res = av_read_frame(input_format_context, packet)) < 0) {
+    //     printf("ERROR: could not read frame | %s \n", av_err2str(res));
+    //     return;
+    //   }
+    //   AVStream* in_stream = input_format_context->streams[packet->stream_index];
+    //   AVStream* out_stream = output_format_context->streams[packet->stream_index];
+
+    //   // Read subtitle packet and call JS subtitle callback
+    //   if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+    //     process_subtitle_packet(packet, in_stream, out_stream);
+    //     return;
+    //   }
+
+    //   // Read audio packet and write it to the output context
+    //   if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+    //     process_audio_packet(packet, in_stream, out_stream);
+    //     return;
+    //   }
+
+    //   // Read video packet and write it to the output context
+    //   if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+    //     process_video_packet(packet, in_stream, out_stream);
+    //     return;
+    //   }
+    // }
+
     void process(double time_to_process) {
+      printf("processing \n");
       int res;
-      AVPacket* packet = av_packet_alloc();
-      AVFrame* pFrame;
-      AVStream *in_stream, *out_stream;
       double start_process_pts = 0;
+      std::vector<AVPacket*> packet_buffer;
+      // std::vector<bool> packet_buffer = std::vector<bool>();
+      // packet_buffer.push_back(false);
+      // packet_buffer.push_back(true);
 
       // loop through the packet frames until we reach the processed size
-      while ((res = av_read_frame(input_format_context, packet)) >= 0) {
+      while (pts < start_process_pts + time_to_process) {
+        AVPacket* packet = av_packet_alloc();
+
+        if ((res = av_read_frame(input_format_context, packet)) < 0) {
+          printf("ERROR: could not read frame | %s \n", av_err2str(res));
+          break;
+        }
+
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           // free packet as it's not in a used stream and continue to next packet
           av_packet_unref(packet);
+          av_packet_free(&packet);
           continue;
         }
 
-        in_stream  = input_format_context->streams[packet->stream_index];
-        out_stream = output_format_context->streams[packet->stream_index];
+        AVStream* in_stream = input_format_context->streams[packet->stream_index];
+        AVStream* out_stream = output_format_context->streams[packet->stream_index];
 
-        // Decode subtitle packet and call JS subtitle callback
+        // Read subtitle packet and call JS subtitle callback
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
           long start = packet->pts;
           long end = start + packet->duration;
@@ -349,22 +451,53 @@ extern "C" {
             start,
             end
           );
+          av_packet_unref(packet);
+          av_packet_free(&packet);
+          continue;
+        }
+
+        // Read audio packet and write it to the output context
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+          av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+          if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+            printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
+          }
+          av_packet_unref(packet);
+          av_packet_free(&packet);
           continue;
         }
 
         bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
 
+        // printf("keyframe DTS, packet info: is_keyframe %d, packet->stream_index: %d packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld, timestamp: %f\n", is_keyframe, packet->stream_index, packet->pts, packet->dts, packet->duration, packet->pos, packet->pts * av_q2d(out_stream->time_base));
+        // printf("processing packet, packet->pts: %lld | packet->dts: %lld \n", packet->pts, packet->dts);
+
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-
-        // In some files, the dts is set to INT64_MIN, which throws warnings and potentially throws on av_interleaved_write_frame
-        if (packet->dts == AV_NOPTS_VALUE) {
-          // packet->dts = packet->pts;
-          // printf("NO DTS, packet info: is_keyframe %d, packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, packet->pts, packet->dts, packet->duration, packet->pos);
-        }
+        // printf("packet size %d, %zu \n", packet->size, packet->side_data->size);
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
+        if (is_keyframe) {
+          // printf("is_keyframe %d, %zu \n", packet->size, packet->side_data->size);
+          std::sort(packet_buffer.begin(), packet_buffer.end(), [](const AVPacket* a, const AVPacket* b) -> bool {
+              return a->dts < b->dts;
+          });
+          for (AVPacket* buffered_packet : packet_buffer) {
+            printf("processing buffered_packet, packet->pts: %lld | packet->dts: %lld \n", buffered_packet->pts, buffered_packet->dts);
+            if (!start_process_pts) {
+              start_process_pts = buffered_packet->pts * av_q2d(out_stream->time_base);
+            }
+            duration += buffered_packet->duration * av_q2d(out_stream->time_base);
+            if ((res = av_interleaved_write_frame(output_format_context, buffered_packet)) < 0) {
+              printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
+              continue;
+            }
+
+            av_packet_unref(buffered_packet);
+            av_packet_free(&buffered_packet);
+          }
+          packet_buffer.clear();
+
           bool was_header = is_header;
           if (was_header) {
             is_header = false;
@@ -380,13 +513,9 @@ extern "C" {
 
           pts = packet->pts * av_q2d(out_stream->time_base);
           pos = packet->pos;
-        }
-
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          if (!start_process_pts) {
-            start_process_pts = packet->pts * av_q2d(out_stream->time_base);
-          }
-          duration += packet->duration * av_q2d(out_stream->time_base);
+        } else {
+          packet_buffer.push_back(packet);
+          continue;
         }
 
         // Write the frames to the output context
@@ -398,17 +527,14 @@ extern "C" {
         // free packet
         av_packet_unref(packet);
         // If we've reached the processing size, we stop here
-        if (
-          in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
-          is_keyframe &&
-          pts >= start_process_pts + time_to_process
-        ) {
-          start_process_pts = 0;
-          break;
-        }
+        // if (
+        //   is_keyframe &&
+        //   pts >= start_process_pts + time_to_process
+        // ) {
+        //   start_process_pts = 0;
+        //   break;
+        // }
       }
-      // free packet
-      av_packet_free(&packet);
     }
 
     InfoObject getInfo () {
@@ -488,7 +614,7 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
-    long result = seek(static_cast<long>(offset), whence).await().as<long>();
+    double result = seek(static_cast<double>(offset), whence).await().as<double>();
     return result;
   }
 
@@ -521,6 +647,9 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &write = remuxObject.write;
     // call the JS write function
+
+    printf("writeFunction, prev_pts: %f, duration: %f \n", remuxObject.prev_pts, remuxObject.prev_duration);
+
     write(
       static_cast<long>(remuxObject.input_format_context->pb->pos),
       emscripten::val(
