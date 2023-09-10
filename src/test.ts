@@ -15,11 +15,51 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 5_000_000
-const VIDEO_URL = '../video4.mkv'
+const VIDEO_URL = '../video6.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
 const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 20
 const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
+
+export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
+  return new Promise((resolve, reject) => {
+    const dataView = new DataView(plaintext);
+    const blob = new Blob([dataView], { type: fileType });
+
+    if (navigator.msSaveBlob) {
+      navigator.msSaveBlob(blob, fileName);
+      return resolve();
+    } else if (/iPhone|fxios/i.test(navigator.userAgent)) {
+      // This method is much slower but createObjectURL
+      // is buggy on iOS
+      const reader = new FileReader();
+      reader.addEventListener('loadend', () => {
+        if (reader.error) {
+          return reject(reader.error);
+        }
+        if (reader.result) {
+          const a = document.createElement('a');
+          // @ts-ignore
+          a.href = reader.result;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+        }
+        resolve();
+      });
+      reader.readAsDataURL(blob);
+    } else {
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(downloadUrl);
+      setTimeout(resolve, 100);
+    }
+  });
+}
 
 
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
@@ -119,6 +159,16 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             pos
           }
         ]
+        console.log('chunks', chunks)
+        // if (chunks.length === 5) {
+        //   const buffer = chunks.map(({ buffer }) => buffer).reduce((acc, buffer) => new Uint8Array([...acc, ...buffer]), new Uint8Array(0)).buffer
+        //   console.log('buffer', buffer)
+        //   saveFile(
+        //     buffer,
+        //     'test.mp4',
+        //     'video/mp4'
+        //   )
+        // }
       }
     })
 

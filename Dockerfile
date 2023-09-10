@@ -1,7 +1,7 @@
 FROM emscripten/emsdk:3.1.42 as build
 
 # ARG LASS_VERSION=0.16.0
-# ARG X264_VERSION=20191217-2245-stable
+ARG X264_VERSION=20191217-2245-stable
 ARG FFMPEG_VERSION=5.1
 
 ARG PREFIX=/opt/ffmpeg
@@ -32,21 +32,21 @@ RUN apt-get update && apt-get install -y autoconf libtool build-essential
 #   emmake make && emmake make install 
 
 # libx264
-# RUN cd /tmp && \
-#   wget https://download.videolan.org/pub/videolan/x264/snapshots/x264-snapshot-${X264_VERSION}.tar.bz2 && \
-#   tar xvfj x264-snapshot-${X264_VERSION}.tar.bz2
+RUN cd /tmp && \
+  wget https://download.videolan.org/pub/videolan/x264/snapshots/x264-snapshot-${X264_VERSION}.tar.bz2 && \
+  tar xvfj x264-snapshot-${X264_VERSION}.tar.bz2
 
-# RUN cd /tmp/x264-snapshot-${X264_VERSION} && \
-#   emconfigure ./configure \
-#   --prefix=${PREFIX} \
-#   --host=i686-gnu \
-#   --enable-static \
-#   --disable-cli \
-#   --disable-asm \
-#   --extra-cflags="-s USE_PTHREADS=1"
+RUN cd /tmp/x264-snapshot-${X264_VERSION} && \
+  emconfigure ./configure \
+  --prefix=${PREFIX} \
+  --host=i686-gnu \
+  --enable-static \
+  --disable-cli \
+  --disable-asm \
+  --extra-cflags="-s USE_PTHREADS=1"
 
-# RUN cd /tmp/x264-snapshot-${X264_VERSION} && \
-#   emmake make && emmake make install 
+RUN cd /tmp/x264-snapshot-${X264_VERSION} && \
+  emmake make && emmake make install 
 
 # Get ffmpeg source.
 RUN cd /tmp/ && \
@@ -76,7 +76,8 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   # --enable-postproc \
   --enable-swscale \
   # --enable-protocol=file \
-  # --enable-decoder=h264,aac,pcm_s16le \
+  --enable-bsf=hevc_mp4toannexb \
+  --enable-decoder=h264,aac,pcm_s16le \
   # --enable-demuxer=mov,matroska \
   # --enable-muxer=mp4 \
   # --enable-gpl \

@@ -31,6 +31,6 @@ dist/libav-wasm.js:
 	-s ASSERTIONS=2 \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
-	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm \
+	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
 	src/main.cpp

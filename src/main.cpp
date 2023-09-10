@@ -5,6 +5,8 @@
 using namespace emscripten;
 
 extern "C" {
+  #include <libavcodec/bsf.h>
+  #include <libavformat/avio.h>
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
 };
@@ -37,6 +39,8 @@ extern "C" {
     AVIOContext* output_avio_context;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
+    AVBSFContext *bitstream_filter_context;
+    const AVBitStreamFilter *bitstream_filter = av_bsf_get_by_name("hevc_mp4toannexb");
     uint8_t* input_avio_buffer;
     uint8_t* output_avio_buffer;
     int stream_index;
@@ -293,6 +297,23 @@ extern "C" {
           printf("ERROR: could not copy codec parameters | %s \n", av_err2str(res));
           return;
         }
+
+        // if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        //   // const AVBitStreamFilter* bitstream_filter = av_bsf_get_by_name("hevc_mp4toannexb");
+        //   bitstream_filter_context = NULL;
+
+        //   if(bitstream_filter == nullptr) {
+        //     printf("ERROR: could not allocate bitstream filter\n");
+        //     return;
+        //   }
+
+        //   av_bsf_alloc(bitstream_filter, &bitstream_filter_context);
+
+        //   // avcodec_parameters_copy(in_stream->codecpar, bitstream_filter_context->par_in);
+        //   // avcodec_parameters_copy(out_stream->codecpar, bitstream_filter_context->par_out);
+        //   avcodec_parameters_copy(bitstream_filter_context->par_in, in_codecpar);
+        //   av_bsf_init(bitstream_filter_context);
+        // }
       }
 
       AVDictionary* opts = nullptr;
@@ -475,6 +496,23 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
         // printf("packet size %d, %zu \n", packet->size, packet->side_data->size);
+
+        // if (av_bsf_send_packet(bitstream_filter_context, packet) < 0) {
+        //   printf("av_bsf_send_packet failed\n");
+        //   return;
+        // }
+
+        // AVPacket* filtered_pkt = av_packet_alloc();
+        // filtered_pkt->data = NULL;
+        // filtered_pkt->size = 0;
+
+        // if (av_bsf_receive_packet(bitstream_filter_context, packet) < 0) {
+        //   printf("av_bsf_receive_packet failed\n");
+        //   return;
+        // }
+
+        // av_bsf_send_packet(bitstream_filter_context, packet);
+        // av_bsf_receive_packet(bitstream_filter_context, packet);
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (is_keyframe) {
