@@ -15,7 +15,7 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 5_000_000
-const VIDEO_URL = '../video6.mkv'
+const VIDEO_URL = '../video5.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
 const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 20
@@ -507,7 +507,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     video.addEventListener('canplaythrough', () => {
-      video.playbackRate = 15
+      video.playbackRate = 1
       video.play()
     }, { once: true })
 

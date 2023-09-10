@@ -71,18 +71,9 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-avformat --enable-demuxer=matroska --enable-muxer=mp4 \
   --enable-avdevice \
   --enable-swresample \
-  # --enable-libass \
-  # --enable-filter=subtitles,overlay \
-  # --enable-postproc \
   --enable-swscale \
-  # --enable-protocol=file \
   --enable-bsf=hevc_mp4toannexb \
-  --enable-decoder=h264,aac,pcm_s16le \
-  # --enable-demuxer=mov,matroska \
-  # --enable-muxer=mp4 \
-  # --enable-gpl \
-  # --enable-libx264 \
-  # emscripten flags, probably?
+  --enable-decoder=hevc,h264,h264,aac,pcm_s16le \
   --disable-stripping \
   --disable-inline-asm \
   --enable-cross-compile \
