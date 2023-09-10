@@ -5,7 +5,6 @@
 using namespace emscripten;
 
 extern "C" {
-  #include <libavcodec/bsf.h>
   #include <libavformat/avio.h>
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
@@ -39,14 +38,12 @@ extern "C" {
     AVIOContext* output_avio_context;
     AVFormatContext* output_format_context;
     AVFormatContext* input_format_context;
-    AVBSFContext *bitstream_filter_context;
-    const AVBitStreamFilter *bitstream_filter = av_bsf_get_by_name("hevc_mp4toannexb");
     uint8_t* input_avio_buffer;
     uint8_t* output_avio_buffer;
     int stream_index;
     int *streams_list;
     int number_of_streams;
-    // float input_length;
+    float input_length;
     int buffer_size;
     int video_stream_index;
 
@@ -109,7 +106,7 @@ extern "C" {
 
     Transmuxer(val options) {
       if (!hostname_check()) return;
-      // input_length = options["length"].as<float>();
+      input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
       attachment = options["attachment"];
@@ -323,13 +320,8 @@ extern "C" {
     }
 
     void process(double time_to_process) {
-      printf("processing \n");
       int res;
       double start_process_pts = 0;
-      std::vector<AVPacket*> packet_buffer;
-      // std::vector<bool> packet_buffer = std::vector<bool>();
-      // packet_buffer.push_back(false);
-      // packet_buffer.push_back(true);
 
       // loop through the packet frames until we reach the processed size
       while (start_process_pts == 0 || (pts < (start_process_pts + time_to_process))) {
@@ -342,18 +334,6 @@ extern "C" {
 
         AVStream* in_stream = input_format_context->streams[packet->stream_index];
         AVStream* out_stream = output_format_context->streams[packet->stream_index];
-
-        // if (packet->dts == packet->pts) {
-        //   packet->dts = AV_NOPTS_VALUE;
-        // }
-
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          printf("processing packet, packet->pts: %lld | packet->dts: %lld, PTS: %f \n", packet->pts, packet->dts, packet->pts * av_q2d(out_stream->time_base));
-        }
-
-        // if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && packet->dts == AV_NOPTS_VALUE) {
-        //   packet->dts = packet->pts;
-        // }
 
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           // free packet as it's not in a used stream and continue to next packet
@@ -393,12 +373,8 @@ extern "C" {
 
         bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
 
-        // printf("keyframe DTS, packet info: is_keyframe %d, packet->stream_index: %d packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld, timestamp: %f\n", is_keyframe, packet->stream_index, packet->pts, packet->dts, packet->duration, packet->pos, packet->pts * av_q2d(out_stream->time_base));
-        // printf("processing packet, packet->pts: %lld | packet->dts: %lld \n", packet->pts, packet->dts);
-
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-        // printf("packet size %d, %zu \n", packet->size, packet->side_data->size);
 
         if (!start_process_pts) {
           start_process_pts = packet->pts * av_q2d(out_stream->time_base);
@@ -406,24 +382,6 @@ extern "C" {
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (is_keyframe) {
-          // printf("is_keyframe, DTS %f, PTS %f \n", packet->dts * av_q2d(out_stream->time_base), packet->pts * av_q2d(out_stream->time_base));
-          std::sort(packet_buffer.begin(), packet_buffer.end(), [](const AVPacket* a, const AVPacket* b) -> bool {
-              return a->dts < b->dts;
-          });
-          for (AVPacket* buffered_packet : packet_buffer) {
-            // printf("processing buffered_packet, packet->pts: %lld | packet->dts: %lld, PTS: %f \n", buffered_packet->pts, buffered_packet->dts, buffered_packet->pts * av_q2d(out_stream->time_base));
-            duration += buffered_packet->duration * av_q2d(out_stream->time_base);
-            if ((res = av_interleaved_write_frame(output_format_context, buffered_packet)) < 0) {
-              printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
-              continue;
-            }
-
-            av_packet_unref(buffered_packet);
-            av_packet_free(&buffered_packet);
-          }
-          packet_buffer.clear();
-
-          // printf("processing keyframe, packet->pts: %lld | packet->dts: %lld, PTS: %f \n", packet->pts, packet->dts, packet->pts * av_q2d(out_stream->time_base));
           bool was_header = is_header;
           if (was_header) {
             is_header = false;
@@ -439,9 +397,6 @@ extern "C" {
 
           pts = packet->pts * av_q2d(out_stream->time_base);
           pos = packet->pos;
-        } else {
-          packet_buffer.push_back(packet);
-          continue;
         }
 
         // Write the frames to the output context
@@ -505,17 +460,12 @@ extern "C" {
       av_freep(streams_list);
       streams_list = nullptr;
 
-      // avformat_close_input calls avformat_free_context itself
-      // avformat_close_input(&input_format_context);
-
       // We have to free like this, as reported by https://fftrac-bg.ffmpeg.org/ticket/1357
       av_free(input_avio_context->buffer);
-      // av_freep(&input_avio_buffer);
       input_avio_buffer = nullptr;
       avio_context_free(&input_avio_context);
       input_avio_context = nullptr;
       avformat_close_input(&input_format_context);
-      // avformat_free_context(input_format_context);
       input_format_context = nullptr;
 
       av_free(output_avio_context->buffer);
@@ -523,8 +473,6 @@ extern "C" {
       output_avio_context = nullptr;
       avformat_free_context(output_format_context);
       output_format_context = nullptr;
-      // av_free(output_avio_buffer);
-      // output_avio_buffer = nullptr;
     }
   };
 

@@ -72,7 +72,6 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-avdevice \
   --enable-swresample \
   --enable-swscale \
-  --enable-bsf=hevc_mp4toannexb \
   --enable-decoder=hevc,h264,h264,aac,pcm_s16le \
   --disable-stripping \
   --disable-inline-asm \
