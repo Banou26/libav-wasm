@@ -441,7 +441,7 @@ extern "C" {
       // packet_buffer.push_back(true);
 
       // loop through the packet frames until we reach the processed size
-      while (pts < start_process_pts + time_to_process) {
+      while (start_process_pts == 0 || (pts < (start_process_pts + time_to_process))) {
         AVPacket* packet = av_packet_alloc();
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
@@ -514,6 +514,10 @@ extern "C" {
         // av_bsf_send_packet(bitstream_filter_context, packet);
         // av_bsf_receive_packet(bitstream_filter_context, packet);
 
+        if (!start_process_pts) {
+          start_process_pts = packet->pts * av_q2d(out_stream->time_base);
+        }
+
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (is_keyframe) {
           // printf("is_keyframe %d, %zu \n", packet->size, packet->side_data->size);
@@ -522,9 +526,6 @@ extern "C" {
           });
           for (AVPacket* buffered_packet : packet_buffer) {
             printf("processing buffered_packet, packet->pts: %lld | packet->dts: %lld \n", buffered_packet->pts, buffered_packet->dts);
-            if (!start_process_pts) {
-              start_process_pts = buffered_packet->pts * av_q2d(out_stream->time_base);
-            }
             duration += buffered_packet->duration * av_q2d(out_stream->time_base);
             if ((res = av_interleaved_write_frame(output_format_context, buffered_packet)) < 0) {
               printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
