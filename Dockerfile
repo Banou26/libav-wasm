@@ -1,4 +1,4 @@
-FROM emscripten/emsdk:3.1.31 as build
+FROM emscripten/emsdk:3.1.42 as build
 
 # ARG LASS_VERSION=0.16.0
 ARG X264_VERSION=20191217-2245-stable
@@ -71,17 +71,8 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-avformat --enable-demuxer=matroska --enable-muxer=mp4 \
   --enable-avdevice \
   --enable-swresample \
-  # --enable-libass \
-  # --enable-filter=subtitles,overlay \
-  # --enable-postproc \
   --enable-swscale \
-  # --enable-protocol=file \
-  --enable-decoder=h264,aac,pcm_s16le \
-  # --enable-demuxer=mov,matroska \
-  # --enable-muxer=mp4 \
-  # --enable-gpl \
-  # --enable-libx264 \
-  # emscripten flags, probably?
+  --enable-decoder=hevc,h264,h264,aac,pcm_s16le \
   --disable-stripping \
   --disable-inline-asm \
   --enable-cross-compile \

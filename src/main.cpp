@@ -5,6 +5,7 @@
 using namespace emscripten;
 
 extern "C" {
+  #include <libavformat/avio.h>
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
 };
@@ -42,7 +43,7 @@ extern "C" {
     int stream_index;
     int *streams_list;
     int number_of_streams;
-    int input_length;
+    float input_length;
     int buffer_size;
     int video_stream_index;
 
@@ -105,7 +106,7 @@ extern "C" {
 
     Transmuxer(val options) {
       if (!hostname_check()) return;
-      input_length = options["length"].as<int>();
+      input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
       attachment = options["attachment"];
@@ -320,23 +321,28 @@ extern "C" {
 
     void process(double time_to_process) {
       int res;
-      AVPacket* packet = av_packet_alloc();
-      AVFrame* pFrame;
-      AVStream *in_stream, *out_stream;
       double start_process_pts = 0;
 
       // loop through the packet frames until we reach the processed size
-      while ((res = av_read_frame(input_format_context, packet)) >= 0) {
+      while (start_process_pts == 0 || (pts < (start_process_pts + time_to_process))) {
+        AVPacket* packet = av_packet_alloc();
+
+        if ((res = av_read_frame(input_format_context, packet)) < 0) {
+          printf("ERROR: could not read frame | %s \n", av_err2str(res));
+          break;
+        }
+
+        AVStream* in_stream = input_format_context->streams[packet->stream_index];
+        AVStream* out_stream = output_format_context->streams[packet->stream_index];
+
         if (packet->stream_index >= number_of_streams || streams_list[packet->stream_index] < 0) {
           // free packet as it's not in a used stream and continue to next packet
           av_packet_unref(packet);
+          av_packet_free(&packet);
           continue;
         }
 
-        in_stream  = input_format_context->streams[packet->stream_index];
-        out_stream = output_format_context->streams[packet->stream_index];
-
-        // Decode subtitle packet and call JS subtitle callback
+        // Read subtitle packet and call JS subtitle callback
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
           long start = packet->pts;
           long end = start + packet->duration;
@@ -349,6 +355,19 @@ extern "C" {
             start,
             end
           );
+          av_packet_unref(packet);
+          av_packet_free(&packet);
+          continue;
+        }
+
+        // Read audio packet and write it to the output context
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+          av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+          if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+            printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
+          }
+          av_packet_unref(packet);
+          av_packet_free(&packet);
           continue;
         }
 
@@ -357,14 +376,12 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-        // In some files, the dts is set to INT64_MIN, which throws warnings and potentially throws on av_interleaved_write_frame
-        if (packet->dts == AV_NOPTS_VALUE) {
-          // packet->dts = packet->pts;
-          // printf("NO DTS, packet info: is_keyframe %d, packet->pts: %lld | packet->dts: %lld | packet->duration: %lld | packet->pos: %lld \n", is_keyframe, packet->pts, packet->dts, packet->duration, packet->pos);
+        if (!start_process_pts) {
+          start_process_pts = packet->pts * av_q2d(out_stream->time_base);
         }
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && is_keyframe) {
+        if (is_keyframe) {
           bool was_header = is_header;
           if (was_header) {
             is_header = false;
@@ -382,13 +399,6 @@ extern "C" {
           pos = packet->pos;
         }
 
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          if (!start_process_pts) {
-            start_process_pts = packet->pts * av_q2d(out_stream->time_base);
-          }
-          duration += packet->duration * av_q2d(out_stream->time_base);
-        }
-
         // Write the frames to the output context
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
@@ -397,18 +407,8 @@ extern "C" {
 
         // free packet
         av_packet_unref(packet);
-        // If we've reached the processing size, we stop here
-        if (
-          in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
-          is_keyframe &&
-          pts >= start_process_pts + time_to_process
-        ) {
-          start_process_pts = 0;
-          break;
-        }
+        av_packet_free(&packet);
       }
-      // free packet
-      av_packet_free(&packet);
     }
 
     InfoObject getInfo () {
@@ -460,17 +460,12 @@ extern "C" {
       av_freep(streams_list);
       streams_list = nullptr;
 
-      // avformat_close_input calls avformat_free_context itself
-      // avformat_close_input(&input_format_context);
-
       // We have to free like this, as reported by https://fftrac-bg.ffmpeg.org/ticket/1357
       av_free(input_avio_context->buffer);
-      // av_freep(&input_avio_buffer);
       input_avio_buffer = nullptr;
       avio_context_free(&input_avio_context);
       input_avio_context = nullptr;
       avformat_close_input(&input_format_context);
-      // avformat_free_context(input_format_context);
       input_format_context = nullptr;
 
       av_free(output_avio_context->buffer);
@@ -478,8 +473,6 @@ extern "C" {
       output_avio_context = nullptr;
       avformat_free_context(output_format_context);
       output_format_context = nullptr;
-      // av_free(output_avio_buffer);
-      // output_avio_buffer = nullptr;
     }
   };
 
@@ -488,7 +481,7 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &seek = remuxObject.seek;
     // call the JS seek function
-    long result = seek(static_cast<long>(offset), whence).await().as<long>();
+    double result = seek(static_cast<double>(offset), whence).await().as<double>();
     return result;
   }
 
@@ -521,6 +514,9 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &write = remuxObject.write;
     // call the JS write function
+
+    printf("writeFunction, prev_pts: %f, duration: %f \n", remuxObject.prev_pts, remuxObject.prev_duration);
+
     write(
       static_cast<long>(remuxObject.input_format_context->pb->pos),
       emscripten::val(
