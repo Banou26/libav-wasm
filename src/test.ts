@@ -160,8 +160,20 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           }
         ]
         console.log('chunks', chunks)
-        // if (chunks.length === 5) {
-        //   const buffer = chunks.map(({ buffer }) => buffer).reduce((acc, buffer) => new Uint8Array([...acc, ...buffer]), new Uint8Array(0)).buffer
+        // if (chunks.length === 2) {
+        //   const buffer =
+        //     chunks
+        //       .map(({ buffer }) => buffer)
+        //       .reduce(
+        //         (acc, buffer) =>  {
+        //           const ab = new Uint8Array(acc.byteLength + buffer.byteLength)
+        //           ab.set(new Uint8Array(acc), 0)
+        //           ab.set(new Uint8Array(buffer), acc.byteLength)
+        //           return ab
+        //         },
+        //         headerChunk.buffer
+        //       )
+        //       .buffer
         //   console.log('buffer', buffer)
         //   saveFile(
         //     buffer,
@@ -335,7 +347,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const chunkIndex = chunks.indexOf(chunk)
       if (chunkIndex === -1) throw new RangeError('No chunk found')
       await unbufferChunk(chunk)
-      chunks = chunks.filter(_chunk => _chunk !== chunk)
+      // chunks = chunks.filter(_chunk => _chunk !== chunk)
     }
 
     // todo: add error checker & retry to seek a bit earlier
@@ -495,7 +507,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     video.addEventListener('canplaythrough', () => {
-      video.playbackRate = 1
+      video.playbackRate = 15
       video.play()
     }, { once: true })
 

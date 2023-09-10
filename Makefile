@@ -22,9 +22,10 @@ dist/libav-wasm.js:
 	-I/tmp/ffmpeg-5.1/ \
 	-s FILESYSTEM=0 \
 	-s ENVIRONMENT=web \
-	-s INITIAL_MEMORY=1000mb \
-	-s TOTAL_MEMORY=450mb \
-	-s STACK_SIZE=200mb \
+	-s ALLOW_MEMORY_GROWTH=1 \
+	-s INITIAL_MEMORY=200mb \
+	-s TOTAL_MEMORY=175mb \
+	-s STACK_SIZE=50mb \
 	-g \
 	-gsource-map \
 	--source-map-base http://localhost:1234/dist/ \
