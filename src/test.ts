@@ -26,8 +26,11 @@ export default async function saveFile(plaintext: ArrayBuffer, fileName: string,
     const dataView = new DataView(plaintext);
     const blob = new Blob([dataView], { type: fileType });
 
+    // @ts-ignore
     if (navigator.msSaveBlob) {
+    // @ts-ignore
       navigator.msSaveBlob(blob, fileName);
+    // @ts-ignore
       return resolve();
     } else if (/iPhone|fxios/i.test(navigator.userAgent)) {
       // This method is much slower but createObjectURL
@@ -45,6 +48,7 @@ export default async function saveFile(plaintext: ArrayBuffer, fileName: string,
           document.body.appendChild(a);
           a.click();
         }
+        // @ts-ignore
         resolve();
       });
       reader.readAsDataURL(blob);
