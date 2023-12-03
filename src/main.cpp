@@ -520,8 +520,6 @@ extern "C" {
     emscripten::val &write = remuxObject.write;
     // call the JS write function
 
-    printf("writeFunction, prev_pts: %f, duration: %f \n", remuxObject.prev_pts, remuxObject.prev_duration);
-
     write(
       static_cast<long>(remuxObject.input_format_context->pb->pos),
       emscripten::val(
