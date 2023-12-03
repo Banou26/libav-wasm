@@ -385,6 +385,13 @@ extern "C" {
           start_process_pts = packet->pts * av_q2d(out_stream->time_base);
         }
 
+        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          if (!start_process_pts) {
+            start_process_pts = packet->pts * av_q2d(out_stream->time_base);
+          }
+          duration += packet->duration * av_q2d(out_stream->time_base);
+        }
+
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (is_keyframe) {
           bool was_header = is_header;
