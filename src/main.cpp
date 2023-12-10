@@ -1,6 +1,5 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
-#include "obfuscate.h"
 
 using namespace emscripten;
 
@@ -72,45 +71,7 @@ extern "C" {
         printf("\n");
     }
 
-    bool hostname_check() {
-      std::string hostStr = val::global("location")["host"].as<std::string>();
-      std::string originStr = val::global("location")["origin"].as<std::string>();
-      const char* str = hostStr.c_str();
-      const char* originstr = originStr.c_str();
-      std::string hostStdString(str);
-      std::string originStdString(originstr);
-      std::string sdbxAppHost(AY_OBFUSCATE("sdbx.app"));
-      std::string localhostProxyHost(AY_OBFUSCATE("localhost:2345"));
-      std::string localhostAppTest(AY_OBFUSCATE("localhost:4560"));
-      std::string localhostRippleTest(AY_OBFUSCATE("localhost:5678"));
-      if (
-        strcmp(originstr, AY_OBFUSCATE("http://localhost:1234")) != 0 &&
-        strcmp(originstr, AY_OBFUSCATE("http://localhost:2345")) != 0 &&
-        strcmp(originstr, AY_OBFUSCATE("http://localhost:4560")) != 0 &&
-        strcmp(originstr, AY_OBFUSCATE("http://localhost:5678")) != 0 &&
-        strcmp(str, AY_OBFUSCATE("dev.fkn.app")) != 0 &&
-        strcmp(str, AY_OBFUSCATE("fkn.app")) != 0 &&
-        !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) &&
-        !strstr(hostStdString.c_str(), sdbxAppHost.c_str()) &&
-        !strstr(originStdString.c_str(), sdbxAppHost.c_str()) &&
-        !strstr(originStdString.c_str(), sdbxAppHost.c_str()) &&
-        !strstr(originStdString.c_str(), localhostRippleTest.c_str()) &&
-        strcmp(str, AY_OBFUSCATE("localhost:1234")) != 0 &&
-        strcmp(str, AY_OBFUSCATE("localhost:2345")) != 0 &&
-        strcmp(str, AY_OBFUSCATE("localhost:4560")) != 0 &&
-        strcmp(str, AY_OBFUSCATE("localhost:5678")) != 0 &&
-        !strstr(hostStdString.c_str(), localhostProxyHost.c_str()) &&
-        !strstr(hostStdString.c_str(), localhostAppTest.c_str()) &&
-        !strstr(originStdString.c_str(), localhostProxyHost.c_str()) &&
-        !strstr(originStdString.c_str(), localhostAppTest.c_str()) &&
-        !strstr(originStdString.c_str(), localhostRippleTest.c_str())
-      ) return false;
-      
-      return true;
-    }
-
     Transmuxer(val options) {
-      if (!hostname_check()) return;
       input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
@@ -122,7 +83,6 @@ extern "C" {
     }
 
     void init (bool first_init) {
-      if (!hostname_check()) return;
       int res;
       is_header = true;
       duration = 0;
@@ -526,6 +486,8 @@ extern "C" {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &write = remuxObject.write;
     // call the JS write function
+
+    printf("writeFunction, prev_pts: %f, duration: %f \n", remuxObject.prev_pts, remuxObject.prev_duration);
 
     write(
       static_cast<long>(remuxObject.input_format_context->pb->pos),

@@ -135,7 +135,6 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
 
 
 COPY ./src/main.cpp /build/src/main.cpp
-COPY ./src/obfuscate.h /build/src/obfuscate.h
 COPY ./Makefile /build/Makefile
 
 WORKDIR /build
