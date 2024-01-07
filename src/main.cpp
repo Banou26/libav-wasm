@@ -293,6 +293,12 @@ extern "C" {
         AVPacket* packet = av_packet_alloc();
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
+          if (res == AVERROR_EOF) {
+            is_flushing = true;
+            avio_flush(output_format_context->pb);
+            av_write_trailer(output_format_context);
+            break;
+          }
           printf("ERROR: could not read frame | %s \n", av_err2str(res));
           break;
         }
@@ -472,12 +478,12 @@ extern "C" {
     val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
     std::string buffer = res["buffer"].as<std::string>();
     int buffer_size = res["size"].as<int>();
-    // copy the result buffer into AVIO's buffer
-    memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
-    // If result buffer size is 0, we reached the end of the file
     if (buffer_size == 0) {
       return AVERROR_EOF;
     }
+    // copy the result buffer into AVIO's buffer
+    memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
+    // If result buffer size is 0, we reached the end of the file
     return buffer_size;
   }
 

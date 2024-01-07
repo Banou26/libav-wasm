@@ -18,7 +18,7 @@ const BUFFER_SIZE = 5_000_000
 const VIDEO_URL = '../video5.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
-const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 20
+const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
 const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
@@ -94,6 +94,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     }
 
     let headerChunk: Chunk
+    let ended = false
     let chunks: Chunk[] = []
 
     const workerUrl2 = new URL('../build/worker.js', import.meta.url).toString()
@@ -106,15 +107,20 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       read: (offset, size) =>
-        fetch(
-          VIDEO_URL,
-          {
-            headers: {
-              Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}`
-            }
-          }
-        )
-          .then(res => res.arrayBuffer()),
+        // console.log('read', offset, size) ||
+        offset >= Math.min(offset + size, contentLength)
+          ? Promise.resolve(new ArrayBuffer(0))
+          : (
+            fetch(
+              VIDEO_URL,
+              {
+                headers: {
+                  Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}`
+                }
+              }
+            )
+              .then(res => res.arrayBuffer())
+          ),
       seek: async (currentOffset, offset, whence) => {
         // console.log('seek', { currentOffset, offset, whence })
         if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
@@ -139,15 +145,32 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
         // console.log('attachment', filename, mimetype, buffer)
       },
-      write: ({ isHeader, offset, buffer, pts, duration, pos }) => {
-        // console.log('write', { isHeader, offset, buffer, pts, duration, pos })
+      write: ({ isHeader, offset, buffer, pts, duration: chunkDuration, pos }) => {
+        // console.log('write', { isHeader, offset, buffer, pts, chunkDuration, pos })
+        if (offset === contentLength) {
+          const lastChunk = chunks.at(-1)
+          if (!lastChunk) throw new Error('No last chunk found')
+          chunks = [
+            ...chunks,
+            {
+              offset,
+              buffer: new Uint8Array(buffer),
+              pts: lastChunk.pts + lastChunk.duration,
+              duration: duration - lastChunk.pts,
+              pos
+            }
+          ]
+          ended = true
+          // console.log('THATS A TRAILER CHUNK', chunks)
+          return
+        }
         if (isHeader) {
           if (!headerChunk) {
             headerChunk = {
               offset,
               buffer: new Uint8Array(buffer),
               pts,
-              duration,
+              duration: chunkDuration,
               pos
             }
           }
@@ -159,7 +182,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             offset,
             buffer: new Uint8Array(buffer),
             pts,
-            duration,
+            duration: chunkDuration,
             pos
           }
         ]
@@ -192,7 +215,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const process = (timeToProcess = POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) =>
       processingQueue.add(
-        () => transmuxer.process(timeToProcess),
+        () => ended ? Promise.resolve(undefined) : transmuxer.process(timeToProcess),
         { throwOnTimeout: true }
       )
 
@@ -356,6 +379,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     // todo: add error checker & retry to seek a bit earlier
     const seek = queuedDebounceWithLastCall(500, async (time: number) => {
+      ended = false
       const ranges = getTimeRanges()
       if (ranges.some(({ start, end }) => time >= start && time <= end)) {
         return
@@ -519,4 +543,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // console.log('SEEKING', video.currentTime)
       seek(video.currentTime)
     })
+
+    // video.pause()
+    // await seek(1370)
+    // video.play()
+
+
+    // video.currentTime = 1360
+    // await new Promise(resolve => setTimeout(resolve, 1000))
+    // video.playbackRate = 5
   })
