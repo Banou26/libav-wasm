@@ -50,9 +50,11 @@ export type Subtitle = {
 }
 
 export type MediaInfo = {
-  formatName: string,
-  mimeType: string,
+  formatName: string
+  mimeType: string
   duration: number
+  video_mime_type: string
+  audio_mime_type: string
 }
 
 export type Chunk = {

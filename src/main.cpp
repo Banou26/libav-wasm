@@ -17,6 +17,8 @@ typedef struct MediaInfoObject {
   std::string formatName;
   std::string mimeType;
   double duration;
+  std::string video_mime_type;
+  std::string audio_mime_type;
 } MediaInfoObject;
 
 typedef struct InfoObject {
@@ -56,6 +58,9 @@ extern "C" {
     double duration;
     bool first_frame = true;
 
+    std::string video_mime_type;
+    std::string audio_mime_type;
+
     val read = val::undefined();
     val attachment = val::undefined();
     val subtitle = val::undefined();
@@ -82,6 +87,115 @@ extern "C" {
       error = options["error"];
     }
 
+    auto decimalToHex(int d, int padding) {
+      std::string hex = std::to_string(d);
+      while (hex.length() < padding) {
+        hex = "0" + hex;
+      }
+      return hex;
+    }
+
+    std::string parse_mp4a_mime_type(AVCodecParameters *in_codecpar) {
+      // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/descriptor.js#L5
+      switch (in_codecpar->profile) {
+        case FF_PROFILE_AAC_LOW:
+          return "mp4a.40.2"; // AAC-LC
+        case FF_PROFILE_AAC_HE:
+          return "mp4a.40.5"; // HE-AAC / AAC+ (SBR)
+        case FF_PROFILE_AAC_HE_V2:
+          return "mp4a.40.29"; // HE-AAC v2 / AAC++ (SBR+PS)
+        case FF_PROFILE_AAC_LD:
+          return "mp4a.40.23"; // AAC-LD
+        case FF_PROFILE_AAC_ELD:
+          return "mp4a.40.39"; // AAC-ELD
+        case FF_PROFILE_UNKNOWN:
+        default:
+          return "mp4a.40.unknown";
+      }
+    }
+
+    std::string parse_h264_mime_type(AVCodecParameters *in_codecpar) {
+      auto extradata = in_codecpar->extradata;
+      auto extradata_size = in_codecpar->extradata_size;
+      char mime_type[50];
+
+      if (!extradata || extradata_size < 1) {
+        printf("Invalid extradata.\n");
+        return mime_type;
+      }
+
+      if (extradata[0] != 1) {
+        printf("Unsupported extradata format.\n");
+        return mime_type;
+      }
+
+      // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/avcC.js#L6
+      uint8_t profile = extradata[1];
+      uint8_t constraints = extradata[2];
+      uint8_t level = extradata[3];
+
+      sprintf(mime_type, "avc1.%02x%02x%02x", profile, constraints, level);
+      return mime_type;
+    }
+
+    std::string parse_h265_mime_type(AVCodecParameters *in_codecpar) {
+      auto extradata = in_codecpar->extradata;
+      auto extradata_size = in_codecpar->extradata_size;
+      char mime_type[50];
+
+      if (!extradata || extradata_size < 1) {
+        printf("Invalid extradata.\n");
+        return mime_type;
+      }
+
+      if (extradata[0] != 1) {
+        printf("Unsupported extradata format.\n");
+        return mime_type;
+      }
+
+      // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/hvcC.js
+      // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/box-codecs.js#L106
+      // https://github.com/paulhiggs/codec-string/blob/ab2e7869f1d9207b24cfd29031b79d7abf164a5e/src/decode-hevc.js
+      uint8_t multi = extradata[1];
+      uint8_t general_profile_space = multi >> 6;
+      uint8_t general_tier_flag = (multi & 0x20) >> 5;
+      uint8_t general_profile_idc = (multi & 0x1F);
+      uint32_t general_profile_compatibility_flags = extradata[2] << 24 | extradata[3] << 16 | extradata[4] << 8 | extradata[5];
+      uint8_t general_constraint_indicator_flags = extradata[6];
+      uint8_t general_level_idc = extradata[12];
+
+      auto general_profile_space_str =
+        general_profile_space == 0 ? "" :
+        general_profile_space == 1 ? "A" :
+        general_profile_space == 2 ? "B" :
+        "C";
+
+      uint8_t reversed = 0;
+      for (int i=0; i<32; i++) {
+        reversed |= general_profile_compatibility_flags & 1;
+        if (i==31) break;
+        reversed <<= 1;
+        general_profile_compatibility_flags >>=1;
+      }
+      uint8_t general_profile_compatibility_reversed = reversed;
+
+      auto general_tier_flag_str =
+        general_tier_flag == 0
+          ? "L"
+          : "H";
+
+      sprintf(
+        mime_type, "hev1.%s%d.%s.%s%d.%02x",
+        general_profile_space_str,
+        general_profile_idc,
+        decimalToHex(general_profile_compatibility_reversed, 0).c_str(),
+        general_tier_flag_str,
+        general_level_idc,
+        general_constraint_indicator_flags
+      );
+      return mime_type;
+    }
+    
     void init (bool first_init) {
       int res;
       is_header = true;
@@ -241,9 +355,22 @@ extern "C" {
           continue;
         }
 
-        // Assign the video stream index to a global variable that'll be used when seeking forwards
         if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
           video_stream_index = i;
+          std::string mime_type;
+          if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
+            mime_type = parse_h264_mime_type(in_codecpar).c_str();
+          } else  if (in_codecpar->codec_id == AV_CODEC_ID_H265) {
+            mime_type = parse_h265_mime_type(in_codecpar).c_str();
+          } 
+          video_mime_type = mime_type;
+        }
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO){
+          std::string mime_type;
+          if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
+            mime_type = parse_mp4a_mime_type(in_codecpar).c_str();
+          }
+          audio_mime_type = mime_type;
         }
 
         streams_list[i] = stream_index++;
@@ -404,12 +531,16 @@ extern "C" {
         .input = {
           .formatName = input_format_context->iformat->name,
           .mimeType = input_format_context->iformat->mime_type,
-          .duration = static_cast<double>(input_format_context->duration)
+          .duration = static_cast<double>(input_format_context->duration),
+          .video_mime_type = video_mime_type,
+          .audio_mime_type = audio_mime_type
         },
         .output = {
           .formatName = output_format_context->oformat->name,
           .mimeType = output_format_context->oformat->mime_type,
-          .duration = static_cast<double>(output_format_context->duration)
+          .duration = static_cast<double>(output_format_context->duration),
+          .video_mime_type = video_mime_type,
+          .audio_mime_type = audio_mime_type
         }
       };
     }
@@ -531,7 +662,9 @@ extern "C" {
     emscripten::value_object<MediaInfoObject>("MediaInfoObject")
       .field("formatName", &MediaInfoObject::formatName)
       .field("duration", &MediaInfoObject::duration)
-      .field("mimeType", &MediaInfoObject::mimeType);
+      .field("mimeType", &MediaInfoObject::mimeType)
+      .field("video_mime_type", &MediaInfoObject::video_mime_type)
+      .field("audio_mime_type", &MediaInfoObject::audio_mime_type);
 
     emscripten::value_object<InfoObject>("InfoObject")
       .field("input", &InfoObject::input)

@@ -1,10 +1,8 @@
 // @ts-ignore
-import { createFile } from 'mp4box'
 import PQueue from 'p-queue'
 
 import { SEEK_WHENCE_FLAG, queuedDebounceWithLastCall } from './utils'
 import { makeTransmuxer } from '.'
-import { MP4Info } from './mp4box'
 
 type Chunk = {
   offset: number
@@ -74,24 +72,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       contentRangeContentLength
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
-
-    let mp4boxfile = createFile()
-    mp4boxfile.onError = (error: Error) => console.error('mp4box error', error)
-
-    let _resolveInfo: (value: unknown) => void
-    const infoPromise = new Promise((resolve) => { _resolveInfo = resolve })
-
-    let mime = 'video/mp4; codecs=\"'
-    let info: any | undefined
-    mp4boxfile.onReady = (_info: MP4Info) => {
-      info = _info
-      for (let i = 0; i < info.tracks.length; i++) {
-        if (i !== 0) mime += ','
-        mime += info.tracks[i].codec
-      }
-      mime += '\"'
-      _resolveInfo(info)
-    }
 
     let headerChunk: Chunk
     let ended = false
@@ -186,7 +166,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             pos
           }
         ]
-        console.log('chunks', chunks)
+        // console.log('chunks', chunks)
         // if (chunks.length === 2) {
         //   const buffer =
         //     chunks
@@ -224,13 +204,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     // @ts-ignore
     if (!headerChunk) throw new Error('No header chunk found after transmuxer init')
 
-    // @ts-ignore
-    headerChunk.buffer.buffer.fileStart = 0
-    mp4boxfile.appendBuffer(headerChunk.buffer.buffer)
-
-    const duration = (await transmuxer.getInfo()).input.duration / 1_000_000
-
-    await infoPromise
+    const mediaInfo = await transmuxer.getInfo()
+    const duration = mediaInfo.input.duration / 1_000_000
 
     const video = document.createElement('video')
     video.width = 1440
@@ -292,7 +267,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         mediaSource.addEventListener(
           'sourceopen',
           () => {
-            const sourceBuffer = mediaSource.addSourceBuffer(mime)
+            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${mediaInfo.input.video_mime_type},${mediaInfo.input.audio_mime_type}"`)
             mediaSource.duration = duration
             sourceBuffer.mode = 'segments'
             resolve(sourceBuffer)
@@ -544,12 +519,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       seek(video.currentTime)
     })
 
-    // video.pause()
-    // await seek(1370)
-    // video.play()
+    video.pause()
+    await seek(1370)
+    video.play()
 
 
     // video.currentTime = 1360
     // await new Promise(resolve => setTimeout(resolve, 1000))
-    // video.playbackRate = 5
+    video.playbackRate = 5
   })
