@@ -31,7 +31,6 @@
   },
   "dependencies": {
     "libav": "file:dist",
-    "mp4box": "^0.5.2",
     "osra": "^0.0.11",
     "p-queue": "^7.3.0"
   }
