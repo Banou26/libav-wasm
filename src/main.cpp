@@ -294,9 +294,19 @@ extern "C" {
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
           if (res == AVERROR_EOF) {
-            is_flushing = true;
             avio_flush(output_format_context->pb);
+            is_flushing = true;
             av_write_trailer(output_format_context);
+            write(
+              static_cast<long>(input_format_context->pb->pos),
+              NULL,
+              is_header,
+              true,
+              0,
+              0,
+              0
+            );
+            // destroy();
             break;
           }
           printf("ERROR: could not read frame | %s \n", av_err2str(res));
