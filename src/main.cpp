@@ -429,9 +429,9 @@ extern "C" {
               NULL,
               is_header,
               true,
-              0,
-              0,
-              0
+              pos,
+              pts,
+              duration
             );
             // destroy();
             break;

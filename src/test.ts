@@ -126,7 +126,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration: chunkDuration, pos }) => {
-        // console.log('write', { isHeader, offset, buffer, pts, chunkDuration, pos })
         if (offset === contentLength) {
           const lastChunk = chunks.at(-1)
           if (!lastChunk) throw new Error('No last chunk found')
@@ -135,13 +134,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             {
               offset,
               buffer: new Uint8Array(buffer),
-              pts: lastChunk.pts + lastChunk.duration,
-              duration: duration - lastChunk.pts,
+              pts,
+              duration: chunkDuration,
               pos
             }
           ]
           ended = true
-          // console.log('THATS A TRAILER CHUNK', chunks)
           return
         }
         if (isHeader) {
