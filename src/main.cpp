@@ -211,6 +211,7 @@ extern "C" {
     
     void init (bool _first_init) {
       initializing = true;
+      init_buffer_count = 0;
       int res;
       is_header = true;
       duration = 0;
