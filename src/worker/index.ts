@@ -7,6 +7,9 @@ import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
+    module: {
+      locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
+    },
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
   })
 
@@ -35,6 +38,7 @@ const init = makeCallListener(async (
   let currentOffset = 0
   let currentBuffer = new Uint8Array(0)
   const makeTransmuxer = () => new module.Transmuxer({
+    promise: Promise.resolve(),
     length,
     bufferSize,
     error: (critical: boolean, message: string) => {

@@ -126,6 +126,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration: chunkDuration, pos }) => {
+        // console.log('write', { isHeader, offset, buffer, pts, duration: chunkDuration, pos })
         if (offset === contentLength) {
           const lastChunk = chunks.at(-1)
           if (!lastChunk) throw new Error('No last chunk found')
@@ -516,6 +517,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // console.log('SEEKING', video.currentTime)
       seek(video.currentTime)
     })
+
+    await new Promise(resolve => setTimeout(resolve, 1000))
 
     video.pause()
     await seek(1370)

@@ -28,6 +28,7 @@ dist/libav-wasm.js:
 	-s STACK_SIZE=50mb \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
+	-s ASSERTIONS=2 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
 	src/main.cpp

@@ -1,7 +1,9 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
+#include <vector>
 
 using namespace emscripten;
+using namespace std;
 
 extern "C" {
   #include <libavformat/avio.h>
@@ -68,6 +70,16 @@ extern "C" {
     val seek = val::undefined();
     val error = val::undefined();
 
+    bool first_init = true;
+    bool initializing = false;
+
+    vector<std::string> init_buffers;
+    int init_buffer_count = 0;
+
+    val promise = val::undefined();
+    // val promise = val::global("Promise")["resolve"]().as<val>();
+    // val promise = val::global("Promise").get("resolve").as<val>();
+
     static void print_dict(const AVDictionary *m)
     {
         AVDictionaryEntry *t = nullptr;
@@ -77,6 +89,7 @@ extern "C" {
     }
 
     Transmuxer(val options) {
+      promise = options["promise"];
       input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
       read = options["read"];
@@ -196,7 +209,8 @@ extern "C" {
       return mime_type;
     }
     
-    void init (bool first_init) {
+    void init (bool _first_init) {
+      initializing = true;
       int res;
       is_header = true;
       duration = 0;
@@ -310,6 +324,7 @@ extern "C" {
 
         // call the JS subtitle callback and continue to next stream
         if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+          if (!first_init) continue;
           // Get subtitle codec context
           // AVCodec*
           auto codec = avcodec_find_decoder(in_codecpar->codec_id);
@@ -338,16 +353,14 @@ extern "C" {
           AVDictionaryEntry* title_entry = av_dict_get(in_stream->metadata, "title", NULL, AV_DICT_IGNORE_SUFFIX);
           std::string title = std::string(title_entry->value);
           std::string data = reinterpret_cast<char*>(codecCtx->subtitle_header);
-          if (first_init) {
-            // call the js subtitle callback
-            subtitle(
-              i,
-              true,
-              data,
-              language,
-              title
-            );
-          }
+          // call the js subtitle callback
+          subtitle(
+            i,
+            true,
+            data,
+            language,
+            title
+          );
           // cleanup
           av_free(codecCtx->subtitle_header);
           codecCtx->subtitle_header = NULL;
@@ -357,15 +370,17 @@ extern "C" {
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
           video_stream_index = i;
-          std::string mime_type;
-          if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
-            mime_type = parse_h264_mime_type(in_codecpar).c_str();
-          } else  if (in_codecpar->codec_id == AV_CODEC_ID_H265) {
-            mime_type = parse_h265_mime_type(in_codecpar).c_str();
-          } 
-          video_mime_type = mime_type;
+          if (first_init) {
+            std::string mime_type;
+            if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
+              mime_type = parse_h264_mime_type(in_codecpar).c_str();
+            } else  if (in_codecpar->codec_id == AV_CODEC_ID_H265) {
+              mime_type = parse_h265_mime_type(in_codecpar).c_str();
+            } 
+            video_mime_type = mime_type;
+          }
         }
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO){
+        if (first_init && in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO){
           std::string mime_type;
           if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
             mime_type = parse_mp4a_mime_type(in_codecpar).c_str();
@@ -400,15 +415,20 @@ extern "C" {
         printf("ERROR: could not write output header | %s \n", av_err2str(res));
         return;
       }
-      write(
-        static_cast<long>(input_format_context->pb->pos),
-        NULL,
-        is_header,
-        true,
-        0,
-        0,
-        0
-      );
+      if (first_init) {
+        write(
+          static_cast<long>(input_format_context->pb->pos),
+          NULL,
+          is_header,
+          true,
+          0,
+          0,
+          0
+        );
+      }
+
+      initializing = false;
+      first_init = false;
     }
 
     void process(double time_to_process) {
@@ -611,14 +631,28 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
     emscripten::val &read = remuxObject.read;
-    // call the JS read function and get its result as
-    // {
-    //   buffer: Uint8Array,
-    //   size: int
-    // }
-    val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
-    std::string buffer = res["buffer"].as<std::string>();
-    int buffer_size = res["size"].as<int>();
+    std::string buffer;
+    if (remuxObject.initializing) {
+      if (remuxObject.first_init) {
+        val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
+        buffer = res["buffer"].as<std::string>();
+        remuxObject.init_buffers.push_back(buffer);
+      } else {
+        remuxObject.promise.await();
+        buffer = remuxObject.init_buffers[remuxObject.init_buffer_count];
+        remuxObject.init_buffer_count++;
+      }
+    } else {
+      // call the JS read function and get its result as
+      // {
+      //   buffer: Uint8Array,
+      //   size: int
+      // }
+      val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
+      buffer = res["buffer"].as<std::string>();
+    }
+
+    int buffer_size = buffer.size();
     if (buffer_size == 0) {
       return AVERROR_EOF;
     }
@@ -631,6 +665,11 @@ extern "C" {
   // Write callback called by AVIOContext
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
     Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
+
+    if (remuxObject.initializing && !remuxObject.first_init) {
+      return buf_size;
+    }
+
     emscripten::val &write = remuxObject.write;
     // call the JS write function
 
