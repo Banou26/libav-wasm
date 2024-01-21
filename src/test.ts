@@ -75,7 +75,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
 
-    let headerChunk: Chunk
+    // let headerChunk: Chunk
     let ended = false
 
     const workerUrl2 = new URL('../build/worker.js', import.meta.url).toString()
@@ -118,24 +118,23 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // console.log('attachment', filename, mimetype, buffer)
       },
       write: ({ isHeader, offset, buffer, pts, duration: chunkDuration, pos }) => {
-        if (isHeader) {
-          if (!headerChunk) {
-            headerChunk = {
-              offset,
-              buffer: new Uint8Array(buffer),
-              pts,
-              duration: chunkDuration,
-              pos
-            }
-          }
-          return
-        }
+        // if (isHeader) {
+        //   if (!headerChunk) {
+        //     headerChunk = {
+        //       offset,
+        //       buffer: new Uint8Array(buffer),
+        //       pts,
+        //       duration: chunkDuration,
+        //       pos
+        //     }
+        //   }
+        //   return
+        // }
       }
     })
 
-    await remuxer.init()
+    const headerChunk = await remuxer.init()
 
-    // @ts-expect-error
     if (!headerChunk) throw new Error('No header chunk found after remuxer init')
 
     const mediaInfo = await remuxer.getInfo()
@@ -276,6 +275,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     }
 
     await appendBuffer(headerChunk.buffer)
+
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
     await logAndAppend((await remuxer.read()))
     await logAndAppend((await remuxer.read()))
     await logAndAppend((await remuxer.read()))

@@ -101,36 +101,21 @@ const init = makeCallListener(async (
       const buffer = await randomRead(offset, bufferSize)
       return buffer
     },
-    write: async (
-      offset: number, buffer: Uint8Array,
-      isHeader: boolean, isFlushing: boolean,
-      position: number, pts: number, duration: number
+    write: async (buffer: Uint8Array) => {
+      console.log('buffer', buffer.byteLength)
+      console.log('writeBuffer', writeBuffer.byteLength)
+      const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
+      newBuffer.set(writeBuffer)
+      newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
+      writeBuffer = newBuffer
+    },
+    flush: async (
+      offset: number, position: number,
+      pts: number, duration: number
     ) => {
-      if (isHeader) {
-        if (isFlushing && writeBuffer.byteLength > 0) {
-          write({
-            isHeader,
-            offset,
-            arrayBuffer: writeBuffer.buffer,
-            position,
-            pts,
-            duration
-          })
-          writeBuffer = new Uint8Array(0)
-          if (isHeader) return
-        }
-  
-  
-        const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
-        newBuffer.set(writeBuffer)
-        newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
-        writeBuffer = newBuffer
-        return
-      }
-      console.log('write', isHeader, isFlushing, pts)
-
-      const newBuffer = new Uint8Array(buffer.byteLength)
-      newBuffer.set(buffer)
+      console.log('flush', writeBuffer.byteLength)
+      const newBuffer = new Uint8Array(writeBuffer.byteLength)
+      newBuffer.set(writeBuffer)
       readResultPromiseResolve({
         isHeader: false,
         offset,
@@ -139,6 +124,7 @@ const init = makeCallListener(async (
         pts,
         duration
       })
+      writeBuffer = new Uint8Array(0)
     }
   })
 
@@ -149,7 +135,13 @@ const init = makeCallListener(async (
       writeBuffer = new Uint8Array(0)
       module = await makeModule(publicPath)
       remuxer = makeRemuxer()
+
+      readResultPromise = new Promise<Chunk>((resolve, reject) => {
+        readResultPromiseResolve = resolve
+        readResultPromiseReject = reject
+      })
       await remuxer.init()
+      return readResultPromise
     },
     destroy: () => {
       remuxer.destroy()

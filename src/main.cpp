@@ -51,7 +51,6 @@ extern "C" {
     int video_stream_index;
 
     bool is_header;
-    bool is_flushing;
     long prev_pos;
     double prev_pts;
     double prev_duration;
@@ -71,6 +70,7 @@ extern "C" {
     val attachment = val::undefined();
     val subtitle = val::undefined();
     val write = val::undefined();
+    val flush = val::undefined();
     val error = val::undefined();
 
     double currentOffset = 0;
@@ -102,6 +102,7 @@ extern "C" {
       attachment = options["attachment"];
       subtitle = options["subtitle"];
       write = options["write"];
+      flush = options["flush"];
       error = options["error"];
     }
 
@@ -422,11 +423,8 @@ extern "C" {
         return;
       }
       if (first_init) {
-        write(
+        flush(
           static_cast<long>(input_format_context->pb->pos),
-          NULL,
-          is_header,
-          true,
           0,
           0,
           0
@@ -448,13 +446,9 @@ extern "C" {
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
           if (res == AVERROR_EOF) {
             avio_flush(output_format_context->pb);
-            is_flushing = true;
             av_write_trailer(output_format_context);
-            write(
+            flush(
               static_cast<long>(input_format_context->pb->pos),
-              NULL,
-              is_header,
-              true,
               pos,
               pts,
               duration
@@ -521,7 +515,12 @@ extern "C" {
           if (was_header) {
             is_header = false;
           } else {
-            is_flushing = true;
+            flush(
+              static_cast<long>(input_format_context->pb->pos),
+              prev_pos,
+              prev_pts,
+              prev_duration
+            ).await();
             flushed = true;
           }
 
@@ -700,23 +699,13 @@ extern "C" {
     // call the JS write function
 
     write(
-      static_cast<long>(remuxObject.input_format_context->pb->pos),
       emscripten::val(
         emscripten::typed_memory_view(
           buf_size,
           buf
         )
-      ),
-      remuxObject.is_header,
-      remuxObject.is_flushing,
-      remuxObject.prev_pos,
-      remuxObject.prev_pts,
-      remuxObject.prev_duration
+      )
     ).await();
-
-    if (remuxObject.is_flushing) {
-      remuxObject.is_flushing = false;
-    }
 
     return buf_size;
   }
