@@ -101,15 +101,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             VIDEO_URL,
             {
               headers: {
-                Range: `bytes=${offset}`
+                Range: `bytes=${offset}-`
               }
             }
           ).then(res =>
-            // toBufferedStream(3)(
+            toBufferedStream(3)(
               toStreamChunkSize(BUFFER_SIZE)(
                 res.body!
               )
-            // )
+            )
           ),
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
@@ -274,18 +274,25 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await appendBuffer(chunk.buffer)
     }
 
+    const BUFFER_COUNT = 2
+
     await appendBuffer(headerChunk.buffer)
 
+    console.log('HEADER APPENDED')
+
     await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    console.log('FIRST BUFFER APPENDED')
+
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
     console.log('ranges', getTimeRanges())
     // console.log((await remuxer.read()).pts)

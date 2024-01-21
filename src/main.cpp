@@ -51,6 +51,7 @@ extern "C" {
     int video_stream_index;
 
     bool is_header;
+    bool is_flushing;
     long prev_pos;
     double prev_pts;
     double prev_duration;
@@ -429,6 +430,7 @@ extern "C" {
           0,
           0
         );
+        is_flushing = false;
       }
 
       initializing = false;
@@ -446,6 +448,7 @@ extern "C" {
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
           if (res == AVERROR_EOF) {
             avio_flush(output_format_context->pb);
+            is_flushing = true;
             av_write_trailer(output_format_context);
             flush(
               static_cast<long>(input_format_context->pb->pos),
@@ -515,12 +518,7 @@ extern "C" {
           if (was_header) {
             is_header = false;
           } else {
-            flush(
-              static_cast<long>(input_format_context->pb->pos),
-              prev_pos,
-              prev_pts,
-              prev_duration
-            ).await();
+            is_flushing = true;
             flushed = true;
           }
 
@@ -539,6 +537,16 @@ extern "C" {
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
           continue;
+        }
+
+        if (is_flushing) {
+          flush(
+            static_cast<long>(input_format_context->pb->pos),
+            prev_pos,
+            prev_pts,
+            prev_duration
+          ).await();
+          is_flushing = false;
         }
 
         // free packet
