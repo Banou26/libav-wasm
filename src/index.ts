@@ -1,6 +1,5 @@
 import type { Resolvers as WorkerResolvers } from './worker'
 
-import PQueue from 'p-queue'
 import { call } from 'osra'
 
 import { SEEK_FLAG, SEEK_WHENCE_FLAG } from './utils'
@@ -99,15 +98,9 @@ export const makeTransmuxer = async ({
 
   const target = call<WorkerResolvers>(worker)
 
-  const apiQueue = new PQueue()
-
-  const addTask = <T extends (...args: any) => any>(func: T) =>
-    apiQueue.add<Awaited<ReturnType<T>>>(func)
-  
   const subtitles = new Map<number, Subtitle>()
-  let lastChunk: Chunk | undefined
 
-  const { init: _workerInit, destroy: _workerDestroy, process: _workerProcess, seek: _workerSeek, getInfo: _getInfo } =
+  const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =
     await target(
       'init',
       {
@@ -157,80 +150,35 @@ export const makeTransmuxer = async ({
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
         randomRead: (offset, bufferSize) => _randomRead(offset, bufferSize),
         getStream: (offset) => _getStream(offset),
-        write: async ({
+        write: ({
           isHeader,
           offset,
           arrayBuffer,
           position,
           pts,
           duration
-        }) => {
-          const chunk = {
-            isHeader,
-            offset,
-            buffer: new Uint8Array(arrayBuffer),
-            pts,
-            duration,
-            pos: position
-          }
-
-          if (!isHeader) {
-            lastChunk = chunk
-            processBufferChunks.push(chunk)
-          }
-
-          await _write(chunk)
-        }
+        }) => _write({
+          isHeader,
+          offset,
+          buffer: new Uint8Array(arrayBuffer),
+          pts,
+          duration,
+          pos: position
+        })
       }
     )
 
-  const workerQueue = new PQueue({ concurrency: 1 })
-
-  const addWorkerTask = <T extends (...args: any[]) => any>(func: T) =>
-    (...args: Parameters<T>) =>
-      workerQueue.add<Awaited<ReturnType<T>>>(() => func(...args))
-    
-  const workerInit = addWorkerTask(_workerInit)
-  const workerDestroy = addWorkerTask(_workerDestroy)
-  const workerProcess = addWorkerTask(_workerProcess)
-  const workerSeek = addWorkerTask(_workerSeek)
-  const getInfo = addWorkerTask(_getInfo)
-
-  let processBufferChunks: Chunk[] = []
-
   const result = {
-    init: () => addTask(async () => {
-      processBufferChunks = []
-      await workerInit()
-    }),
+    init: () => workerInit(),
     destroy: (destroyWorker = false) => {
       if (destroyWorker) {
         worker.terminate()
         return
       }
-      return addTask(() => workerDestroy())
+      return workerDestroy()
     },
-    process: (timeToProcess: number) => addTask(async () => {
-      processBufferChunks = []
-      await workerProcess(timeToProcess)
-      const writtenChunks = processBufferChunks
-      processBufferChunks = []
-      return writtenChunks
-    }),
-    seek: (time: number) => {
-      return addTask(async () => {
-        // if (lastChunk && (lastChunk.pts > time)) {
-        //   await workerDestroy()
-        //   processBufferChunks = []
-        //   await workerInit()
-        // }
-        processBufferChunks = []
-        await workerSeek(
-          Math.max(0, time) * 1000,
-          SEEK_FLAG.NONE
-        )
-      })
-    },
+    read: () => workerRead(),
+    seek: (time: number) => workerSeek(Math.max(0, time) * 1000, SEEK_FLAG.NONE),
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 

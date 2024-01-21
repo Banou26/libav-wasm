@@ -437,12 +437,12 @@ extern "C" {
       first_init = false;
     }
 
-    void process(double time_to_process) {
+    void read() {
       int res;
-      double start_process_pts = 0;
 
+      bool flushed = false;
       // loop through the packet frames until we reach the processed size
-      while (start_process_pts == 0 || (pts < (start_process_pts + time_to_process))) {
+      while (!flushed) {
         AVPacket* packet = av_packet_alloc();
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
@@ -510,14 +510,8 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-        if (!start_process_pts) {
-          start_process_pts = packet->pts * av_q2d(out_stream->time_base);
-        }
-
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          if (!start_process_pts) {
-            start_process_pts = packet->pts * av_q2d(out_stream->time_base);
-          }
+          // printf("pts: %f, prev duration: %f, duration: %f\n", packet->pts * av_q2d(out_stream->time_base), duration, packet->duration * av_q2d(out_stream->time_base));
           duration += packet->duration * av_q2d(out_stream->time_base);
         }
 
@@ -528,10 +522,12 @@ extern "C" {
             is_header = false;
           } else {
             is_flushing = true;
+            flushed = true;
           }
 
           prev_duration = duration;
           prev_pts = pts;
+          // printf("pts: %f, duration: %f\n", pts, duration);
           prev_pos = pos;
 
           duration = 0;
@@ -583,7 +579,7 @@ extern "C" {
       destroy();
       init();
 
-      process(0.01);
+      read();
 
       int res;
       prev_duration = 0;
@@ -649,7 +645,13 @@ extern "C" {
     if (remuxObject.initializing) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
-        buffer = randomRead(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await().as<std::string>();
+        buffer =
+          randomRead(
+            static_cast<long>(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+            .await()
+            .as<std::string>();
         remuxObject.init_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
@@ -657,17 +659,17 @@ extern "C" {
         remuxObject.init_buffer_count++;
       }
     } else {
-      // emscripten::val &randomRead = remuxObject.randomRead;
-      // buffer = randomRead(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await().as<std::string>();
-      emscripten::val &streamRead = remuxObject.streamRead;
-      if (!remuxObject.currentReadStream) {
-        remuxObject.currentReadStream = streamRead(static_cast<long>(remuxObject.input_format_context->pb->pos)).await();
-      }
-      emscripten::val cancelled = remuxObject.currentReadStream["closed"].await();
-      if (cancelled.as<bool>()) {
+      emscripten::val result =
+        remuxObject
+          .streamRead(
+            static_cast<long>(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+          .await();
+      bool is_cancelled = result["cancelled"].as<bool>();
+      if (is_cancelled) {
         return AVERROR_EXIT;
       }
-      emscripten::val result = remuxObject.currentReadStream["read"]().await();
       bool is_done = result["done"].as<bool>();
       if (is_done) {
         return AVERROR_EOF;
@@ -736,7 +738,7 @@ extern "C" {
     class_<Remuxer>("Remuxer")
       .constructor<emscripten::val>()
       .function("init", &Remuxer::init)
-      .function("process", &Remuxer::process)
+      .function("read", &Remuxer::read)
       .function("destroy", &Remuxer::destroy)
       .function("seek", &Remuxer::_seek)
       .function("getInfo", &Remuxer::getInfo);

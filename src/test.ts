@@ -12,7 +12,7 @@ type Chunk = {
   pos: number
 }
 
-const BUFFER_SIZE = 5_000_000
+const BUFFER_SIZE = 2_500_000
 const VIDEO_URL = '../video5.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
@@ -82,7 +82,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const blob = new Blob([`importScripts(${JSON.stringify(workerUrl2)})`], { type: 'application/javascript' })
     const workerUrl = URL.createObjectURL(blob)
 
-    const transmuxer = await makeTransmuxer({
+    const remuxer = await makeTransmuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
       bufferSize: BUFFER_SIZE,
@@ -96,21 +96,21 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             }
           }
         ).then(res => res.arrayBuffer()),
-      getStream: (offset) =>
-        fetch(
-          VIDEO_URL,
-          {
-            headers: {
-              Range: `bytes=${offset}`
+        getStream: (offset) =>
+          fetch(
+            VIDEO_URL,
+            {
+              headers: {
+                Range: `bytes=${offset}`
+              }
             }
-          }
-        ).then(res =>
-          toBufferedStream(3)(
-            toStreamChunkSize(BUFFER_SIZE)(
-              res.body!
-            )
-          )
-        ),
+          ).then(res =>
+            // toBufferedStream(3)(
+              toStreamChunkSize(BUFFER_SIZE)(
+                res.body!
+              )
+            // )
+          ),
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
@@ -133,20 +133,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    const processingQueue = new PQueue({ concurrency: 1 })
-
-    const process = (timeToProcess = POST_SEEK_NEEDED_BUFFERS_IN_SECONDS) =>
-      processingQueue.add(
-        () => ended ? Promise.resolve(undefined) : transmuxer.process(timeToProcess),
-        { throwOnTimeout: true }
-      )
-
-    await transmuxer.init()
+    await remuxer.init()
 
     // @ts-expect-error
-    if (!headerChunk) throw new Error('No header chunk found after transmuxer init')
+    if (!headerChunk) throw new Error('No header chunk found after remuxer init')
 
-    const mediaInfo = await transmuxer.getInfo()
+    const mediaInfo = await remuxer.getInfo()
     const duration = mediaInfo.input.duration / 1_000_000
 
     const video = document.createElement('video')
@@ -176,7 +168,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       'seeking',
       'stalled',
       'suspend',
-      'timeupdate',
+      // 'timeupdate',
       'volumechange',
       'waiting'
     ]
@@ -277,4 +269,20 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     video.addEventListener('seeking', () => {
 
     })
+
+    const logAndAppend = async (chunk: Chunk) => {
+      console.log('res', chunk)
+      await appendBuffer(chunk.buffer)
+    }
+
+    await appendBuffer(headerChunk.buffer)
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    console.log('ranges', getTimeRanges())
+    // console.log((await remuxer.read()).pts)
   })

@@ -1,4 +1,5 @@
 import { makeCallListener, registerListener } from 'osra'
+import type { Chunk } from '..'
 
 // @ts-ignore
 import WASMModule from 'libav'
@@ -41,6 +42,14 @@ const init = makeCallListener(async (
   let currentStream: ReadableStream<Uint8Array> | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
 
+  let streamResultPromiseResolve: (value: ReadableStreamReadResult<Uint8Array>) => void
+  let streamResultPromiseReject: (reason?: any) => void
+  let streamResultPromise: Promise<ReadableStreamReadResult<Uint8Array>>
+
+  let readResultPromiseResolve: (value: Chunk) => void
+  let readResultPromiseReject: (reason?: any) => void
+  let readResultPromise: Promise<Chunk>
+
   const makeRemuxer = () => new module.Remuxer({
     promise: Promise.resolve(),
     length,
@@ -56,28 +65,37 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    getStream: async (offset: number) => {
-      if (currentStream) {
-        await currentStream.cancel()
-        currentStream = undefined
-        reader = undefined
+    streamRead: async (offset: number) => {
+      // console.log('streamRead', offset)
+      if (!currentStream) {
+        currentStream = await getStream(offset)
+        reader = currentStream.getReader()
       }
-      const stream = await getStream(offset)
-      currentStream = stream
-      reader = stream.getReader()
-      return {
-        read: async () => {
-          const { done, value } = await reader!.read()
-          if (done) return new Uint8Array(0)
-          return value
-        },
-        closed: () => reader!.closed,
-        cancel: async () => {
-          await reader!.cancel()
-          currentStream = undefined
-          reader = undefined
-        }
-      }
+
+      streamResultPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        streamResultPromiseResolve = resolve
+        streamResultPromiseReject = reject
+      })
+
+      reader?.read()
+        .then((result) => streamResultPromiseResolve(result))
+        .catch((err) => streamResultPromiseReject(err))
+
+      return (
+        streamResultPromise
+          .then((value) => ({
+            value: value.value,
+            done: value.done
+          }))
+          .catch(err => {
+            console.log('streamRead error', err)
+            return {
+              buffer: undefined,
+              done: false,
+              cancelled: true
+            }
+          })
+      )
     },
     randomRead: async (offset: number, bufferSize: number) => {
       const buffer = await randomRead(offset, bufferSize)
@@ -88,23 +106,39 @@ const init = makeCallListener(async (
       isHeader: boolean, isFlushing: boolean,
       position: number, pts: number, duration: number
     ) => {
-      if (isFlushing && writeBuffer.byteLength > 0) {
-        write({
-          isHeader,
-          offset,
-          arrayBuffer: writeBuffer.buffer,
-          position,
-          pts,
-          duration
-        })
-        writeBuffer = new Uint8Array(0)
-        if (isHeader) return
+      if (isHeader) {
+        if (isFlushing && writeBuffer.byteLength > 0) {
+          write({
+            isHeader,
+            offset,
+            arrayBuffer: writeBuffer.buffer,
+            position,
+            pts,
+            duration
+          })
+          writeBuffer = new Uint8Array(0)
+          if (isHeader) return
+        }
+  
+  
+        const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
+        newBuffer.set(writeBuffer)
+        newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
+        writeBuffer = newBuffer
+        return
       }
+      console.log('write', isHeader, isFlushing, pts)
 
-      const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
-      newBuffer.set(writeBuffer)
-      newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
-      writeBuffer = newBuffer
+      const newBuffer = new Uint8Array(buffer.byteLength)
+      newBuffer.set(buffer)
+      readResultPromiseResolve({
+        isHeader: false,
+        offset,
+        buffer: newBuffer.buffer as Uint8Array,
+        pos: position,
+        pts,
+        duration
+      })
     }
   })
 
@@ -124,8 +158,14 @@ const init = makeCallListener(async (
       writeBuffer = new Uint8Array(0)
     },
     seek: (timestamp: number, flags: SEEK_FLAG) => remuxer.seek(timestamp, flags),
-    // todo: For some reason remuxer was undefined on firefox after a pretty normal seek(not fast seeking or anything), refactor this to prevent issues like this
-    process: (timeToProcess: number) => remuxer.process(timeToProcess),
+    read: () => {
+      readResultPromise = new Promise<Chunk>((resolve, reject) => {
+        readResultPromiseResolve = resolve
+        readResultPromiseReject = reject
+      })
+      remuxer.read()
+      return readResultPromise
+    },
     getInfo: () => remuxer.getInfo()
   }
 })
