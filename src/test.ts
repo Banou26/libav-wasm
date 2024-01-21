@@ -87,7 +87,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
-      getStream: (offset, size) =>
+      randomRead: (offset, size) =>
         fetch(
           VIDEO_URL,
           {
@@ -96,7 +96,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             }
           }
         ).then(res => res.arrayBuffer()),
-      readStream: (offset) =>
+      getStream: (offset) =>
         fetch(
           VIDEO_URL,
           {

@@ -237,7 +237,7 @@ extern "C" {
         buffer_size,
         0,
         reinterpret_cast<void*>(this),
-        &randomReadFunction,
+        &readFunction,
         nullptr,
         &seekFunction
       );
@@ -624,18 +624,19 @@ extern "C" {
   // Seek callback called by AVIOContext
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
     Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
-    if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
-      return remuxObject.currentOffset + offset
+    if (whence == SEEK_CUR) {
+      return remuxObject.currentOffset + offset;
     }
-    if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
-      return -1
+    if (whence == SEEK_END) {
+      return -1;
     }
-    if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
-      return offset
+    if (whence == SEEK_SET) {
+      return offset;
     }
-    if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
-      return remuxObject.input_length
+    if (whence == AVSEEK_SIZE) {
+      return remuxObject.input_length;
     }
+    return -1;
   }
 
   // If emscripten asynchify ever start working for libraries callbacks,
@@ -656,14 +657,20 @@ extern "C" {
         remuxObject.init_buffer_count++;
       }
     } else {
+      // emscripten::val &randomRead = remuxObject.randomRead;
+      // buffer = randomRead(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await().as<std::string>();
       emscripten::val &streamRead = remuxObject.streamRead;
       if (!remuxObject.currentReadStream) {
         remuxObject.currentReadStream = streamRead(static_cast<long>(remuxObject.input_format_context->pb->pos)).await();
       }
+      emscripten::val cancelled = remuxObject.currentReadStream["closed"].await();
+      if (cancelled.as<bool>()) {
+        return AVERROR_EXIT;
+      }
       emscripten::val result = remuxObject.currentReadStream["read"]().await();
       bool is_done = result["done"].as<bool>();
       if (is_done) {
-        return AVERROR_EOF
+        return AVERROR_EOF;
       }
       buffer = result["value"].as<std::string>();
     }
@@ -674,7 +681,7 @@ extern "C" {
     }
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
-    remuxObject.currentOffset = remuxObject.currentOffset + buffer.byteLength
+    remuxObject.currentOffset = remuxObject.currentOffset + buffer_size;
     // If result buffer size is 0, we reached the end of the file
     return buffer_size;
   }
