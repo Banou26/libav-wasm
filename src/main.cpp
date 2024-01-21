@@ -519,6 +519,12 @@ extern "C" {
             is_header = false;
           } else {
             is_flushing = true;
+            flush(
+              static_cast<long>(input_format_context->pb->pos),
+              prev_pos,
+              prev_pts,
+              prev_duration
+            ).await();
             flushed = true;
           }
 

@@ -101,8 +101,8 @@ const init = makeCallListener(async (
       return buffer
     },
     write: async (buffer: Uint8Array) => {
-      console.log('buffer', buffer)
-      console.log('writeBuffer', writeBuffer)
+      // console.log('buffer', buffer)
+      // console.log('writeBuffer', writeBuffer)
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -112,6 +112,7 @@ const init = makeCallListener(async (
       offset: number, position: number,
       pts: number, duration: number
     ) => {
+      if (!writeBuffer.byteLength) return
       console.log('flush', writeBuffer)
       const newBuffer = new Uint8Array(writeBuffer.byteLength)
       newBuffer.set(writeBuffer)

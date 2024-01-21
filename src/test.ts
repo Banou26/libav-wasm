@@ -278,14 +278,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     await appendBuffer(headerChunk.buffer)
 
-    console.log('HEADER APPENDED')
 
     await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    console.log('FIRST BUFFER APPENDED')
-
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
+    await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
