@@ -35,7 +35,7 @@ extern "C" {
   static int readOutputFunction(void* opaque, uint8_t* buf, int buf_size);
   static int64_t seekFunction(void* opaque, int64_t offset, int whence);
 
-  class Transmuxer {
+  class Remuxer {
   public:
     AVIOContext* input_avio_context;
     AVIOContext* output_avio_context;
@@ -63,12 +63,17 @@ extern "C" {
     std::string video_mime_type;
     std::string audio_mime_type;
 
-    val read = val::undefined();
+    val randomRead = val::undefined();
+
+    val streamRead = val::undefined();
+    val currentReadStream = val::undefined();
+
     val attachment = val::undefined();
     val subtitle = val::undefined();
     val write = val::undefined();
-    val seek = val::undefined();
     val error = val::undefined();
+
+    double currentOffset = 0;
 
     bool first_init = true;
     bool initializing = false;
@@ -88,15 +93,15 @@ extern "C" {
         printf("\n");
     }
 
-    Transmuxer(val options) {
+    Remuxer(val options) {
       promise = options["promise"];
       input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
-      read = options["read"];
+      randomRead = options["randomRead"];
+      streamRead = options["streamRead"];
       attachment = options["attachment"];
       subtitle = options["subtitle"];
       write = options["write"];
-      seek = options["seek"];
       error = options["error"];
     }
 
@@ -209,7 +214,7 @@ extern "C" {
       return mime_type;
     }
     
-    void init (bool _first_init) {
+    void init () {
       initializing = true;
       init_buffer_count = 0;
       int res;
@@ -232,7 +237,7 @@ extern "C" {
         buffer_size,
         0,
         reinterpret_cast<void*>(this),
-        &readFunction,
+        &randomReadFunction,
         nullptr,
         &seekFunction
       );
@@ -576,7 +581,7 @@ extern "C" {
 
     int _seek(int timestamp, int flags) {
       destroy();
-      init(false);
+      init();
 
       process(0.01);
 
@@ -618,11 +623,19 @@ extern "C" {
 
   // Seek callback called by AVIOContext
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
-    Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
-    emscripten::val &seek = remuxObject.seek;
-    // call the JS seek function
-    double result = seek(static_cast<double>(offset), whence).await().as<double>();
-    return result;
+    Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    if (whence === SEEK_WHENCE_FLAG.SEEK_CUR) {
+      return remuxObject.currentOffset + offset
+    }
+    if (whence === SEEK_WHENCE_FLAG.SEEK_END) {
+      return -1
+    }
+    if (whence === SEEK_WHENCE_FLAG.SEEK_SET) {
+      return offset
+    }
+    if (whence === SEEK_WHENCE_FLAG.AVSEEK_SIZE) {
+      return remuxObject.input_length
+    }
   }
 
   // If emscripten asynchify ever start working for libraries callbacks,
@@ -630,13 +643,12 @@ extern "C" {
 
   // Read callback called by AVIOContext
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
-    emscripten::val &read = remuxObject.read;
+    Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     std::string buffer;
     if (remuxObject.initializing) {
+      emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
-        val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
-        buffer = res["buffer"].as<std::string>();
+        buffer = randomRead(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await().as<std::string>();
         remuxObject.init_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
@@ -644,13 +656,16 @@ extern "C" {
         remuxObject.init_buffer_count++;
       }
     } else {
-      // call the JS read function and get its result as
-      // {
-      //   buffer: Uint8Array,
-      //   size: int
-      // }
-      val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
-      buffer = res["buffer"].as<std::string>();
+      emscripten::val &streamRead = remuxObject.streamRead;
+      if (!remuxObject.currentReadStream) {
+        remuxObject.currentReadStream = streamRead(static_cast<long>(remuxObject.input_format_context->pb->pos)).await();
+      }
+      emscripten::val result = remuxObject.currentReadStream["read"]().await();
+      bool is_done = result["done"].as<bool>();
+      if (is_done) {
+        return AVERROR_EOF
+      }
+      buffer = result["value"].as<std::string>();
     }
 
     int buffer_size = buffer.size();
@@ -659,13 +674,14 @@ extern "C" {
     }
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
+    remuxObject.currentOffset = remuxObject.currentOffset + buffer.byteLength
     // If result buffer size is 0, we reached the end of the file
     return buffer_size;
   }
 
   // Write callback called by AVIOContext
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
+    Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
 
     if (remuxObject.initializing && !remuxObject.first_init) {
       return buf_size;
@@ -710,12 +726,12 @@ extern "C" {
       .field("input", &InfoObject::input)
       .field("output", &InfoObject::output);
 
-    class_<Transmuxer>("Transmuxer")
+    class_<Remuxer>("Remuxer")
       .constructor<emscripten::val>()
-      .function("init", &Transmuxer::init)
-      .function("process", &Transmuxer::process)
-      .function("destroy", &Transmuxer::destroy)
-      .function("seek", &Transmuxer::_seek)
-      .function("getInfo", &Transmuxer::getInfo);
+      .function("init", &Remuxer::init)
+      .function("process", &Remuxer::process)
+      .function("destroy", &Remuxer::destroy)
+      .function("seek", &Remuxer::_seek)
+      .function("getInfo", &Remuxer::getInfo);
   }
 }

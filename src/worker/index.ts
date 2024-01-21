@@ -15,8 +15,8 @@ const makeModule = (publicPath: string) =>
 
 let module: ReturnType<typeof makeModule>
 
-// todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple transmuxer already initialized waiting to seek + process
-// todo: We can keep in memory all of the chunks needed to initialize the transmuxer
+// todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple remuxer already initialized waiting to seek + process
+// todo: We can keep in memory all of the chunks needed to initialize the remuxer
 
 // @ts-ignore
 const init = makeCallListener(async (
@@ -25,7 +25,8 @@ const init = makeCallListener(async (
     publicPath: string
     length: number
     bufferSize: number
-    read: (offset: number, size: number) => Promise<ArrayBuffer>
+    randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
+    getStream: (offset: number) => Promise<ReadableStream<Uint8Array>>
     write: (params: {
       offset: number, arrayBuffer: ArrayBuffer, isHeader: boolean,
       position: number, pts: number, duration: number
@@ -52,14 +53,10 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    seek: async (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
     read: async (offset: number, bufferSize: number) => {
       const buffer = await read(offset, bufferSize)
       currentOffset = offset + buffer.byteLength
-      return {
-        buffer,
-        size: buffer.byteLength
-      }
+      return buffer
     },
     write: async (
       offset: number, buffer: Uint8Array,
@@ -86,7 +83,7 @@ const init = makeCallListener(async (
     }
   })
 
-  let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
+  let remuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
 
   let firstInit = true
   return {
@@ -94,21 +91,21 @@ const init = makeCallListener(async (
       currentOffset = 0
       currentBuffer = new Uint8Array(0)
       module = await makeModule(publicPath)
-      transmuxer = makeTransmuxer()
-      await transmuxer.init(firstInit)
+      remuxer = makeTransmuxer()
+      await remuxer.init()
       if (firstInit) firstInit = false
     },
     destroy: () => {
-      transmuxer.destroy()
-      transmuxer = undefined
+      remuxer.destroy()
+      remuxer = undefined
       module = undefined
       currentOffset = 0
       currentBuffer = new Uint8Array(0)
     },
-    seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
-    // todo: For some reason transmuxer was undefined on firefox after a pretty normal seek(not fast seeking or anything), refactor this to prevent issues like this
-    process: (timeToProcess: number) => transmuxer.process(timeToProcess),
-    getInfo: () => transmuxer.getInfo()
+    seek: (timestamp: number, flags: SEEK_FLAG) => remuxer.seek(timestamp, flags),
+    // todo: For some reason remuxer was undefined on firefox after a pretty normal seek(not fast seeking or anything), refactor this to prevent issues like this
+    process: (timeToProcess: number) => remuxer.process(timeToProcess),
+    getInfo: () => remuxer.getInfo()
   }
 })
 
