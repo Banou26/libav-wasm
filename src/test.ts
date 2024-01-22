@@ -105,11 +105,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               }
             }
           ).then(res =>
-            // toBufferedStream(3)(
+            toBufferedStream(3)(
               toStreamChunkSize(BUFFER_SIZE)(
                 res.body!
               )
-            // )
+            )
           ),
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
@@ -315,7 +315,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       //   chunks = chunks.filter((_, index) => index !== i)
       // }
 
-      console.log('chunks', chunks)
+      // console.log('chunks', chunks)
     })
 
     appendBuffer((await pull()).buffer)
