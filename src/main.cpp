@@ -696,6 +696,10 @@ extern "C" {
     }
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
+
+    // free the result buffer
+    buffer.clear();
+
     remuxObject.currentOffset = remuxObject.currentOffset + buffer_size;
     // If result buffer size is 0, we reached the end of the file
     return buffer_size;

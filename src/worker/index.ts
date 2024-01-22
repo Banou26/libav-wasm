@@ -76,11 +76,15 @@ const init = makeCallListener(async (
         streamResultPromiseReject = reject
       })
 
-      const p = performance.now()
-      console.log('read')
+      // const p = performance.now()
+      // console.log('read')
+      // reader?.read()
+      //   .then((result) => console.log('read result', result, performance.now() - p) || streamResultPromiseResolve(result))
+      //   .catch((err) => console.log('read err', err, performance.now() - p) || streamResultPromiseReject(err))
+
       reader?.read()
-        .then((result) => console.log('read result', result, performance.now() - p) || streamResultPromiseResolve(result))
-        .catch((err) => console.log('read err', err, performance.now() - p) || streamResultPromiseReject(err))
+        .then((result) => streamResultPromiseResolve(result))
+        .catch((err) => streamResultPromiseReject(err))
 
       return (
         streamResultPromise
@@ -89,7 +93,7 @@ const init = makeCallListener(async (
             done: value.done
           }))
           .catch(err => {
-            console.log('streamRead error', err)
+            // console.log('streamRead error', err)
             return {
               buffer: undefined,
               done: false,
@@ -115,7 +119,7 @@ const init = makeCallListener(async (
       pts: number, duration: number
     ) => {
       if (!writeBuffer.byteLength) return
-      console.log('flush', writeBuffer)
+      // console.log('flush', writeBuffer)
       const newBuffer = new Uint8Array(writeBuffer.byteLength)
       newBuffer.set(writeBuffer)
       readResultPromiseResolve({

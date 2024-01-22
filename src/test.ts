@@ -291,31 +291,38 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const { currentTime } = video
       const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
 
-      // buffer needed chunks to be at BUFFER_COUNT
       for (let i = 0; i < currentChunkIndex + BUFFER_COUNT; i++) {
         if (chunks[i]) continue
         const chunk = await pull()
         await appendBuffer(chunk.buffer)
       }
 
-      // remove chunks before currentChunkIndex - PREVIOUS_BUFFER_COUNT
-      for (let i = 0; i < currentChunkIndex - PREVIOUS_BUFFER_COUNT; i++) {
-        if (!chunks[i]) continue
-        const { duration } = chunks[i]
-        await unbufferRange(0, duration)
-        chunks = chunks.filter((_, index) => index !== i)
+      const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
+      if (sliceIndex) chunks = chunks.slice(sliceIndex)
+
+      const bufferedRanges = getTimeRanges()
+
+      const firstChunk = chunks.at(0)
+      const lastChunk = chunks.at(-1)
+      if (!firstChunk || !lastChunk || firstChunk === lastChunk) return
+      const minTime = firstChunk.pts
+
+      for (const { start, end } of bufferedRanges) {
+        const chunkIndex = chunks.findIndex(({ pts, duration }) => start <= (pts + (duration / 2)) && (pts + (duration / 2)) <= end)
+        if (chunkIndex === -1) {
+          await unbufferRange(start, end)
+        } else {
+          if (start < minTime) {
+            await unbufferRange(
+              start,
+              minTime
+            )
+          }
+        }
       }
 
-      // for (let i = currentChunkIndex - PREVIOUS_BUFFER_COUNT; i >= 0; i--) {
-      //   if (!chunks[i]) continue
-      //   const { pts, duration } = chunks[i]
-      //   const start = pts
-      //   const end = pts + duration
-      //   await unbufferRange(start, end)
-      //   chunks = chunks.filter((_, index) => index !== i)
-      // }
-
-      // console.log('chunks', chunks)
+      // console.log('chunks', ...chunks)
+      // console.log('ranges2', ...bufferedRanges)
     })
 
     appendBuffer((await pull()).buffer)
@@ -325,6 +332,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     updateBuffers()
+
+    setTimeout(() => {
+      video.playbackRate = 5
+    }, 100)
 
     // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
