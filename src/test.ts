@@ -105,11 +105,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               }
             }
           ).then(res =>
-            toBufferedStream(3)(
+            // toBufferedStream(3)(
               toStreamChunkSize(BUFFER_SIZE)(
                 res.body!
               )
-            )
+            // )
           ),
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
@@ -274,15 +274,62 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await appendBuffer(chunk.buffer)
     }
 
+    let chunks: Chunk[] = []
+
+    const PREVIOUS_BUFFER_COUNT = 1
     const BUFFER_COUNT = 2
 
     await appendBuffer(headerChunk.buffer)
 
+    const pull = async () => {
+      const chunk = await remuxer.read()
+      chunks = [...chunks, chunk]
+      return chunk
+    }
 
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
-    await logAndAppend((await remuxer.read()))
+    const updateBuffers = queuedDebounceWithLastCall(500, async () => {
+      const { currentTime } = video
+      const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
+
+      // buffer needed chunks to be at BUFFER_COUNT
+      for (let i = 0; i < currentChunkIndex + BUFFER_COUNT; i++) {
+        if (chunks[i]) continue
+        const chunk = await pull()
+        await appendBuffer(chunk.buffer)
+      }
+
+      // remove chunks before currentChunkIndex - PREVIOUS_BUFFER_COUNT
+      for (let i = 0; i < currentChunkIndex - PREVIOUS_BUFFER_COUNT; i++) {
+        if (!chunks[i]) continue
+        const { duration } = chunks[i]
+        await unbufferRange(0, duration)
+        chunks = chunks.filter((_, index) => index !== i)
+      }
+
+      // for (let i = currentChunkIndex - PREVIOUS_BUFFER_COUNT; i >= 0; i--) {
+      //   if (!chunks[i]) continue
+      //   const { pts, duration } = chunks[i]
+      //   const start = pts
+      //   const end = pts + duration
+      //   await unbufferRange(start, end)
+      //   chunks = chunks.filter((_, index) => index !== i)
+      // }
+
+      console.log('chunks', chunks)
+    })
+
+    appendBuffer((await pull()).buffer)
+
+    video.addEventListener('timeupdate', () => {
+      updateBuffers()
+    })
+
+    updateBuffers()
+
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
+    // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))
     // await logAndAppend((await remuxer.read()))

@@ -76,9 +76,10 @@ const init = makeCallListener(async (
         streamResultPromiseReject = reject
       })
 
+      console.log('read')
       reader?.read()
-        .then((result) => streamResultPromiseResolve(result))
-        .catch((err) => streamResultPromiseReject(err))
+        .then((result) => console.log('read result', result) || streamResultPromiseResolve(result))
+        .catch((err) => console.log('read err', err) || streamResultPromiseReject(err))
 
       return (
         streamResultPromise
