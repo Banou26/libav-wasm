@@ -76,26 +76,28 @@ const init = makeCallListener(async (
         streamResultPromiseReject = reject
       })
 
-      // const p = performance.now()
-      // console.log('read')
-      // reader?.read()
-      //   .then((result) => console.log('read result', result, performance.now() - p) || streamResultPromiseResolve(result))
-      //   .catch((err) => console.log('read err', err, performance.now() - p) || streamResultPromiseReject(err))
-
       reader?.read()
         .then((result) => streamResultPromiseResolve(result))
         .catch((err) => streamResultPromiseReject(err))
 
       return (
         streamResultPromise
+          // .then((value) => {
+          //   const newBuffer = new Uint8Array(value.value.byteLength)
+          //   newBuffer.set(value.value)
+
+          //   return {
+          //     value: newBuffer,
+          //     done: value.done
+          //   }
+          // })
           .then((value) => ({
             value: value.value,
             done: value.done
           }))
           .catch(err => {
-            // console.log('streamRead error', err)
             return {
-              buffer: undefined,
+              value: undefined,
               done: false,
               cancelled: true
             }
@@ -107,8 +109,7 @@ const init = makeCallListener(async (
       return buffer
     },
     write: async (buffer: Uint8Array) => {
-      // console.log('buffer', buffer)
-      // console.log('writeBuffer', writeBuffer)
+      console.log('WRITE')
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -119,13 +120,11 @@ const init = makeCallListener(async (
       pts: number, duration: number
     ) => {
       if (!writeBuffer.byteLength) return
-      // console.log('flush', writeBuffer)
-      const newBuffer = new Uint8Array(writeBuffer.byteLength)
-      newBuffer.set(writeBuffer)
+      console.log('FLUSH', pts, duration)
       readResultPromiseResolve({
         isHeader: false,
         offset,
-        buffer: newBuffer.buffer as Uint8Array,
+        buffer: writeBuffer.buffer as Uint8Array,
         pos: position,
         pts,
         duration

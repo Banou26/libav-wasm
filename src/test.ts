@@ -277,7 +277,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let chunks: Chunk[] = []
 
     const PREVIOUS_BUFFER_COUNT = 1
-    const BUFFER_COUNT = 2
+    const BUFFER_COUNT = 5
 
     await appendBuffer(headerChunk.buffer)
 
@@ -332,6 +332,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     updateBuffers()
+
+    // while (1) {
+    //   await new Promise(resolve => setTimeout(resolve, 100))
+    //   console.log('pull')
+    //   await pull()
+    // }
 
     setTimeout(() => {
       video.playbackRate = 5

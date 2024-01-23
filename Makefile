@@ -26,6 +26,7 @@ dist/libav-wasm.js:
 	-s INITIAL_MEMORY=150mb \
 	-s TOTAL_MEMORY=125mb \
 	-s STACK_SIZE=50mb \
+	-s ALLOW_MEMORY_GROWTH=1 \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
 	-g \
