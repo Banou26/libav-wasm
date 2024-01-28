@@ -20,6 +20,20 @@ export default defineConfig((env) => ({
       env.mode === 'development'
         ? []
         : [commonjs()]
-    )
-  ]
+    ),
+    {
+      name: 'configure-response-headers',
+      configureServer: (server) => {
+        server.middlewares.use((_req, res, next) => {
+          res.setHeader('Cache-Control', 'no-store')
+          next()
+        })
+      }
+    }
+  ],
+  server: {
+    fs: {
+      allow: ['../..']
+    }
+  }
 }))

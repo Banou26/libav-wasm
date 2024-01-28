@@ -210,6 +210,7 @@ export const makeTransmuxer = async ({
           )
         },
         clearStream: async () => {
+          reader?.cancel()
           currentStream = undefined
           reader = undefined
         },

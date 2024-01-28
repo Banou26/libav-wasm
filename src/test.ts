@@ -328,6 +328,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
+      const p = performance.now()
       seeking = true
 
       await video.pause()
@@ -352,6 +353,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await new Promise(resolve => setTimeout(resolve, 0))
       seeking = false
       await updateBuffers()
+      console.log('seek time', performance.now() - p)
     })
 
     appendBuffer((await pull()).buffer)
@@ -391,11 +393,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       video.currentTime = 500
       await new Promise(resolve => setTimeout(resolve, 2000))
       video.currentTime = 600
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      await new Promise(resolve => setTimeout(resolve, 2000))
       video.currentTime = 300
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      video.currentTime = 200
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      video.currentTime = 100
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 200
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 100
     }, 1000)
   })
