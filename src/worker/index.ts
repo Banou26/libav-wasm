@@ -63,7 +63,7 @@ const init = makeCallListener(async (
       const res = await streamRead(offset)
       return {
         ...res,
-        value: new Uint8Array(res.value)
+        value: new Uint8Array(res.value ?? [])
       }
     },
     clearStream: () => clearStream(),

@@ -96,9 +96,9 @@ export const makeTransmuxer = async ({
   let currentStream: ReadableStream<Uint8Array> | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
 
-  let streamResultPromiseResolve: (value: ReadableStreamReadResult<Uint8Array>) => void
+  let streamResultPromiseResolve: (value: { value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }) => void
   let streamResultPromiseReject: (reason?: any) => void
-  let streamResultPromise: Promise<ReadableStreamReadResult<Uint8Array>>
+  let streamResultPromise: Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
 
   const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =
     await target(
@@ -155,7 +155,7 @@ export const makeTransmuxer = async ({
             reader = currentStream.getReader()
           }
     
-          streamResultPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+          streamResultPromise = new Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>((resolve, reject) => {
             streamResultPromiseResolve = resolve
             streamResultPromiseReject = reject
           })
