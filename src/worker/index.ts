@@ -60,7 +60,9 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, arraybuffer)
     },
     streamRead: async (offset: number) => {
+      console.log('worker streamRead', offset)
       const res = await streamRead(offset)
+      console.log('worker streamRead end', offset, res)
       return {
         ...res,
         value: new Uint8Array(res.value)
@@ -68,10 +70,12 @@ const init = makeCallListener(async (
     },
     clearStream: () => clearStream(),
     randomRead: async (offset: number, bufferSize: number) => {
+      console.log('worker randomRead', offset, bufferSize)
       const buffer = await randomRead(offset, bufferSize)
       return buffer
     },
     write: async (buffer: Uint8Array) => {
+      console.log('worker write', buffer.byteLength)
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -81,7 +85,8 @@ const init = makeCallListener(async (
       offset: number, position: number,
       pts: number, duration: number
     ) => {
-      if (!writeBuffer.byteLength) return
+      console.log('worker flush', writeBuffer.byteLength)
+      if (!writeBuffer.byteLength) return true
       readResultPromiseResolve({
         isHeader: false,
         offset,
@@ -91,6 +96,7 @@ const init = makeCallListener(async (
         duration
       })
       writeBuffer = new Uint8Array(0)
+      return false
     }
   })
 
@@ -117,11 +123,13 @@ const init = makeCallListener(async (
     },
     seek: (timestamp: number) => remuxer.seek(timestamp),
     read: () => {
+      console.log('worker read')
       readResultPromise = new Promise<Chunk>((resolve, reject) => {
         readResultPromiseResolve = resolve
         readResultPromiseReject = reject
       })
       remuxer.read()
+      console.log('worker read end')
       return readResultPromise
     },
     getInfo: () => remuxer.getInfo()

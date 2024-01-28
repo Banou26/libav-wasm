@@ -275,9 +275,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await appendBuffer(headerChunk.buffer)
 
     const pull = async () => {
-      // console.log('read')
+      console.log('read')
       const chunk = await remuxer.read()
-      // console.log('read', chunk)
+      console.log('read', chunk)
       chunks = [...chunks, chunk]
       return chunk
     }
