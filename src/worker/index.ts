@@ -115,7 +115,7 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: (timestamp: number, flags: SEEK_FLAG) => remuxer.seek(timestamp, flags),
+    seek: (timestamp: number) => remuxer.seek(timestamp),
     read: () => {
       readResultPromise = new Promise<Chunk>((resolve, reject) => {
         readResultPromiseResolve = resolve

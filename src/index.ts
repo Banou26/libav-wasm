@@ -2,13 +2,6 @@ import type { Resolvers as WorkerResolvers } from './worker'
 
 import { call } from 'osra'
 
-import { SEEK_FLAG, SEEK_WHENCE_FLAG } from './utils'
-
-export {
-  SEEK_FLAG,
-  SEEK_WHENCE_FLAG
-}
-
 export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
   publicPath: string
@@ -242,7 +235,7 @@ export const makeTransmuxer = async ({
       return workerDestroy()
     },
     read: () => workerRead(),
-    seek: (time: number) => workerSeek(Math.max(0, time) * 1000, SEEK_FLAG.NONE),
+    seek: (time: number) => workerSeek(Math.max(0, time) * 1000),
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 

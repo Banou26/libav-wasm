@@ -598,7 +598,7 @@ extern "C" {
       return output_avio_context->pos;
     }
 
-    int _seek(int timestamp, int flags) {
+    int _seek(int timestamp) {
       destroy();
       init();
 
@@ -611,7 +611,7 @@ extern "C" {
       duration = 0;
       pts = 0;
       pos = 0;
-      if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
+      if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD)) < 0) {
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
       }
       return 0;

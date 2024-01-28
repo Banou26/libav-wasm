@@ -1,7 +1,7 @@
 // @ts-ignore
 import PQueue from 'p-queue'
 
-import { SEEK_WHENCE_FLAG, queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
+import { queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeTransmuxer } from '.'
 
 type Chunk = {
@@ -13,11 +13,8 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video5.mkv'
+const VIDEO_URL = '../video2.mkv'
 // const VIDEO_URL = '../spidey.mkv'
-const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 10
-const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
-const POST_SEEK_REMOVE_BUFFERS_IN_SECONDS = 60
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
   return new Promise((resolve, reject) => {
@@ -273,7 +270,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let chunks: Chunk[] = []
 
     const PREVIOUS_BUFFER_COUNT = 1
-    const BUFFER_COUNT = 5
+    const BUFFER_COUNT = 3
 
     await appendBuffer(headerChunk.buffer)
 
@@ -330,33 +327,21 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
       const p = performance.now()
       seeking = true
-
-      await video.pause()
-      await new Promise(resolve => setTimeout(resolve, 100))
-
       await appendBuffer(headerChunk.buffer)
-
       chunks = []
-      await remuxer.seek(seekTime - 10)
-
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      video.addEventListener('canplaythrough', () => {
-        video.playbackRate = 1
-        video.play()
-      }, { once: true })
-
+      await remuxer.seek(seekTime)
       const chunk1 = await pull()
       sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
-      video.currentTime = seekTime
-      await new Promise(resolve => setTimeout(resolve, 0))
       seeking = false
       await updateBuffers()
       console.log('seek time', performance.now() - p)
     })
 
-    appendBuffer((await pull()).buffer)
+    console.log('pulling first chunk')
+    const firstChunk = await pull()
+    console.log('first chunk', firstChunk)
+    appendBuffer(firstChunk.buffer)
 
     video.addEventListener('timeupdate', () => {
       updateBuffers()
@@ -384,19 +369,19 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     setTimeout(async () => {
       // await video.pause()
       video.currentTime = 587.618314
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      await new Promise(resolve => setTimeout(resolve, 1000))
       // video.playbackRate = 5
       video.currentTime = 400
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      video.currentTime = 300
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      video.currentTime = 500
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      video.currentTime = 600
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      video.currentTime = 300
       // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 200
+      // video.currentTime = 300
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 500
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 600
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 300
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      video.currentTime = 534.953306
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 100
     }, 1000)
