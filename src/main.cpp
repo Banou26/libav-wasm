@@ -526,7 +526,7 @@ extern "C" {
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          printf("pts: %f, prev duration: %f, duration: %f\n", packet->pts * av_q2d(out_stream->time_base), duration, packet->duration * av_q2d(out_stream->time_base));
+          // printf("pts: %f, prev duration: %f, duration: %f\n", packet->pts * av_q2d(out_stream->time_base), duration, packet->duration * av_q2d(out_stream->time_base));
           duration += packet->duration * av_q2d(out_stream->time_base);
         }
 
@@ -550,7 +550,7 @@ extern "C" {
 
           prev_duration = duration;
           prev_pts = pts;
-          printf("pts: %f, duration: %f\n", prev_pts, duration);
+          // printf("pts: %f, duration: %f\n", prev_pts, duration);
           prev_pos = pos;
 
           duration = 0;
@@ -565,7 +565,6 @@ extern "C" {
           continue;
         }
 
-        printf("flush: %d %d %d\n", is_flushing, flushed, empty_flush);
         if (is_flushing && empty_flush) {
           empty_flush = flush(
             to_string(input_format_context->pb->pos),
@@ -731,7 +730,6 @@ extern "C" {
 
   // Write callback called by AVIOContext
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    printf("writeFunction\n");
     Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
 
     if (remuxObject.initializing && !remuxObject.first_init) {

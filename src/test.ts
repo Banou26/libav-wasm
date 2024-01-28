@@ -13,8 +13,8 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video2.mkv'
-// const VIDEO_URL = '../spidey.mkv'
+// const VIDEO_URL = '../video5.mkv'
+const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
   return new Promise((resolve, reject) => {
@@ -169,11 +169,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       'waiting'
     ]
 
-    for (const event of allVideoEvents) {
-      video.addEventListener(event, ev => {
-        console.log('video event', event, ev)
-      })
-    }
+    // for (const event of allVideoEvents) {
+    //   video.addEventListener(event, ev => {
+    //     console.log('video event', event, ev)
+    //   })
+    // }
 
     const seconds = document.createElement('div')
     video.controls = true
@@ -253,19 +253,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           end: sourceBuffer.buffered.end(index)
         }))
 
-    // video.addEventListener('timeupdate', () => {
-    //   seconds.textContent = video.currentTime.toString()
-    // })
-
     video.addEventListener('canplaythrough', () => {
       video.playbackRate = 1
       video.play()
     }, { once: true })
-
-    const logAndAppend = async (chunk: Chunk) => {
-      console.log('res', chunk)
-      await appendBuffer(chunk.buffer)
-    }
 
     let chunks: Chunk[] = []
 
@@ -275,9 +266,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await appendBuffer(headerChunk.buffer)
 
     const pull = async () => {
-      console.log('read')
       const chunk = await remuxer.read()
-      console.log('read', chunk)
       chunks = [...chunks, chunk]
       return chunk
     }
@@ -335,12 +324,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await appendBuffer(chunk1.buffer)
       seeking = false
       await updateBuffers()
-      console.log('seek time', performance.now() - p)
     })
 
-    console.log('pulling first chunk')
     const firstChunk = await pull()
-    console.log('first chunk', firstChunk)
     appendBuffer(firstChunk.buffer)
 
     video.addEventListener('timeupdate', () => {
@@ -368,10 +354,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(async () => {
       // await video.pause()
-      video.currentTime = 587.618314
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 587.618314
+      // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.playbackRate = 5
-      video.currentTime = 400
+      // video.currentTime = 400
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 300
       // await new Promise(resolve => setTimeout(resolve, 1000))
@@ -380,8 +366,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // video.currentTime = 600
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 300
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      video.currentTime = 534.953306
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 534.953306
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 100
     }, 1000)
