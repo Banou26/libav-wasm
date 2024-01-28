@@ -138,13 +138,22 @@ export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
   new ReadableStream<Uint8Array>({
     reader: undefined,
     leftOverData: undefined,
+    closed: false,
     start() {
       this.reader = stream.getReader()
+      this.reader.closed.then(() => {
+        this.closed = true
+      })
     },
     async pull(controller) {
       const { leftOverData }: { leftOverData: Uint8Array | undefined } = this
 
       const accumulate = async ({ buffer = new Uint8Array(SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
+        if (this.closed) {
+          this.reader = undefined
+          this.leftOverData = undefined
+          return { buffer: new Uint8Array(), currentSize: 0, done: true }
+        }
         const { value: newBuffer, done } = await this.reader!.read()
   
         if (currentSize === 0 && leftOverData) {
@@ -154,7 +163,10 @@ export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
         }
   
         if (done) {
-          return { buffer: buffer.slice(0, currentSize), currentSize, done }
+          const finalResult = { buffer: buffer.slice(0, currentSize), currentSize, done }
+          this.reader = undefined
+          this.leftOverData = undefined
+          return finalResult
         }
   
         let newSize
@@ -175,8 +187,14 @@ export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
     },
     cancel() {
       this.reader!.cancel()
+      this.reader = undefined
+      this.leftOverData = undefined
     }
-  } as UnderlyingDefaultSource<Uint8Array> & { reader: ReadableStreamDefaultReader<Uint8Array> | undefined, leftOverData: Uint8Array | undefined })
+  } as UnderlyingDefaultSource<Uint8Array> & {
+    reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    leftOverData: Uint8Array | undefined
+    closed: boolean
+  })
 
 export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
   new ReadableStream<Uint8Array>({

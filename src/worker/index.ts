@@ -21,13 +21,14 @@ let module: ReturnType<typeof makeModule>
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { publicPath, length, bufferSize, randomRead, getStream, write, attachment, subtitle }:
+  { publicPath, length, bufferSize, randomRead, streamRead, clearStream, write, attachment, subtitle }:
   {
     publicPath: string
     length: number
     bufferSize: number
     randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
-    getStream: (offset: number) => Promise<ReadableStream<Uint8Array>>
+    streamRead: (offset: number) => Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+    clearStream: () => Promise<void>
     write: (params: {
       offset: number, arrayBuffer: ArrayBuffer, isHeader: boolean,
       position: number, pts: number, duration: number
@@ -38,13 +39,6 @@ const init = makeCallListener(async (
   if (!module) module = await makeModule(publicPath)
 
   let writeBuffer = new Uint8Array(0)
-
-  let currentStream: ReadableStream<Uint8Array> | undefined
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-
-  let streamResultPromiseResolve: (value: ReadableStreamReadResult<Uint8Array>) => void
-  let streamResultPromiseReject: (reason?: any) => void
-  let streamResultPromise: Promise<ReadableStreamReadResult<Uint8Array>>
 
   let readResultPromiseResolve: (value: Chunk) => void
   let readResultPromiseReject: (reason?: any) => void
@@ -66,59 +60,13 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, arraybuffer)
     },
     streamRead: async (offset: number) => {
-      if (!currentStream) {
-        currentStream = await getStream(offset)
-        reader = currentStream.getReader()
+      const res = await streamRead(offset)
+      return {
+        ...res,
+        value: new Uint8Array(res.value)
       }
-
-      streamResultPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
-        streamResultPromiseResolve = resolve
-        streamResultPromiseReject = reject
-      })
-
-      const tryReading = (): Promise<void> | undefined =>
-        reader
-          ?.read()
-          .then(result => ({
-            value: result.value,
-            done: result.value === undefined
-          }))
-          .then(async (result) => {
-            if (result.done) {
-              reader?.cancel()
-              if (offset >= length) {
-                return streamResultPromiseResolve(result)
-              }
-              currentStream = await getStream(offset)
-              reader = currentStream.getReader()
-              return tryReading()
-            }
-
-            return streamResultPromiseResolve(result)
-          })
-          .catch((err) => streamResultPromiseReject(err))
-
-      tryReading()
-
-      return (
-        streamResultPromise
-          .then((value) => ({
-            value: value.value,
-            done: value.done
-          }))
-          .catch(err => {
-            return {
-              value: undefined,
-              done: false,
-              cancelled: true
-            }
-          })
-      )
     },
-    clearStream: async () => {
-      currentStream = undefined
-      reader = undefined
-    },
+    clearStream: () => clearStream(),
     randomRead: async (offset: number, bufferSize: number) => {
       const buffer = await randomRead(offset, bufferSize)
       return buffer
