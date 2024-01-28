@@ -4,14 +4,13 @@ import type { Chunk } from '..'
 // @ts-ignore
 import WASMModule from 'libav'
 
-import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
-
 const makeModule = (publicPath: string) =>
   WASMModule({
-    module: {
-      locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
-    },
-    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
+    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
+    printErr: (text: string) =>
+      text.includes('Timestamps are unset in a packet')
+        ? undefined
+        : console.error(text),
   })
 
 let module: ReturnType<typeof makeModule>
