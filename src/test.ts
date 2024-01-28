@@ -105,11 +105,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               }
             }
           ).then(res =>
-            toBufferedStream(3)(
+            // toBufferedStream(3)(
               toStreamChunkSize(BUFFER_SIZE)(
                 res.body!
               )
-            )
+            // )
           ),
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
@@ -333,11 +333,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await video.pause()
       await new Promise(resolve => setTimeout(resolve, 100))
 
-      const bufferedRanges = getTimeRanges()
-      for (const { start, end } of bufferedRanges) {
-        await unbufferRange(start, end)
-      }
-
       await appendBuffer(headerChunk.buffer)
 
       chunks = []
@@ -353,9 +348,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const chunk1 = await pull()
       sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
-      await new Promise(resolve => setTimeout(resolve, 100))
-      await updateBuffers()
-      await new Promise(resolve => setTimeout(resolve, 100))
       video.currentTime = seekTime
       await new Promise(resolve => setTimeout(resolve, 0))
       seeking = false
@@ -383,19 +375,23 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       seconds.textContent = video.currentTime.toString()
     }, 100)
 
-    // setTimeout(() => {
-    //   setInterval(async () => {
-    //     console.log('time ranges', getTimeRanges(), chunks)
-    //     // for (const chunk of chunks) {
-    //     //   await appendBuffer(chunk.buffer)
-    //     // }
-    //   }, 1000)
-    // }, 3000)
+    // setInterval(async () => {
+    //   console.log('time ranges', getTimeRanges(), chunks)
+    // }, 1000)
 
     setTimeout(async () => {
       // await video.pause()
+      video.currentTime = 587.618314
       await new Promise(resolve => setTimeout(resolve, 1000))
       // video.playbackRate = 5
-      video.currentTime = 587.618314
-    }, 2000)
+      video.currentTime = 400
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      video.currentTime = 300
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      video.currentTime = 500
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      video.currentTime = 600
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      video.currentTime = 300
+    }, 1000)
   })

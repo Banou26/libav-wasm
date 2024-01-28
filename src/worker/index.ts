@@ -82,11 +82,10 @@ const init = makeCallListener(async (
           .then(result => ({
             value: result.value,
             done: result.value === undefined
-            // done: result.done
           }))
           .then(async (result) => {
-            console.log('tryReading', result.done, result.value?.byteLength)
             if (result.done) {
+              reader?.cancel()
               if (offset >= length) {
                 return streamResultPromiseResolve(result)
               }
@@ -125,7 +124,6 @@ const init = makeCallListener(async (
       return buffer
     },
     write: async (buffer: Uint8Array) => {
-      // console.log('WRITE')
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -136,7 +134,6 @@ const init = makeCallListener(async (
       pts: number, duration: number
     ) => {
       if (!writeBuffer.byteLength) return
-      // console.log('FLUSH', pts, duration)
       readResultPromiseResolve({
         isHeader: false,
         offset,
