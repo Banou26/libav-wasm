@@ -1,6 +1,7 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include <vector>
+#include <sstream>
 
 using namespace emscripten;
 using namespace std;
@@ -10,6 +11,14 @@ extern "C" {
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
 };
+
+template <class T>
+inline std::string to_string (const T& t)
+{
+    std::stringstream ss;
+    ss << t;
+    return ss.str();
+}
 
 int main() {
   return 0;
@@ -434,8 +443,8 @@ extern "C" {
       }
       if (first_init) {
         flush(
-          static_cast<long>(input_format_context->pb->pos),
-          0,
+          to_string(input_format_context->pb->pos),
+          to_string(0),
           0,
           0
         );
@@ -460,8 +469,8 @@ extern "C" {
             is_flushing = true;
             av_write_trailer(output_format_context);
             flush(
-              static_cast<long>(input_format_context->pb->pos),
-              pos,
+              to_string(input_format_context->pb->pos),
+              to_string(pos),
               pts,
               duration
             );
@@ -531,8 +540,8 @@ extern "C" {
           } else {
             is_flushing = true;
             empty_flush = flush(
-              static_cast<long>(input_format_context->pb->pos),
-              prev_pos,
+              to_string(input_format_context->pb->pos),
+              to_string(prev_pos),
               prev_pts,
               prev_duration
             ).await().as<bool>();
@@ -559,8 +568,8 @@ extern "C" {
         printf("flush: %d %d %d\n", is_flushing, flushed, empty_flush);
         if (is_flushing && empty_flush) {
           empty_flush = flush(
-            static_cast<long>(input_format_context->pb->pos),
-            prev_pos,
+            to_string(input_format_context->pb->pos),
+            to_string(prev_pos),
             prev_pts,
             prev_duration
           ).await().as<bool>();
@@ -678,7 +687,7 @@ extern "C" {
       if (remuxObject.first_init) {
         buffer =
           randomRead(
-            static_cast<long>(remuxObject.input_format_context->pb->pos),
+            to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
             .await()
@@ -693,7 +702,7 @@ extern "C" {
       emscripten::val result =
         remuxObject
           .streamRead(
-            static_cast<long>(remuxObject.input_format_context->pb->pos),
+            to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
           .await();

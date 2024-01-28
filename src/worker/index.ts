@@ -58,7 +58,8 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    streamRead: async (offset: number) => {
+    streamRead: async (_offset: string) => {
+      const offset = Number(_offset)
       console.log('worker streamRead', offset)
       const res = await streamRead(offset)
       console.log('worker streamRead end', offset, res)
@@ -68,8 +69,8 @@ const init = makeCallListener(async (
       }
     },
     clearStream: () => clearStream(),
-    randomRead: async (offset: number, bufferSize: number) => {
-      console.log('worker randomRead', offset, bufferSize)
+    randomRead: async (_offset: number, bufferSize: number) => {
+      const offset = Number(_offset)
       const buffer = await randomRead(offset, bufferSize)
       return buffer
     },
@@ -81,9 +82,11 @@ const init = makeCallListener(async (
       writeBuffer = newBuffer
     },
     flush: async (
-      offset: number, position: number,
+      _offset: number, _position: number,
       pts: number, duration: number
     ) => {
+      const offset = Number(_offset)
+      const position = Number(_position)
       console.log('worker flush', writeBuffer.byteLength)
       if (!writeBuffer.byteLength) return true
       readResultPromiseResolve({
