@@ -92,6 +92,12 @@ extern "C" {
     vector<std::string> init_buffers;
     int init_buffer_count = 0;
 
+    bool first_seek = true;
+    bool seeking = false;
+
+    vector<std::string> seek_buffers;
+    int seek_buffer_count = 0;
+
     val promise = val::undefined();
     // val promise = val::global("Promise")["resolve"]().as<val>();
     // val promise = val::global("Promise").get("resolve").as<val>();
@@ -230,6 +236,7 @@ extern "C" {
     void init () {
       initializing = true;
       init_buffer_count = 0;
+      seek_buffer_count = 0;
       int res;
       is_header = true;
       duration = 0;
@@ -614,6 +621,7 @@ extern "C" {
     }
 
     int _seek(int timestamp) {
+      seeking = true;
       destroy();
       init();
 
@@ -629,6 +637,8 @@ extern "C" {
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD)) < 0) {
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
       }
+      seeking = false;
+      first_seek = false;
       return 0;
     }
 
@@ -696,6 +706,22 @@ extern "C" {
         remuxObject.promise.await();
         buffer = remuxObject.init_buffers[remuxObject.init_buffer_count];
         remuxObject.init_buffer_count++;
+      }
+    } else if(remuxObject.seeking) {
+      emscripten::val &randomRead = remuxObject.randomRead;
+      if (remuxObject.first_seek) {
+        buffer =
+          randomRead(
+            to_string(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+            .await()
+            .as<std::string>();
+        remuxObject.seek_buffers.push_back(buffer);
+      } else {
+        remuxObject.promise.await();
+        buffer = remuxObject.seek_buffers[remuxObject.seek_buffer_count];
+        remuxObject.seek_buffer_count++;
       }
     } else {
       emscripten::val result =

@@ -13,8 +13,8 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 2_500_000
-// const VIDEO_URL = '../video5.mkv'
-const VIDEO_URL = '../spidey.mkv'
+const VIDEO_URL = '../video5.mkv'
+// const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
   return new Promise((resolve, reject) => {
@@ -314,7 +314,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
-      const p = performance.now()
       seeking = true
       await appendBuffer(headerChunk.buffer)
       chunks = []
