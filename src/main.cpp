@@ -226,6 +226,13 @@ extern "C" {
       duration = 0;
       first_frame = true;
 
+      prev_duration = 0;
+      prev_pts = 0;
+      prev_pos = 0;
+      duration = 0;
+      pts = 0;
+      pos = 0;
+
       input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
       // output_format_context = avformat_alloc_context();
@@ -532,7 +539,7 @@ extern "C" {
 
           prev_duration = duration;
           prev_pts = pts;
-          printf("pts: %f, duration: %f\n", prev_pts, duration);
+          // printf("pts: %f, duration: %f\n", prev_pts, duration);
           prev_pos = pos;
 
           duration = 0;
@@ -593,18 +600,17 @@ extern "C" {
 
     int _seek(int timestamp, int flags) {
       destroy();
+      init();
+
+      clearStream().await();
+
+      int res;
       prev_duration = 0;
       prev_pts = 0;
       prev_pos = 0;
       duration = 0;
       pts = 0;
       pos = 0;
-      init();
-      read();
-
-      clearStream().await();
-
-      int res;
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
       }
@@ -659,54 +665,41 @@ extern "C" {
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
     Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     std::string buffer;
-    emscripten::val &randomRead = remuxObject.randomRead;
-    buffer =
-      randomRead(
-        static_cast<long>(remuxObject.input_format_context->pb->pos),
-        buf_size
-      )
-        .await()
-        .as<std::string>();
-    // if (remuxObject.initializing) {
-    //   emscripten::val &randomRead = remuxObject.randomRead;
-    //   if (remuxObject.first_init) {
-    //     printf("first init\n");
-    //     buffer =
-    //       randomRead(
-    //         static_cast<long>(remuxObject.input_format_context->pb->pos),
-    //         buf_size
-    //       )
-    //         .await()
-    //         .as<std::string>();
-    //     printf("first init 2 %d\n", buffer.size());
-    //     remuxObject.init_buffers.push_back(buffer);
-    //   } else {
-    //     printf("first init 3\n");
-    //     remuxObject.promise.await();
-    //     buffer = remuxObject.init_buffers[remuxObject.init_buffer_count];
-    //     printf("first init 4 %d\n", buffer.size());
-    //     remuxObject.init_buffer_count++;
-    //   }
-    // } else {
-    //   printf("first init 5\n");
-    //   emscripten::val result =
-    //     remuxObject
-    //       .streamRead(
-    //         static_cast<long>(remuxObject.input_format_context->pb->pos),
-    //         buf_size
-    //       )
-    //       .await();
-    //   printf("first init 6\n");
-    //   bool is_cancelled = result["cancelled"].as<bool>();
-    //   if (is_cancelled) {
-    //     return AVERROR_EXIT;
-    //   }
-    //   bool is_done = result["done"].as<bool>();
-    //   if (is_done) {
-    //     return AVERROR_EOF;
-    //   }
-    //   buffer = result["value"].as<std::string>();
-    // }
+
+    if (remuxObject.initializing) {
+      emscripten::val &randomRead = remuxObject.randomRead;
+      if (remuxObject.first_init) {
+        buffer =
+          randomRead(
+            static_cast<long>(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+            .await()
+            .as<std::string>();
+        remuxObject.init_buffers.push_back(buffer);
+      } else {
+        remuxObject.promise.await();
+        buffer = remuxObject.init_buffers[remuxObject.init_buffer_count];
+        remuxObject.init_buffer_count++;
+      }
+    } else {
+      emscripten::val result =
+        remuxObject
+          .streamRead(
+            static_cast<long>(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+          .await();
+      bool is_cancelled = result["cancelled"].as<bool>();
+      if (is_cancelled) {
+        return AVERROR_EXIT;
+      }
+      bool is_done = result["done"].as<bool>();
+      if (is_done) {
+        return AVERROR_EOF;
+      }
+      buffer = result["value"].as<std::string>();
+    }
 
     int buffer_size = buffer.size();
     if (buffer_size == 0) {

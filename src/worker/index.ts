@@ -67,7 +67,6 @@ const init = makeCallListener(async (
     },
     streamRead: async (offset: number) => {
       if (!currentStream) {
-        console.log('create stream', offset)
         currentStream = await getStream(offset)
         reader = currentStream.getReader()
       }
@@ -77,14 +76,30 @@ const init = makeCallListener(async (
         streamResultPromiseReject = reject
       })
 
-      reader?.read()
-        .then(result => ({
-          value: result.value,
-          done: result.value === undefined
-          // done: result.done
-        }))
-        .then((result) => console.log('read stream', result) || streamResultPromiseResolve(result))
-        .catch((err) => streamResultPromiseReject(err))
+      const tryReading = (): Promise<void> | undefined =>
+        reader
+          ?.read()
+          .then(result => ({
+            value: result.value,
+            done: result.value === undefined
+            // done: result.done
+          }))
+          .then(async (result) => {
+            console.log('tryReading', result.done, result.value?.byteLength)
+            if (result.done) {
+              if (offset >= length) {
+                return streamResultPromiseResolve(result)
+              }
+              currentStream = await getStream(offset)
+              reader = currentStream.getReader()
+              return tryReading()
+            }
+
+            return streamResultPromiseResolve(result)
+          })
+          .catch((err) => streamResultPromiseReject(err))
+
+      tryReading()
 
       return (
         streamResultPromise
@@ -107,11 +122,10 @@ const init = makeCallListener(async (
     },
     randomRead: async (offset: number, bufferSize: number) => {
       const buffer = await randomRead(offset, bufferSize)
-      console.log('random read', offset, bufferSize, buffer)
       return buffer
     },
     write: async (buffer: Uint8Array) => {
-      console.log('WRITE')
+      // console.log('WRITE')
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -122,7 +136,7 @@ const init = makeCallListener(async (
       pts: number, duration: number
     ) => {
       if (!writeBuffer.byteLength) return
-      console.log('FLUSH', pts, duration)
+      // console.log('FLUSH', pts, duration)
       readResultPromiseResolve({
         isHeader: false,
         offset,

@@ -278,9 +278,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await appendBuffer(headerChunk.buffer)
 
     const pull = async () => {
-      console.log('read')
+      // console.log('read')
       const chunk = await remuxer.read()
-      console.log('read', chunk)
+      // console.log('read', chunk)
       chunks = [...chunks, chunk]
       return chunk
     }
@@ -293,13 +293,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
       const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
-      console.log('currentChunkIndex', currentChunkIndex, chunks.length, currentTime)
+      // console.log('currentChunkIndex', currentChunkIndex, chunks.length, currentTime)
       for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
-        console.log('pull check', i, chunks[i])
+        // console.log('pull check', i, chunks[i])
         if (chunks[i]) continue
-        console.log('pulling')
+        // console.log('pulling')
         const chunk = await pull()
-        console.log('pull', chunk)
+        // console.log('pull', chunk)
         await appendBuffer(chunk.buffer)
       }
 
@@ -327,9 +327,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    console.log('SOURCE BUFFER', sourceBuffer)
-    console.log('APPEND BUFFER', appendBuffer)
-
     const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
       seeking = true
 
@@ -344,42 +341,25 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       await appendBuffer(headerChunk.buffer)
 
       chunks = []
-      console.log('seek', seekTime)
-      await remuxer.seek(seekTime - 20)
+      await remuxer.seek(seekTime - 10)
 
       await new Promise(resolve => setTimeout(resolve, 100))
-      console.log('seek before append', getTimeRanges())
 
+      video.addEventListener('canplaythrough', () => {
+        video.playbackRate = 1
+        video.play()
+      }, { once: true })
 
       const chunk1 = await pull()
+      sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
-      console.log('appended buffer', chunk1)
       await new Promise(resolve => setTimeout(resolve, 100))
-      const chunk2 = await pull()
-      await appendBuffer(chunk2.buffer)
-      console.log('appended buffer', chunk2)
-      await new Promise(resolve => setTimeout(resolve, 100))
-      const chunk3 = await pull()
-      await appendBuffer(chunk3.buffer)
-      console.log('appended buffer', chunk3)
-      await new Promise(resolve => setTimeout(resolve, 100))
-      const chunk4 = await pull()
-      await appendBuffer(chunk4.buffer)
-      console.log('appended buffer', chunk4)
-      console.log('seeked')
-      // await updateBuffers()
-      console.log('seeked2', chunks, getTimeRanges())
+      await updateBuffers()
       await new Promise(resolve => setTimeout(resolve, 100))
       video.currentTime = seekTime
       await new Promise(resolve => setTimeout(resolve, 0))
       seeking = false
-      console.log('finished seeking')
-      // await video.play()
-
-
-      // for (const chunk of chunks) {
-      //   await appendBuffer(chunk.buffer)
-      // }
+      await updateBuffers()
     })
 
     appendBuffer((await pull()).buffer)
@@ -395,10 +375,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     video.addEventListener('seeking', (ev) => {
       if (seeking) return
       seek(video.currentTime)
-    })
-
-    video.addEventListener('progress', () => {
-      console.log('time ranges', getTimeRanges(), chunks)
     })
 
     updateBuffers()
@@ -417,9 +393,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     // }, 3000)
 
     setTimeout(async () => {
-      await video.pause()
+      // await video.pause()
       await new Promise(resolve => setTimeout(resolve, 1000))
       // video.playbackRate = 5
-      video.currentTime = 400
+      video.currentTime = 587.618314
     }, 2000)
   })
