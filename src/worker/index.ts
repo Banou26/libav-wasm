@@ -67,6 +67,7 @@ const init = makeCallListener(async (
     },
     streamRead: async (offset: number) => {
       if (!currentStream) {
+        console.log('create stream', offset)
         currentStream = await getStream(offset)
         reader = currentStream.getReader()
       }
@@ -77,20 +78,16 @@ const init = makeCallListener(async (
       })
 
       reader?.read()
-        .then((result) => streamResultPromiseResolve(result))
+        .then(result => ({
+          value: result.value,
+          done: result.value === undefined
+          // done: result.done
+        }))
+        .then((result) => console.log('read stream', result) || streamResultPromiseResolve(result))
         .catch((err) => streamResultPromiseReject(err))
 
       return (
         streamResultPromise
-          // .then((value) => {
-          //   const newBuffer = new Uint8Array(value.value.byteLength)
-          //   newBuffer.set(value.value)
-
-          //   return {
-          //     value: newBuffer,
-          //     done: value.done
-          //   }
-          // })
           .then((value) => ({
             value: value.value,
             done: value.done
@@ -104,8 +101,13 @@ const init = makeCallListener(async (
           })
       )
     },
+    clearStream: async () => {
+      currentStream = undefined
+      reader = undefined
+    },
     randomRead: async (offset: number, bufferSize: number) => {
       const buffer = await randomRead(offset, bufferSize)
+      console.log('random read', offset, bufferSize, buffer)
       return buffer
     },
     write: async (buffer: Uint8Array) => {

@@ -256,18 +256,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           end: sourceBuffer.buffered.end(index)
         }))
 
-    video.addEventListener('timeupdate', () => {
-      seconds.textContent = video.currentTime.toString()
-    })
+    // video.addEventListener('timeupdate', () => {
+    //   seconds.textContent = video.currentTime.toString()
+    // })
 
     video.addEventListener('canplaythrough', () => {
       video.playbackRate = 1
       video.play()
     }, { once: true })
-
-    video.addEventListener('seeking', () => {
-
-    })
 
     const logAndAppend = async (chunk: Chunk) => {
       console.log('res', chunk)
@@ -282,22 +278,31 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await appendBuffer(headerChunk.buffer)
 
     const pull = async () => {
+      console.log('read')
       const chunk = await remuxer.read()
+      console.log('read', chunk)
       chunks = [...chunks, chunk]
       return chunk
     }
 
-    const updateBuffers = queuedDebounceWithLastCall(500, async () => {
+    let seeking = false
+
+    const updateBuffers = queuedDebounceWithLastCall(250, async () => {
+      if (seeking) return
       const { currentTime } = video
       const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
+      const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
-      for (let i = 0; i < currentChunkIndex + BUFFER_COUNT; i++) {
+      console.log('currentChunkIndex', currentChunkIndex, chunks.length, currentTime)
+      for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
+        console.log('pull check', i, chunks[i])
         if (chunks[i]) continue
+        console.log('pulling')
         const chunk = await pull()
+        console.log('pull', chunk)
         await appendBuffer(chunk.buffer)
       }
 
-      const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
       if (sliceIndex) chunks = chunks.slice(sliceIndex)
 
       const bufferedRanges = getTimeRanges()
@@ -320,9 +325,61 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           }
         }
       }
+    })
 
-      // console.log('chunks', ...chunks)
-      // console.log('ranges2', ...bufferedRanges)
+    console.log('SOURCE BUFFER', sourceBuffer)
+    console.log('APPEND BUFFER', appendBuffer)
+
+    const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
+      seeking = true
+
+      await video.pause()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const bufferedRanges = getTimeRanges()
+      for (const { start, end } of bufferedRanges) {
+        await unbufferRange(start, end)
+      }
+
+      await appendBuffer(headerChunk.buffer)
+
+      chunks = []
+      console.log('seek', seekTime)
+      await remuxer.seek(seekTime - 20)
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+      console.log('seek before append', getTimeRanges())
+
+
+      const chunk1 = await pull()
+      await appendBuffer(chunk1.buffer)
+      console.log('appended buffer', chunk1)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const chunk2 = await pull()
+      await appendBuffer(chunk2.buffer)
+      console.log('appended buffer', chunk2)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const chunk3 = await pull()
+      await appendBuffer(chunk3.buffer)
+      console.log('appended buffer', chunk3)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const chunk4 = await pull()
+      await appendBuffer(chunk4.buffer)
+      console.log('appended buffer', chunk4)
+      console.log('seeked')
+      // await updateBuffers()
+      console.log('seeked2', chunks, getTimeRanges())
+      await new Promise(resolve => setTimeout(resolve, 100))
+      video.currentTime = seekTime
+      await new Promise(resolve => setTimeout(resolve, 0))
+      seeking = false
+      console.log('finished seeking')
+      // await video.play()
+
+
+      // for (const chunk of chunks) {
+      //   await appendBuffer(chunk.buffer)
+      // }
     })
 
     appendBuffer((await pull()).buffer)
@@ -331,30 +388,38 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       updateBuffers()
     })
 
+    video.addEventListener('waiting', () => {
+      updateBuffers()
+    })
+
+    video.addEventListener('seeking', (ev) => {
+      if (seeking) return
+      seek(video.currentTime)
+    })
+
+    video.addEventListener('progress', () => {
+      console.log('time ranges', getTimeRanges(), chunks)
+    })
+
     updateBuffers()
 
-    // while (1) {
-    //   await new Promise(resolve => setTimeout(resolve, 100))
-    //   console.log('pull')
-    //   await pull()
-    // }
-
-    setTimeout(() => {
-      video.playbackRate = 5
+    setInterval(() => {
+      seconds.textContent = video.currentTime.toString()
     }, 100)
 
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    // await logAndAppend((await remuxer.read()))
-    console.log('ranges', getTimeRanges())
-    // console.log((await remuxer.read()).pts)
+    // setTimeout(() => {
+    //   setInterval(async () => {
+    //     console.log('time ranges', getTimeRanges(), chunks)
+    //     // for (const chunk of chunks) {
+    //     //   await appendBuffer(chunk.buffer)
+    //     // }
+    //   }, 1000)
+    // }, 3000)
+
+    setTimeout(async () => {
+      await video.pause()
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.playbackRate = 5
+      video.currentTime = 400
+    }, 2000)
   })

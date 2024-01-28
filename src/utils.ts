@@ -207,7 +207,7 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
       }
 
       const tryToBuffer = async (): Promise<void> => {
-        if (this.buffers.length >= SIZE) return
+        if (this.buffers.length >= SIZE || this.closed) return
         
         if (this.buffers.length === 0) {
           await pull()
