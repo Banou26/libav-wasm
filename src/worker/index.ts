@@ -1,43 +1,49 @@
 import { makeCallListener, registerListener } from 'osra'
+import type { Chunk } from '..'
 
 // @ts-ignore
 import WASMModule from 'libav'
 
-import { SEEK_FLAG, SEEK_WHENCE_FLAG } from '../utils'
-
 const makeModule = (publicPath: string) =>
   WASMModule({
-    module: {
-      locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
-    },
-    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`
+    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
+    printErr: (text: string) =>
+      text.includes('Timestamps are unset in a packet')
+        ? undefined
+        : console.error(text),
   })
 
 let module: ReturnType<typeof makeModule>
 
-// todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple transmuxer already initialized waiting to seek + process
-// todo: We can keep in memory all of the chunks needed to initialize the transmuxer
+// todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple remuxer alrandomReady initialized waiting to seek + process
+// todo: We can keep in memory all of the chunks needed to initialize the remuxer
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { publicPath, length, bufferSize, read, seek, write, attachment, subtitle }:
+  { publicPath, length, bufferSize, randomRead, streamRead, clearStream, write, attachment, subtitle }:
   {
     publicPath: string
     length: number
     bufferSize: number
-    read: (offset: number, size: number) => Promise<ArrayBuffer>
+    randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
+    streamRead: (offset: number) => Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+    clearStream: () => Promise<void>
     write: (params: {
       offset: number, arrayBuffer: ArrayBuffer, isHeader: boolean,
       position: number, pts: number, duration: number
     }) => Promise<void> | void
-    seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
   if (!module) module = await makeModule(publicPath)
-  let currentOffset = 0
-  let currentBuffer = new Uint8Array(0)
-  const makeTransmuxer = () => new module.Transmuxer({
+
+  let writeBuffer = new Uint8Array(0)
+
+  let readResultPromiseResolve: (value: Chunk) => void
+  let readResultPromiseReject: (reason?: any) => void
+  let readResultPromise: Promise<Chunk>
+
+  const makeRemuxer = () => new module.Remuxer({
     promise: Promise.resolve(),
     length,
     bufferSize,
@@ -52,63 +58,77 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    seek: async (offset: number, whence: SEEK_WHENCE_FLAG) => seek(currentOffset, offset, whence),
-    read: async (offset: number, bufferSize: number) => {
-      const buffer = await read(offset, bufferSize)
-      currentOffset = offset + buffer.byteLength
+    streamRead: async (_offset: string) => {
+      const offset = Number(_offset)
+      const res = await streamRead(offset)
       return {
-        buffer,
-        size: buffer.byteLength
+        ...res,
+        value: new Uint8Array(res.value ?? [])
       }
     },
-    write: async (
-      offset: number, buffer: Uint8Array,
-      isHeader: boolean, isFlushing: boolean,
-      position: number, pts: number, duration: number
+    clearStream: () => clearStream(),
+    randomRead: async (_offset: number, bufferSize: number) => {
+      const offset = Number(_offset)
+      const buffer = await randomRead(offset, bufferSize)
+      return buffer
+    },
+    write: async (buffer: Uint8Array) => {
+      const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
+      newBuffer.set(writeBuffer)
+      newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
+      writeBuffer = newBuffer
+    },
+    flush: async (
+      _offset: number, _position: number,
+      pts: number, duration: number
     ) => {
-      if (isFlushing && currentBuffer.byteLength > 0) {
-        write({
-          isHeader,
-          offset,
-          arrayBuffer: currentBuffer.buffer,
-          position,
-          pts,
-          duration
-        })
-        currentBuffer = new Uint8Array(0)
-        if (isHeader) return
-      }
-
-      const newBuffer = new Uint8Array(currentBuffer.byteLength + buffer.byteLength)
-      newBuffer.set(currentBuffer)
-      newBuffer.set(new Uint8Array(buffer), currentBuffer.byteLength)
-      currentBuffer = newBuffer
+      const offset = Number(_offset)
+      const position = Number(_position)
+      if (!writeBuffer.byteLength) return true
+      readResultPromiseResolve({
+        isHeader: false,
+        offset,
+        buffer: writeBuffer.buffer as Uint8Array,
+        pos: position,
+        pts,
+        duration
+      })
+      writeBuffer = new Uint8Array(0)
+      return false
     }
   })
 
-  let transmuxer: ReturnType<typeof makeTransmuxer> = makeTransmuxer()
+  let remuxer: ReturnType<typeof makeRemuxer> = makeRemuxer()
 
-  let firstInit = true
   return {
     init: async () => {
-      currentOffset = 0
-      currentBuffer = new Uint8Array(0)
+      writeBuffer = new Uint8Array(0)
       module = await makeModule(publicPath)
-      transmuxer = makeTransmuxer()
-      await transmuxer.init(firstInit)
-      if (firstInit) firstInit = false
+      remuxer = makeRemuxer()
+
+      readResultPromise = new Promise<Chunk>((resolve, reject) => {
+        readResultPromiseResolve = resolve
+        readResultPromiseReject = reject
+      })
+      remuxer.init()
+      return readResultPromise
     },
     destroy: () => {
-      transmuxer.destroy()
-      transmuxer = undefined
+      remuxer.destroy()
+      remuxer = undefined
       module = undefined
-      currentOffset = 0
-      currentBuffer = new Uint8Array(0)
+      writeBuffer = new Uint8Array(0)
     },
-    seek: (timestamp: number, flags: SEEK_FLAG) => transmuxer.seek(timestamp, flags),
-    // todo: For some reason transmuxer was undefined on firefox after a pretty normal seek(not fast seeking or anything), refactor this to prevent issues like this
-    process: (timeToProcess: number) => transmuxer.process(timeToProcess),
-    getInfo: () => transmuxer.getInfo()
+    seek: (timestamp: number) => remuxer.seek(timestamp),
+    read: () => {
+      readResultPromise = new Promise<Chunk>((resolve, reject) => {
+        readResultPromiseResolve = resolve
+        readResultPromiseReject = reject
+      })
+      remuxer.read()
+      return readResultPromise
+    },
+    getInfo: () => remuxer.getInfo()
   }
 })
 

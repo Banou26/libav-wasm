@@ -8,12 +8,13 @@
   "types": "build/index.d.ts",
   "type": "module",
   "scripts": {
-    "dev": "npm i ./dist && concurrently \"npm run dev-wasm\" \"npm run dev-web\"",
+    "dev": "npm i ./dist && concurrently \"npm run dev-wasm\" \"npm run dev-web\" \"npm run worker-build-dev\"",
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "build-worker": "vite build --config vite-worker.config.ts",
     "make-docker": "docker-compose run libav-wasm make",
     "dev-web": "vite --port 1234",
     "vite-build": "vite build",
+    "worker-build-dev": "nodemon -e ts --watch src/worker --exec \"npm run build-worker\"",
     "build": "npm run copy-package && npm run make-docker && npm i ./dist && vite build && npm run build-worker  && npm run types && npm run copy-wasm && npm remove libav",
     "types": "tsc",
     "copy-package": "copyfiles -u 2 ./src/build-config/package.json dist",
@@ -24,7 +25,7 @@
     "@rollup/plugin-commonjs": "^24.0.1",
     "concurrently": "^7.6.0",
     "copyfiles": "^2.4.1",
-    "nodemon": "^2.0.20",
+    "nodemon": "^2.0.22",
     "shx": "^0.3.4",
     "typescript": "^4.9.4",
     "vite": "^4.0.4"

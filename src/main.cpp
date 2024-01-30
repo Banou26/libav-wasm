@@ -1,6 +1,7 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include <vector>
+#include <sstream>
 
 using namespace emscripten;
 using namespace std;
@@ -10,6 +11,14 @@ extern "C" {
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
 };
+
+template <class T>
+inline std::string to_string (const T& t)
+{
+    std::stringstream ss;
+    ss << t;
+    return ss.str();
+}
 
 int main() {
   return 0;
@@ -35,7 +44,7 @@ extern "C" {
   static int readOutputFunction(void* opaque, uint8_t* buf, int buf_size);
   static int64_t seekFunction(void* opaque, int64_t offset, int whence);
 
-  class Transmuxer {
+  class Remuxer {
   public:
     AVIOContext* input_avio_context;
     AVIOContext* output_avio_context;
@@ -63,18 +72,31 @@ extern "C" {
     std::string video_mime_type;
     std::string audio_mime_type;
 
-    val read = val::undefined();
+    val randomRead = val::undefined();
+
+    val streamRead = val::undefined();
+    val currentReadStream = val::undefined();
+    val clearStream = val::undefined();
+
     val attachment = val::undefined();
     val subtitle = val::undefined();
     val write = val::undefined();
-    val seek = val::undefined();
+    val flush = val::undefined();
     val error = val::undefined();
+
+    double currentOffset = 0;
 
     bool first_init = true;
     bool initializing = false;
 
     vector<std::string> init_buffers;
     int init_buffer_count = 0;
+
+    bool first_seek = true;
+    bool seeking = false;
+
+    vector<std::string> seek_buffers;
+    int seek_buffer_count = 0;
 
     val promise = val::undefined();
     // val promise = val::global("Promise")["resolve"]().as<val>();
@@ -88,15 +110,17 @@ extern "C" {
         printf("\n");
     }
 
-    Transmuxer(val options) {
+    Remuxer(val options) {
       promise = options["promise"];
       input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
-      read = options["read"];
+      randomRead = options["randomRead"];
+      streamRead = options["streamRead"];
+      clearStream = options["clearStream"];
       attachment = options["attachment"];
       subtitle = options["subtitle"];
       write = options["write"];
-      seek = options["seek"];
+      flush = options["flush"];
       error = options["error"];
     }
 
@@ -209,13 +233,21 @@ extern "C" {
       return mime_type;
     }
     
-    void init (bool _first_init) {
+    void init () {
       initializing = true;
       init_buffer_count = 0;
+      seek_buffer_count = 0;
       int res;
       is_header = true;
       duration = 0;
       first_frame = true;
+
+      prev_duration = 0;
+      prev_pts = 0;
+      prev_pos = 0;
+      duration = 0;
+      pts = 0;
+      pos = 0;
 
       input_avio_context = nullptr;
       input_format_context = avformat_alloc_context();
@@ -417,27 +449,25 @@ extern "C" {
         return;
       }
       if (first_init) {
-        write(
-          static_cast<long>(input_format_context->pb->pos),
-          NULL,
-          is_header,
-          true,
-          0,
+        flush(
+          to_string(input_format_context->pb->pos),
+          to_string(0),
           0,
           0
         );
+        is_flushing = false;
       }
 
       initializing = false;
       first_init = false;
     }
 
-    void process(double time_to_process) {
+    void read() {
       int res;
-      double start_process_pts = 0;
 
+      bool flushed = false;
       // loop through the packet frames until we reach the processed size
-      while (start_process_pts == 0 || (pts < (start_process_pts + time_to_process))) {
+      while (!flushed) {
         AVPacket* packet = av_packet_alloc();
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
@@ -445,12 +475,9 @@ extern "C" {
             avio_flush(output_format_context->pb);
             is_flushing = true;
             av_write_trailer(output_format_context);
-            write(
-              static_cast<long>(input_format_context->pb->pos),
-              NULL,
-              is_header,
-              true,
-              pos,
+            flush(
+              to_string(input_format_context->pb->pos),
+              to_string(pos),
               pts,
               duration
             );
@@ -505,16 +532,12 @@ extern "C" {
         // Rescale the PTS/DTS from the input time base to the output time base
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-        if (!start_process_pts) {
-          start_process_pts = packet->pts * av_q2d(out_stream->time_base);
-        }
-
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          if (!start_process_pts) {
-            start_process_pts = packet->pts * av_q2d(out_stream->time_base);
-          }
+          // printf("pts: %f, prev duration: %f, duration: %f\n", packet->pts * av_q2d(out_stream->time_base), duration, packet->duration * av_q2d(out_stream->time_base));
           duration += packet->duration * av_q2d(out_stream->time_base);
         }
+
+        bool empty_flush = false;
 
         // Set needed pts/pos/duration needed to calculate the real timestamps
         if (is_keyframe) {
@@ -523,10 +546,18 @@ extern "C" {
             is_header = false;
           } else {
             is_flushing = true;
+            empty_flush = flush(
+              to_string(input_format_context->pb->pos),
+              to_string(prev_pos),
+              prev_pts,
+              prev_duration
+            ).await().as<bool>();
+            flushed = true;
           }
 
           prev_duration = duration;
           prev_pts = pts;
+          // printf("pts: %f, duration: %f\n", prev_pts, duration);
           prev_pos = pos;
 
           duration = 0;
@@ -539,6 +570,21 @@ extern "C" {
         if ((res = av_interleaved_write_frame(output_format_context, packet)) < 0) {
           printf("ERROR: could not write interleaved frame | %s \n", av_err2str(res));
           continue;
+        }
+
+        if (is_flushing && empty_flush) {
+          empty_flush = flush(
+            to_string(input_format_context->pb->pos),
+            to_string(prev_pos),
+            prev_pts,
+            prev_duration
+          ).await().as<bool>();
+          is_flushing = false;
+          flushed = true;
+
+          if (empty_flush) {
+            flushed = false;
+          }
         }
 
         // free packet
@@ -574,11 +620,12 @@ extern "C" {
       return output_avio_context->pos;
     }
 
-    int _seek(int timestamp, int flags) {
+    int _seek(int timestamp) {
+      seeking = true;
       destroy();
-      init(false);
+      init();
 
-      process(0.01);
+      clearStream().await();
 
       int res;
       prev_duration = 0;
@@ -587,9 +634,11 @@ extern "C" {
       duration = 0;
       pts = 0;
       pos = 0;
-      if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, flags)) < 0) {
+      if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD)) < 0) {
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
       }
+      seeking = false;
+      first_seek = false;
       return 0;
     }
 
@@ -618,11 +667,20 @@ extern "C" {
 
   // Seek callback called by AVIOContext
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
-    Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
-    emscripten::val &seek = remuxObject.seek;
-    // call the JS seek function
-    double result = seek(static_cast<double>(offset), whence).await().as<double>();
-    return result;
+    Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    if (whence == SEEK_CUR) {
+      return remuxObject.currentOffset + offset;
+    }
+    if (whence == SEEK_END) {
+      return -1;
+    }
+    if (whence == SEEK_SET) {
+      return offset;
+    }
+    if (whence == AVSEEK_SIZE) {
+      return remuxObject.input_length;
+    }
+    return -1;
   }
 
   // If emscripten asynchify ever start working for libraries callbacks,
@@ -630,27 +688,58 @@ extern "C" {
 
   // Read callback called by AVIOContext
   static int readFunction(void* opaque, uint8_t* buf, int buf_size) {
-    Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
-    emscripten::val &read = remuxObject.read;
+    Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     std::string buffer;
+
     if (remuxObject.initializing) {
+      emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
-        val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
-        buffer = res["buffer"].as<std::string>();
+        buffer =
+          randomRead(
+            to_string(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+            .await()
+            .as<std::string>();
         remuxObject.init_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
         buffer = remuxObject.init_buffers[remuxObject.init_buffer_count];
         remuxObject.init_buffer_count++;
       }
+    } else if(remuxObject.seeking) {
+      emscripten::val &randomRead = remuxObject.randomRead;
+      if (remuxObject.first_seek) {
+        buffer =
+          randomRead(
+            to_string(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+            .await()
+            .as<std::string>();
+        remuxObject.seek_buffers.push_back(buffer);
+      } else {
+        remuxObject.promise.await();
+        buffer = remuxObject.seek_buffers[remuxObject.seek_buffer_count];
+        remuxObject.seek_buffer_count++;
+      }
     } else {
-      // call the JS read function and get its result as
-      // {
-      //   buffer: Uint8Array,
-      //   size: int
-      // }
-      val res = read(static_cast<long>(remuxObject.input_format_context->pb->pos), buf_size).await();
-      buffer = res["buffer"].as<std::string>();
+      emscripten::val result =
+        remuxObject
+          .streamRead(
+            to_string(remuxObject.input_format_context->pb->pos),
+            buf_size
+          )
+          .await();
+      bool is_cancelled = result["cancelled"].as<bool>();
+      if (is_cancelled) {
+        return AVERROR_EXIT;
+      }
+      bool is_done = result["done"].as<bool>();
+      if (is_done) {
+        return AVERROR_EOF;
+      }
+      buffer = result["value"].as<std::string>();
     }
 
     int buffer_size = buffer.size();
@@ -659,13 +748,15 @@ extern "C" {
     }
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
+
+    remuxObject.currentOffset = remuxObject.currentOffset + buffer_size;
     // If result buffer size is 0, we reached the end of the file
     return buffer_size;
   }
 
   // Write callback called by AVIOContext
   static int writeFunction(void* opaque, uint8_t* buf, int buf_size) {
-    Transmuxer &remuxObject = *reinterpret_cast<Transmuxer*>(opaque);
+    Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
 
     if (remuxObject.initializing && !remuxObject.first_init) {
       return buf_size;
@@ -675,23 +766,13 @@ extern "C" {
     // call the JS write function
 
     write(
-      static_cast<long>(remuxObject.input_format_context->pb->pos),
       emscripten::val(
         emscripten::typed_memory_view(
           buf_size,
           buf
         )
-      ),
-      remuxObject.is_header,
-      remuxObject.is_flushing,
-      remuxObject.prev_pos,
-      remuxObject.prev_pts,
-      remuxObject.prev_duration
+      )
     ).await();
-
-    if (remuxObject.is_flushing) {
-      remuxObject.is_flushing = false;
-    }
 
     return buf_size;
   }
@@ -710,12 +791,12 @@ extern "C" {
       .field("input", &InfoObject::input)
       .field("output", &InfoObject::output);
 
-    class_<Transmuxer>("Transmuxer")
+    class_<Remuxer>("Remuxer")
       .constructor<emscripten::val>()
-      .function("init", &Transmuxer::init)
-      .function("process", &Transmuxer::process)
-      .function("destroy", &Transmuxer::destroy)
-      .function("seek", &Transmuxer::_seek)
-      .function("getInfo", &Transmuxer::getInfo);
+      .function("init", &Remuxer::init)
+      .function("read", &Remuxer::read)
+      .function("destroy", &Remuxer::destroy)
+      .function("seek", &Remuxer::_seek)
+      .function("getInfo", &Remuxer::getInfo);
   }
 }

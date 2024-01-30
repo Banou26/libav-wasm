@@ -1,14 +1,6 @@
 import type { Resolvers as WorkerResolvers } from './worker'
 
-import PQueue from 'p-queue'
 import { call } from 'osra'
-
-import { SEEK_FLAG, SEEK_WHENCE_FLAG } from './utils'
-
-export {
-  SEEK_FLAG,
-  SEEK_WHENCE_FLAG
-}
 
 export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
@@ -16,8 +8,8 @@ export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the javascript worker file */
   workerUrl: string
   workerOptions?: WorkerOptions
-  read: (offset: number, size: number) => Promise<ArrayBuffer>
-  seek: (currentOffset: number, offset: number, whence: SEEK_WHENCE_FLAG) => Promise<number>
+  randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
+  getStream: (offset: number) => Promise<ReadableStream<Uint8Array>>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
   write: (params: {
@@ -77,8 +69,8 @@ export const makeTransmuxer = async ({
   publicPath,
   workerUrl,
   workerOptions, 
-  read: _read,
-  seek: _seek,
+  randomRead: _randomRead,
+  getStream: _getStream,
   write: _write,
   attachment,
   subtitle: _subtitle,
@@ -99,15 +91,16 @@ export const makeTransmuxer = async ({
 
   const target = call<WorkerResolvers>(worker)
 
-  const apiQueue = new PQueue()
-
-  const addTask = <T extends (...args: any) => any>(func: T) =>
-    apiQueue.add<Awaited<ReturnType<T>>>(func)
-  
   const subtitles = new Map<number, Subtitle>()
-  let lastChunk: Chunk | undefined
 
-  const { init: _workerInit, destroy: _workerDestroy, process: _workerProcess, seek: _workerSeek, getInfo: _getInfo } =
+  let currentStream: ReadableStream<Uint8Array> | undefined
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+
+  let streamResultPromiseResolve: (value: { value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }) => void
+  let streamResultPromiseReject: (reason?: any) => void
+  let streamResultPromise: Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+
+  const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =
     await target(
       'init',
       {
@@ -155,82 +148,94 @@ export const makeTransmuxer = async ({
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
-        read: (offset, bufferSize) => _read(offset, bufferSize),
-        seek: (currentOffset, offset, whence) => _seek(currentOffset, offset, whence),
-        write: async ({
+        randomRead: (offset, bufferSize) => _randomRead(offset, bufferSize),
+        streamRead: async (offset: number) => {
+          if (!currentStream) {
+            currentStream = await _getStream(offset)
+            reader = currentStream.getReader()
+          }
+    
+          streamResultPromise = new Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>((resolve, reject) => {
+            streamResultPromiseResolve = resolve
+            streamResultPromiseReject = reject
+          })
+    
+          const tryReading = (): Promise<void> | undefined =>
+            reader
+              ?.read()
+              .then(result => ({
+                value: result.value?.buffer,
+                done: result.value === undefined,
+                cancelled: false
+              }))
+              .then(async (result) => {
+                if (result.done) {
+                  reader?.cancel()
+                  if (offset >= length) {
+                    return streamResultPromiseResolve(result)
+                  }
+                  currentStream = await _getStream(offset)
+                  reader = currentStream.getReader()
+                  return tryReading()
+                }
+    
+                return streamResultPromiseResolve(result)
+              })
+              .catch((err) => streamResultPromiseReject(err))
+    
+          tryReading()
+    
+          return (
+            streamResultPromise
+              .then((value) => ({
+                value: value.value,
+                done: value.done,
+                cancelled: false
+              }))
+              .catch(err => {
+                console.error(err)
+                return {
+                  value: undefined,
+                  done: false,
+                  cancelled: true
+                }
+              })
+          )
+        },
+        clearStream: async () => {
+          reader?.cancel()
+          currentStream = undefined
+          reader = undefined
+        },
+        write: ({
           isHeader,
           offset,
           arrayBuffer,
           position,
           pts,
           duration
-        }) => {
-          const chunk = {
-            isHeader,
-            offset,
-            buffer: new Uint8Array(arrayBuffer),
-            pts,
-            duration,
-            pos: position
-          }
-
-          if (!isHeader) {
-            lastChunk = chunk
-            processBufferChunks.push(chunk)
-          }
-
-          await _write(chunk)
-        }
+        }) => _write({
+          isHeader,
+          offset,
+          buffer: new Uint8Array(arrayBuffer),
+          pts,
+          duration,
+          pos: position
+        })
       }
     )
 
-  const workerQueue = new PQueue({ concurrency: 1 })
-
-  const addWorkerTask = <T extends (...args: any[]) => any>(func: T) =>
-    (...args: Parameters<T>) =>
-      workerQueue.add<Awaited<ReturnType<T>>>(() => func(...args))
-    
-  const workerInit = addWorkerTask(_workerInit)
-  const workerDestroy = addWorkerTask(_workerDestroy)
-  const workerProcess = addWorkerTask(_workerProcess)
-  const workerSeek = addWorkerTask(_workerSeek)
-  const getInfo = addWorkerTask(_getInfo)
-
-  let processBufferChunks: Chunk[] = []
-
   const result = {
-    init: () => addTask(async () => {
-      processBufferChunks = []
-      await workerInit()
-    }),
+    init: () => workerInit(),
     destroy: (destroyWorker = false) => {
       if (destroyWorker) {
         worker.terminate()
         return
       }
-      return addTask(() => workerDestroy())
+      return workerDestroy()
     },
-    process: (timeToProcess: number) => addTask(async () => {
-      processBufferChunks = []
-      await workerProcess(timeToProcess)
-      const writtenChunks = processBufferChunks
-      processBufferChunks = []
-      return writtenChunks
-    }),
-    seek: (time: number) => {
-      return addTask(async () => {
-        // if (lastChunk && (lastChunk.pts > time)) {
-        //   await workerDestroy()
-        //   processBufferChunks = []
-        //   await workerInit()
-        // }
-        processBufferChunks = []
-        await workerSeek(
-          Math.max(0, time) * 1000,
-          SEEK_FLAG.NONE
-        )
-      })
-    },
+    read: () => workerRead(),
+    seek: (time: number) => workerSeek(Math.max(0, time) * 1000),
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 
