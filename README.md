@@ -5,6 +5,7 @@ To have C++ autocompletion, put a ffmpeg repo clone folder in the root
 
 
 ## Issues to fix / features to implement
+- cancellable requests
 - Transcoding
 - Decoding + canvas rendering
 - Thumbnail extraction
