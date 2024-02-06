@@ -79,22 +79,28 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const blob = new Blob([`importScripts(${JSON.stringify(workerUrl2)})`], { type: 'application/javascript' })
     const workerUrl = URL.createObjectURL(blob)
 
+    let slow = false
+
     const remuxer = await makeTransmuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
-      randomRead: (offset, size) =>
-        fetch(
+      randomRead: async (offset, size) => {
+        if (slow) return new Promise(resolve => setTimeout(resolve, 5000))
+        return fetch(
           VIDEO_URL,
           {
             headers: {
               Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}`
             }
           }
-        ).then(res => res.arrayBuffer()),
-        getStream: (offset) =>
-          fetch(
+        ).then(res => res.arrayBuffer())
+      },
+        getStream: async (offset) => {
+          if (slow) return new Promise(resolve => setTimeout(resolve, 5000))
+
+          return fetch(
             VIDEO_URL,
             {
               headers: {
@@ -107,7 +113,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
                 res.body!
               )
             )
-          ),
+          )
+        },
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
@@ -353,12 +360,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(async () => {
       // await video.pause()
-      // video.currentTime = 587.618314
-      // await new Promise(resolve => setTimeout(resolve, 1000))
+      video.currentTime = 587.618314
+      await new Promise(resolve => setTimeout(resolve, 500))
       // video.playbackRate = 5
-      // video.currentTime = 400
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 300
+      slow = true
+      video.currentTime = 400
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      slow = false
+      video.currentTime = 300
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 500
       // await new Promise(resolve => setTimeout(resolve, 1000))
@@ -369,5 +378,5 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // video.currentTime = 534.953306
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 100
-    }, 1000)
+    }, 500)
   })
