@@ -86,54 +86,32 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
-      randomRead: async (offset, size) => {
-        if (slow) return new Promise(resolve => setTimeout(resolve, 5000))
+      getStream: async (offset, size) => {
+        console.log('get stream', offset, size, slow)
+        // if (slow) {
+        //   await new Promise(resolve => setTimeout(resolve, 5000))
+        // }
+
         return fetch(
           VIDEO_URL,
           {
             headers: {
-              Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}`
+              Range: `bytes=${offset}-${size ? Math.min(offset + size, contentLength) - 1 : ''}`
             }
           }
-        ).then(res => res.arrayBuffer())
-      },
-        getStream: async (offset) => {
-          if (slow) return new Promise(resolve => setTimeout(resolve, 5000))
-
-          return fetch(
-            VIDEO_URL,
-            {
-              headers: {
-                Range: `bytes=${offset}-`
-              }
-            }
-          ).then(res =>
-            toBufferedStream(3)(
-              toStreamChunkSize(BUFFER_SIZE)(
-                res.body!
-              )
+        ).then(res =>
+          toBufferedStream(3)(
+            toStreamChunkSize(BUFFER_SIZE)(
+              res.body!
             )
           )
-        },
+        )
+      },
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
         // console.log('attachment', filename, mimetype, buffer)
-      },
-      write: ({ isHeader, offset, buffer, pts, duration: chunkDuration, pos }) => {
-        // if (isHeader) {
-        //   if (!headerChunk) {
-        //     headerChunk = {
-        //       offset,
-        //       buffer: new Uint8Array(buffer),
-        //       pts,
-        //       duration: chunkDuration,
-        //       pos
-        //     }
-        //   }
-        //   return
-        // }
       }
     })
 
@@ -365,8 +343,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // video.playbackRate = 5
       slow = true
       video.currentTime = 400
-      await new Promise(resolve => setTimeout(resolve, 1000))
       slow = false
+      await new Promise(resolve => setTimeout(resolve, 1000))
       video.currentTime = 300
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 500

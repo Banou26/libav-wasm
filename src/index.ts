@@ -1,3 +1,4 @@
+import { toStreamChunkSize } from './utils'
 import type { Resolvers as WorkerResolvers } from './worker'
 
 import { call } from 'osra'
@@ -8,18 +9,9 @@ export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the javascript worker file */
   workerUrl: string
   workerOptions?: WorkerOptions
-  randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
-  getStream: (offset: number) => Promise<ReadableStream<Uint8Array>>
+  getStream: (offset: number, size?: number) => Promise<ReadableStream<Uint8Array>>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
-  write: (params: {
-    isHeader: boolean,
-    offset: number,
-    buffer: Uint8Array,
-    pos: number,
-    pts: number,
-    duration: number
-  }) => Promise<void> | void
   length: number
   bufferSize: number
 }
@@ -148,7 +140,14 @@ export const makeTransmuxer = async ({
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
-        randomRead: (offset, bufferSize) => _randomRead(offset, bufferSize),
+        randomRead: async (offset, bufferSize) => {
+          console.log('random read', offset, bufferSize)
+          const stream = toStreamChunkSize(bufferSize)(await _getStream(offset, bufferSize))
+          const reader = stream.getReader()
+          const { value, done } = await reader.read()
+          console.log('randomRead done', value, done)
+          return value?.buffer ?? new ArrayBuffer(0)
+        },
         streamRead: async (offset: number) => {
           if (!currentStream) {
             currentStream = await _getStream(offset)
