@@ -100,11 +100,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             }
           }
         ).then(res =>
-          toBufferedStream(3)(
-            toStreamChunkSize(BUFFER_SIZE)(
+          // res.body!
+          // toBufferedStream(3)(
+            // toStreamChunkSize(BUFFER_SIZE)(
               res.body!
-            )
-          )
+            // )
+          // )
         )
       },
       subtitle: (title, language, subtitle) => {
@@ -338,14 +339,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(async () => {
       // await video.pause()
-      video.currentTime = 587.618314
-      await new Promise(resolve => setTimeout(resolve, 500))
-      // video.playbackRate = 5
-      slow = true
-      video.currentTime = 400
-      slow = false
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      video.currentTime = 300
+      // video.currentTime = 587.618314
+      // await new Promise(resolve => setTimeout(resolve, 500))
+      // // video.playbackRate = 5
+      // slow = true
+      // video.currentTime = 400
+      // slow = false
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // video.currentTime = 300
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 500
       // await new Promise(resolve => setTimeout(resolve, 1000))
