@@ -87,7 +87,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        console.log('get stream', offset, size, slow)
+        // console.log('get stream', offset, size, slow)
         // if (slow) {
         //   await new Promise(resolve => setTimeout(resolve, 5000))
         // }
@@ -100,12 +100,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             }
           }
         ).then(res =>
-          // res.body!
-          // toBufferedStream(3)(
-            // toStreamChunkSize(BUFFER_SIZE)(
-              res.body!
-            // )
-          // )
+          size
+            ? res.body!
+            : (
+              toBufferedStream(3)(
+                toStreamChunkSize(BUFFER_SIZE)(
+                  res.body!
+                )
+              )
+            )
         )
       },
       subtitle: (title, language, subtitle) => {

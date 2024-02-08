@@ -58,9 +58,10 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    streamRead: async (_offset: string) => {
+    streamRead: async (_offset: string, bufferSize: number) => {
       const offset = Number(_offset)
       const res = await streamRead(offset)
+      // console.log('streamRead', offset, bufferSize, res)
       return {
         ...res,
         value: new Uint8Array(res.value ?? [])
@@ -70,6 +71,7 @@ const init = makeCallListener(async (
     randomRead: async (_offset: number, bufferSize: number) => {
       const offset = Number(_offset)
       const buffer = await randomRead(offset, bufferSize)
+      // console.log('randomRead', offset, bufferSize, buffer.byteLength)
       return buffer
     },
     write: async (buffer: Uint8Array) => {

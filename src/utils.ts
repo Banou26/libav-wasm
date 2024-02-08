@@ -142,12 +142,13 @@ export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
       this.reader = stream.getReader()
     },
     async pull(controller) {
-      console.log('pull', this.reader, this.leftOverData?.byteLength)
+      // console.log('pull', this.reader, this.leftOverData?.byteLength)
       const { leftOverData }: { leftOverData: Uint8Array | undefined } = this
 
       const accumulate = async ({ buffer = new Uint8Array(SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
+        // console.log('accumulate')
         const { value: newBuffer, done } = await this.reader!.read()
-        console.log('accumulate', newBuffer, done)
+        // console.log('accumulate2', newBuffer, done)
         
         if (currentSize === 0 && leftOverData) {
           buffer.set(leftOverData)
