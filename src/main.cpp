@@ -694,13 +694,21 @@ extern "C" {
     if (remuxObject.initializing) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
-        buffer =
+        emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
-            .await()
-            .as<std::string>();
+            .await();
+        bool is_cancelled = result["cancelled"].as<bool>();
+        if (is_cancelled) {
+          return AVERROR_EXIT;
+        }
+        bool is_done = result["done"].as<bool>();
+        if (is_done) {
+          return AVERROR_EOF;
+        }
+        buffer = result["buffer"].as<std::string>();
         remuxObject.init_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
@@ -710,13 +718,21 @@ extern "C" {
     } else if(remuxObject.seeking) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_seek) {
-        buffer =
+        emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
-            .await()
-            .as<std::string>();
+            .await();
+        bool is_cancelled = result["cancelled"].as<bool>();
+        if (is_cancelled) {
+          return AVERROR_EXIT;
+        }
+        bool is_done = result["done"].as<bool>();
+        if (is_done) {
+          return AVERROR_EOF;
+        }
+        buffer = result["buffer"].as<std::string>();
         remuxObject.seek_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
@@ -739,7 +755,7 @@ extern "C" {
       if (is_done) {
         return AVERROR_EOF;
       }
-      buffer = result["value"].as<std::string>();
+      buffer = result["buffer"].as<std::string>();
     }
 
     int buffer_size = buffer.size();

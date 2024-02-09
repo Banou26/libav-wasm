@@ -64,7 +64,7 @@ const init = makeCallListener(async (
       // console.log('streamRead', offset, bufferSize, res)
       return {
         ...res,
-        value: new Uint8Array(res.value ?? [])
+        buffer: new Uint8Array(res.value ?? [])
       }
     },
     clearStream: () => clearStream(),
@@ -72,7 +72,9 @@ const init = makeCallListener(async (
       const offset = Number(_offset)
       const buffer = await randomRead(offset, bufferSize)
       // console.log('randomRead', offset, bufferSize, buffer.byteLength)
-      return buffer
+      return {
+        buffer
+      }
     },
     write: async (buffer: Uint8Array) => {
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)

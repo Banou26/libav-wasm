@@ -141,7 +141,7 @@ export const makeTransmuxer = async ({
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
         randomRead: async (offset, bufferSize) => {
-          // console.log('random read', offset, bufferSize)
+          console.log('random read', offset, bufferSize)
           const stream = toStreamChunkSize(bufferSize)(await _getStream(offset, bufferSize))
           const reader = stream.getReader()
           const { value, done } = await reader.read()
@@ -150,6 +150,7 @@ export const makeTransmuxer = async ({
           return value?.buffer ?? new ArrayBuffer(0)
         },
         streamRead: async (offset: number) => {
+          console.log('random read', offset)
           if (!currentStream) {
             currentStream = await _getStream(offset)
             reader = currentStream.getReader()

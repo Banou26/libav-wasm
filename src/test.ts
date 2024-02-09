@@ -88,9 +88,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       length: contentLength,
       getStream: async (offset, size) => {
         // console.log('get stream', offset, size, slow)
-        // if (slow) {
-        //   await new Promise(resolve => setTimeout(resolve, 5000))
-        // }
+        if (slow) {
+          await new Promise(resolve => setTimeout(resolve, 5000))
+        }
 
         return fetch(
           VIDEO_URL,
@@ -268,13 +268,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
       const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
-      // console.log('currentChunkIndex', currentChunkIndex, chunks.length, currentTime)
       for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
-        // console.log('pull check', i, chunks[i])
         if (chunks[i]) continue
-        // console.log('pulling')
         const chunk = await pull()
-        // console.log('pull', chunk)
         await appendBuffer(chunk.buffer)
       }
 
@@ -303,14 +299,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
-      seeking = true
-      await appendBuffer(headerChunk.buffer)
       chunks = []
       await remuxer.seek(seekTime)
       const chunk1 = await pull()
       sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
-      seeking = false
       await updateBuffers()
     })
 
@@ -325,10 +318,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       updateBuffers()
     })
 
-    video.addEventListener('seeking', (ev) => {
-      if (seeking) return
-      seek(video.currentTime)
-    })
+    video.addEventListener('seeking', (ev) => seek(video.currentTime))
 
     updateBuffers()
 
@@ -342,14 +332,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(async () => {
       // await video.pause()
-      // video.currentTime = 587.618314
-      // await new Promise(resolve => setTimeout(resolve, 500))
-      // // video.playbackRate = 5
-      // slow = true
-      // video.currentTime = 400
-      // slow = false
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 300
+      video.currentTime = 587.618314
+      await new Promise(resolve => setTimeout(resolve, 500))
+      // video.playbackRate = 5
+      slow = true
+      video.currentTime = 400
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      slow = false
+      video.currentTime = 300
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 500
       // await new Promise(resolve => setTimeout(resolve, 1000))
