@@ -88,9 +88,9 @@ export const makeTransmuxer = async ({
   let currentStream: ReadableStream<Uint8Array> | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
 
-  let streamResultPromiseResolve: (value: { value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }) => void
-  let streamResultPromiseReject: (reason?: any) => void
-  let streamResultPromise: Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+  let streamResultPromiseResolve: ((value: { value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }) => void) | undefined
+  let streamResultPromiseReject: ((reason?: any) => void) | undefined
+  let streamResultPromise: Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }> | undefined
 
   const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =
     await target(
@@ -141,7 +141,7 @@ export const makeTransmuxer = async ({
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
         randomRead: async (offset, bufferSize) => {
-          console.log('random read', offset, bufferSize)
+          // console.log('random read', offset, bufferSize)
           const stream = toStreamChunkSize(bufferSize)(await _getStream(offset, bufferSize))
           const reader = stream.getReader()
           const { value, done } = await reader.read()
@@ -150,7 +150,7 @@ export const makeTransmuxer = async ({
           return value?.buffer ?? new ArrayBuffer(0)
         },
         streamRead: async (offset: number) => {
-          console.log('random read', offset)
+          // console.log('streamRead read', offset)
           if (!currentStream) {
             currentStream = await _getStream(offset)
             reader = currentStream.getReader()
@@ -170,6 +170,7 @@ export const makeTransmuxer = async ({
                 cancelled: false
               }))
               .then(async (result) => {
+                if (!streamResultPromiseResolve) return
                 if (result.done) {
                   reader?.cancel()
                   if (offset >= length) {
@@ -182,21 +183,31 @@ export const makeTransmuxer = async ({
     
                 return streamResultPromiseResolve(result)
               })
-              .catch((err) => streamResultPromiseReject(err))
+              .catch((err) => streamResultPromiseReject?.(err))
     
           tryReading()
     
           return (
             streamResultPromise
-              .then((value) => ({
-                value: value.value,
-                done: value.done,
-                cancelled: false
-              }))
-              .catch(err => {
-                console.error(err)
+              .then((value) => {
+                // console.log('returning streamRead read then')
+                streamResultPromise = undefined
+                streamResultPromiseResolve = undefined
+                streamResultPromiseReject = undefined
                 return {
-                  value: undefined,
+                  buffer: value.value,
+                  done: value.done,
+                  cancelled: false
+                }
+              })
+              .catch(err => {
+                // console.error(err)
+                // console.log('returning streamRead read result from catch')
+                streamResultPromise = undefined
+                streamResultPromiseResolve = undefined
+                streamResultPromiseReject = undefined
+                return {
+                  buffer: undefined,
                   done: false,
                   cancelled: true
                 }
@@ -235,8 +246,21 @@ export const makeTransmuxer = async ({
       }
       return workerDestroy()
     },
-    read: () => workerRead(),
+    read: () =>{
+      // console.log('read')
+      return workerRead()
+    },
     seek: (time: number) => workerSeek(Math.max(0, time) * 1000),
+    // seek: (time: number) => {
+    //   console.log('seek', streamResultPromiseReject)
+    //   if (streamResultPromiseReject) {
+    //     console.log('cancel seek')
+    //     streamResultPromiseReject(new Error('Seeking to a new position.'))
+    //     reader?.cancel()
+    //     console.log('cancelled seek')
+    //   }
+    //   return workerSeek(Math.max(0, time) * 1000)
+    // },
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 

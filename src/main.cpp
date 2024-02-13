@@ -83,6 +83,7 @@ extern "C" {
     val write = val::undefined();
     val flush = val::undefined();
     val error = val::undefined();
+    val exit = val::undefined();
 
     double currentOffset = 0;
 
@@ -122,6 +123,7 @@ extern "C" {
       write = options["write"];
       flush = options["flush"];
       error = options["error"];
+      exit = options["exit"];
     }
 
     auto decimalToHex(int d, int padding) {
@@ -483,6 +485,10 @@ extern "C" {
             );
             // destroy();
             break;
+          } else if (res == AVERROR_EXIT) {
+            printf("ERROR: could not read frame, exit requested | %s \n", av_err2str(res));
+            exit();
+            break;
           }
           printf("ERROR: could not read frame | %s \n", av_err2str(res));
           break;
@@ -635,7 +641,10 @@ extern "C" {
       pts = 0;
       pos = 0;
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD)) < 0) {
+        seeking = false;
+        first_seek = false;
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
+        return 1;
       }
       seeking = false;
       first_seek = false;
@@ -694,12 +703,14 @@ extern "C" {
     if (remuxObject.initializing) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
+        printf("c++ read started\n");
         emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
             .await();
+        printf("c++ read done\n");
         bool is_cancelled = result["cancelled"].as<bool>();
         if (is_cancelled) {
           return AVERROR_EXIT;
@@ -718,12 +729,14 @@ extern "C" {
     } else if(remuxObject.seeking) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_seek) {
+        printf("c++ read started\n");
         emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
             .await();
+        printf("c++ read done\n");
         bool is_cancelled = result["cancelled"].as<bool>();
         if (is_cancelled) {
           return AVERROR_EXIT;
@@ -740,6 +753,7 @@ extern "C" {
         remuxObject.seek_buffer_count++;
       }
     } else {
+        printf("c++ read started\n");
       emscripten::val result =
         remuxObject
           .streamRead(
@@ -747,6 +761,7 @@ extern "C" {
             buf_size
           )
           .await();
+        printf("c++ read done\n");
       bool is_cancelled = result["cancelled"].as<bool>();
       if (is_cancelled) {
         return AVERROR_EXIT;
@@ -788,7 +803,7 @@ extern "C" {
           buf
         )
       )
-    ).await();
+    );
 
     return buf_size;
   }
