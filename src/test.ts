@@ -341,15 +341,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // video.playbackRate = 5
 
 
-      // console.log('START SLOW SEEK')
-      // slow = true
-      // video.currentTime = 400
-      // console.log('SLOW SEEK STARTED')
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // slow = false
-      // console.log('START END SEEK')
-      // video.currentTime = 300
-      // console.log('END SEEK STARTED')
+      console.log('START SLOW SEEK')
+      slow = true
+      video.currentTime = 400
+      console.log('SLOW SEEK STARTED')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      slow = false
+      console.log('START END SEEK')
+      video.currentTime = 300
+      console.log('END SEEK STARTED')
 
 
       // await new Promise(resolve => setTimeout(resolve, 1000))

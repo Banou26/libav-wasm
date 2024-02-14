@@ -44,45 +44,25 @@ const init = makeCallListener(async (
   let readResultPromiseReject: ((reason?: any) => void) | undefined
   let readResultPromise: Promise<Chunk> | undefined
 
-  let libavReadResultPromiseResolve: ((value: Chunk) => void) | undefined
-  let libavReadResultPromiseReject: ((reason?: any) => void) | undefined
-  let libavReadResultPromise: Promise<Chunk> | undefined
+  let resolveCancel: ((value: any) => void) | undefined
+  let cancelPromise: Promise<any> | undefined
+  let cancelled = false
 
-  const makeCancellableRead = (readFunc: () => Promise<{ buffer: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>) => {
-    console.log('makeCancellableRead')
-    if (libavReadResultPromise) throw new Error('Cannot read while a read is already processing')
-    libavReadResultPromise = new Promise<Chunk>((resolve, reject) => {
-      libavReadResultPromiseResolve = resolve
-      libavReadResultPromiseReject = reject
+  let resolveCancelled: ((value: any) => void) | undefined
+  let cancelledPromise: Promise<any> | undefined
+
+  const setupCancelPromise = () => {
+    cancelled = false
+    cancelPromise = new Promise((resolve) => {
+      resolveCancel = resolve
     })
-    const readResponse = readFunc()
-
-    readResponse.finally(() => {
-      console.log('READ RESPONSE FINALLY')
+    cancelledPromise = new Promise((resolve) => {
+      resolveCancelled = resolve
     })
-
-    libavReadResultPromise.finally(() => {
-      console.log('LIBAV READ RESULT FINALLY')
-    })
-
-    const race = Promise.race([
-      readResponse,
-      libavReadResultPromise.then(() => ({
-        value: undefined as ArrayBuffer | undefined,
-        done: true,
-        cancelled: true
-      }))
-    ])
-
-    race.finally(() => {
-      console.log('RACE FINALLY')
-      libavReadResultPromise = undefined
-      libavReadResultPromiseResolve = undefined
-      libavReadResultPromiseReject = undefined
-    })
-
-    return race
+    cancelledPromise.then(setupCancelPromise)
   }
+
+  setupCancelPromise()
 
   const makeRemuxer = () => new module.Remuxer({
     promise: Promise.resolve(),
@@ -99,32 +79,54 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    streamRead: async (_offset: string) =>
-    console.log('streamRead', _offset) ||
-    ({
-      buffer: new Uint8Array(0),
-      done: false,
-      cancelled: true
-    }),
-      // makeCancellableRead(() =>
-      //   streamRead(Number(_offset))
-      //     .then(({ buffer, done, cancelled }) => console.log('streamRead done') || ({
-      //       buffer: buffer ? new Uint8Array(buffer) : undefined,
-      //       done,
-      //       cancelled
-      //     }))
-      // ),
+    streamRead: (_offset: string) =>
+      console.log('streamRead', _offset, cancelled) ||
+      (cancelled
+        ? ({
+          buffer: new Uint8Array(0),
+          done: false,
+          cancelled: true
+        })
+        : (
+          Promise.race([
+            cancelPromise.then(() => ({
+              buffer: new Uint8Array(0),
+              done: false,
+              cancelled: true
+            })),
+            streamRead(Number(_offset))
+              .then(({ buffer, done, cancelled }) => console.log('streamRead done') || ({
+                buffer: buffer ? new Uint8Array(buffer) : undefined,
+                done,
+                cancelled
+              }))
+          ])
+        )
+      ),
     clearStream: () => clearStream(),
-    randomRead: async (_offset: string, bufferSize: number) =>
+    randomRead: (_offset: string, bufferSize: number) =>
       console.log('randomRead', _offset, bufferSize) ||
-      makeCancellableRead(() =>
-        console.log('randomRead') ||
-        randomRead(Number(_offset), bufferSize)
-          .then((buffer) => ({
-            buffer: buffer ? new Uint8Array(buffer) : undefined,
-            done: false,
-            cancelled: false
-          }))
+      (cancelled
+        ? ({
+          buffer: new Uint8Array(0),
+          done: false,
+          cancelled: true
+        })
+        : (
+          Promise.race([
+            cancelPromise.then(() => ({
+              buffer: new Uint8Array(0),
+              done: false,
+              cancelled: true
+            })),
+            randomRead(Number(_offset), bufferSize)
+              .then((buffer) => ({
+                buffer: buffer ? new Uint8Array(buffer) : undefined,
+                done: false,
+                cancelled: false
+              }))
+          ])
+        )
       ),
     write: (buffer: Uint8Array) => {
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
@@ -153,6 +155,8 @@ const init = makeCallListener(async (
     },
     exit: () => {
       console.log('exit')
+      if (!resolveCancelled) throw new Error('No resolveCancelled on libav exit')
+      resolveCancelled(undefined)
     }
   })
 
@@ -165,7 +169,10 @@ const init = makeCallListener(async (
     if (currentTask) throw new Error('Cannot seek while a task is running')
     try {
       currentTask = remuxer.seek(timestamp)
-      await currentTask
+      await Promise.race([
+        currentTask,
+        cancelledPromise
+      ])
       console.log('seeking task done')
     } catch (err) {
       console.log('seeking task cancelled', err)
@@ -175,7 +182,9 @@ const init = makeCallListener(async (
   })
 
   const seek = async (timestamp: number) => {
-    if (libavReadResultPromiseReject) libavReadResultPromiseReject(new Error('Seeking to a new position.'))
+    if (currentTask && resolveCancel) {
+      resolveCancel(undefined)
+    }
     return seekQueuedTask(timestamp)
   }
 
@@ -198,15 +207,7 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: async (timestamp: number) => {
-      console.log('worker seek', readResultPromise)
-      const seekPromise = seek(timestamp)
-      console.log('worker seek promise', seekPromise)
-      seekPromise.finally(() => {
-        console.log('worker seek finally')
-      })
-      return await seekPromise
-    },
+    seek: (timestamp: number) => seek(timestamp),
     read: () => {
       readResultPromise = new Promise<Chunk>((resolve, reject) => {
         readResultPromiseResolve = resolve
