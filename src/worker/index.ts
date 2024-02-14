@@ -79,18 +79,18 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    streamRead: (_offset: string) =>
+    streamRead: async (_offset: string) =>
       console.log('streamRead', _offset, cancelled) ||
       (cancelled
         ? ({
-          buffer: new Uint8Array(0),
+          buffer: undefined,
           done: false,
           cancelled: true
         })
         : (
           Promise.race([
             cancelPromise.then(() => ({
-              buffer: new Uint8Array(0),
+              buffer: undefined,
               done: false,
               cancelled: true
             })),
@@ -104,18 +104,18 @@ const init = makeCallListener(async (
         )
       ),
     clearStream: () => clearStream(),
-    randomRead: (_offset: string, bufferSize: number) =>
+    randomRead: async (_offset: string, bufferSize: number) =>
       console.log('randomRead', _offset, bufferSize) ||
       (cancelled
         ? ({
-          buffer: new Uint8Array(0),
+          buffer: undefined,
           done: false,
           cancelled: true
         })
         : (
           Promise.race([
             cancelPromise.then(() => ({
-              buffer: new Uint8Array(0),
+              buffer: undefined,
               done: false,
               cancelled: true
             })),

@@ -703,7 +703,8 @@ extern "C" {
     std::string buffer;
 
     if (remuxObject.cancelling) {
-      return AVERROR_EOF;
+      remuxObject.promise.await();
+      return AVERROR_EXIT;
     }
 
     if (remuxObject.initializing) {
