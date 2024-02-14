@@ -68,6 +68,7 @@ extern "C" {
     double pts;
     double duration;
     bool first_frame = true;
+    bool cancelling = false;
 
     std::string video_mime_type;
     std::string audio_mime_type;
@@ -486,6 +487,7 @@ extern "C" {
             // destroy();
             break;
           } else if (res == AVERROR_EXIT) {
+            cancelling = false;
             printf("ERROR: could not read frame, exit requested | %s \n", av_err2str(res));
             exit();
             break;
@@ -700,6 +702,10 @@ extern "C" {
     Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     std::string buffer;
 
+    if (remuxObject.cancelling) {
+      return AVERROR_EOF;
+    }
+
     if (remuxObject.initializing) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
@@ -738,6 +744,7 @@ extern "C" {
             .await();
         printf("c++ read done\n");
         bool is_cancelled = result["cancelled"].as<bool>();
+        remuxObject.cancelling = is_cancelled;
         if (is_cancelled) {
           return AVERROR_EXIT;
         }
