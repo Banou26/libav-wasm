@@ -51,7 +51,16 @@ const init = makeCallListener(async (
   let resolveCancelled: ((value: any) => void) | undefined
   let cancelledPromise: Promise<any> | undefined
 
+  const setupReadPromise = () => {
+    if (readResultPromise) return
+    readResultPromise = new Promise<Chunk>((resolve, reject) => {
+      readResultPromiseResolve = resolve
+      readResultPromiseReject = reject
+    })
+  }
+
   const setupCancelPromise = () => {
+    if (cancelPromise || cancelledPromise) return
     cancelled = false
     cancelPromise = new Promise((resolve) => {
       resolveCancel = resolve
@@ -59,7 +68,6 @@ const init = makeCallListener(async (
     cancelledPromise = new Promise((resolve) => {
       resolveCancelled = resolve
     })
-    cancelledPromise.then(setupCancelPromise)
   }
 
   setupCancelPromise()
@@ -105,29 +113,13 @@ const init = makeCallListener(async (
       ),
     clearStream: () => clearStream(),
     randomRead: async (_offset: string, bufferSize: number) =>
-      console.log('randomRead', _offset, bufferSize) ||
-      (cancelled
-        ? ({
-          buffer: undefined,
+      console.log('randomRead', _offset, bufferSize, cancelled) ||
+      randomRead(Number(_offset), bufferSize)
+        .then((buffer) => console.log('randomRead done', buffer) || ({
+          buffer: buffer ? new Uint8Array(buffer) : undefined,
           done: false,
-          cancelled: true
-        })
-        : (
-          Promise.race([
-            cancelPromise.then(() => ({
-              buffer: undefined,
-              done: false,
-              cancelled: true
-            })),
-            randomRead(Number(_offset), bufferSize)
-              .then((buffer) => ({
-                buffer: buffer ? new Uint8Array(buffer) : undefined,
-                done: false,
-                cancelled: false
-              }))
-          ])
-        )
-      ),
+          cancelled: false
+        })),
     write: (buffer: Uint8Array) => {
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
@@ -150,6 +142,9 @@ const init = makeCallListener(async (
         pts,
         duration
       })
+      readResultPromiseResolve = undefined
+      readResultPromiseReject = undefined
+      readResultPromise = undefined
       writeBuffer = new Uint8Array(0)
       return false
     },
@@ -158,7 +153,28 @@ const init = makeCallListener(async (
       if (!resolveCancelled) throw new Error('No resolveCancelled on libav exit')
       resolveCancelled(undefined)
     }
-  })
+  }) as {
+    init: () => Promise<void>
+    destroy: () => void
+    seek: (timestamp: number) => Promise<void>
+    read: () => Promise<void>
+    getInfo: () => ({
+      input: {
+        formatName: string
+        mimeType: string
+        duration: number
+        video_mime_type: string
+        audio_mime_type: string
+      },
+      output: {
+        formatName: string
+        mimeType: string
+        duration: number
+        video_mime_type: string
+        audio_mime_type: string
+      }
+    })
+  }
 
   let remuxer: ReturnType<typeof makeRemuxer> = makeRemuxer()
 
@@ -173,20 +189,28 @@ const init = makeCallListener(async (
         currentTask,
         cancelledPromise
       ])
+      currentTask = undefined
       console.log('seeking task done')
     } catch (err) {
+      currentTask = undefined
       console.log('seeking task cancelled', err)
+      throw err
     } finally {
       currentTask = undefined
     }
   })
 
-  const seek = async (timestamp: number) => {
-    if (currentTask && resolveCancel) {
-      resolveCancel(undefined)
-    }
-    return seekQueuedTask(timestamp)
-  }
+  const waitUntilFreeToRead = () =>
+    Promise.any([
+      readResultPromise,
+      currentTask,
+      cancelledPromise
+    ]).then(() =>
+      cancelled
+      || currentTask
+      || cancelledPromise ? waitUntilFreeToRead()
+      : undefined
+    )
 
   return {
     init: async () => {
@@ -194,10 +218,7 @@ const init = makeCallListener(async (
       module = await makeModule(publicPath)
       remuxer = makeRemuxer()
 
-      readResultPromise = new Promise<Chunk>((resolve, reject) => {
-        readResultPromiseResolve = resolve
-        readResultPromiseReject = reject
-      })
+      setupReadPromise()
       remuxer.init()
       return readResultPromise
     },
@@ -207,12 +228,17 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: (timestamp: number) => seek(timestamp),
-    read: () => {
-      readResultPromise = new Promise<Chunk>((resolve, reject) => {
-        readResultPromiseResolve = resolve
-        readResultPromiseReject = reject
-      })
+    seek: async (timestamp: number) => {
+      setupCancelPromise()
+      if (currentTask && resolveCancel) {
+        resolveCancel(undefined)
+      }
+      return seekQueuedTask(timestamp)
+    },
+    read: async () => {
+      if (currentTask) await waitUntilFreeToRead()
+      setupCancelPromise()
+      setupReadPromise()
       remuxer.read()
       return readResultPromise
     },

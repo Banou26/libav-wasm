@@ -340,6 +340,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // await new Promise(resolve => setTimeout(resolve, 500))
       // video.playbackRate = 5
 
+      video.pause()
 
       console.log('START SLOW SEEK')
       slow = true
