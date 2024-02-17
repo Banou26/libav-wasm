@@ -45,13 +45,6 @@ const init = makeCallListener(async (
   let readResultPromiseReject: ((reason?: any) => void) | undefined
   let readResultPromise: Promise<Chunk> | undefined
 
-  let resolveCancel: ((value: any) => void) | undefined
-  let cancelPromise: Promise<any> | undefined
-  let cancelled = false
-
-  let resolveCancelled: ((value: any) => void) | undefined
-  let cancelledPromise: Promise<any> | undefined
-
   const setupReadPromise = () => {
     if (readResultPromise) return
     readResultPromise = new Promise<Chunk>((resolve, reject) => {
@@ -59,19 +52,6 @@ const init = makeCallListener(async (
       readResultPromiseReject = reject
     })
   }
-
-  const setupCancelPromise = () => {
-    if (cancelPromise || cancelledPromise) return
-    cancelled = false
-    cancelPromise = new Promise((resolve) => {
-      resolveCancel = resolve
-    })
-    cancelledPromise = new Promise((resolve) => {
-      resolveCancelled = resolve
-    })
-  }
-
-  setupCancelPromise()
 
   const makeRemuxer = () => new module.Remuxer({
     promise: Promise.resolve(),
@@ -89,38 +69,65 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, arraybuffer)
     },
     streamRead: async (_offset: string) =>
-      console.log('streamRead', _offset, cancelled) ||
-      (cancelled
-        ? ({
-          buffer: undefined,
-          done: false,
-          cancelled: true
+      console.log('streamRead', _offset) ||
+      Promise.race([
+        new Promise(resolve => {
+          queue.on('add', function listener() {
+            if (queue.size === 0) return
+            resolve(undefined)
+            queue.off('add', listener)
+          })
         })
-        : (
-          Promise.race([
-            cancelPromise.then(() => ({
-              buffer: undefined,
-              done: false,
-              cancelled: true
-            })),
-            streamRead(Number(_offset))
-              .then(({ buffer, done, cancelled }) => console.log('streamRead done') || ({
-                buffer: buffer ? new Uint8Array(buffer) : undefined,
-                done,
-                cancelled
-              }))
-          ])
-        )
-      ),
+          .then(() => ({
+            buffer: undefined,
+            done: false,
+            cancelled: true
+          })),
+        streamRead(Number(_offset))
+          .then(({ buffer, done, cancelled }) => ({
+            buffer: buffer ? new Uint8Array(buffer) : undefined,
+            done,
+            cancelled
+          }))
+      ])
+      .then(res => console.log('streamRead done', res) || res),
     clearStream: () => clearStream(),
-    randomRead: async (_offset: string, bufferSize: number) =>
-      console.log('randomRead', _offset, bufferSize, cancelled) ||
-      randomRead(Number(_offset), bufferSize)
-        .then((buffer) => console.log('randomRead done', buffer) || ({
-          buffer: buffer ? new Uint8Array(buffer) : undefined,
-          done: false,
-          cancelled: false
-        })),
+    randomRead: async (_offset: string, requestedBufferSize: number) =>
+      console.log('randomRead', _offset, requestedBufferSize) ||
+      randomRead(Number(_offset), requestedBufferSize)
+      .then((buffer) => ({
+        buffer: buffer ? new Uint8Array(buffer) : undefined,
+        done: false,
+        cancelled: false
+      }))
+      .then(res => console.log('randomRead done', res) || res),
+      // (requestedBufferSize !== bufferSize
+      //   ? (
+      //     randomRead(Number(_offset), requestedBufferSize)
+      //       .then((buffer) => ({
+      //         buffer: buffer ? new Uint8Array(buffer) : undefined,
+      //         done: false,
+      //         cancelled: false
+      //       }))
+      //       .then(res => console.log('randomRead done', res) || res)
+      //   )
+      //   : (
+      //     Promise.race([
+      //       new Promise(resolve => queue.on('add', resolve, { once: true }))
+      //         .then(() => ({
+      //           buffer: undefined,
+      //           done: false,
+      //           cancelled: true
+      //         })),
+      //       randomRead(Number(_offset), requestedBufferSize)
+      //         .then((buffer) => ({
+      //           buffer: buffer ? new Uint8Array(buffer) : undefined,
+      //           done: false,
+      //           cancelled: false
+      //         }))
+      //     ])
+      //       .then(res => console.log('randomRead done', res) || res)
+      //   )),
     write: (buffer: Uint8Array) => {
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
@@ -150,9 +157,8 @@ const init = makeCallListener(async (
       return false
     },
     exit: () => {
-      console.log('exit')
-      if (!resolveCancelled) throw new Error('No resolveCancelled on libav exit')
-      resolveCancelled(undefined)
+      console.log('EXITTTTTTTTTTTTTTTTTTTTTTTT')
+      readResultPromiseReject?.(new Error('exit'))
     }
   }) as {
     init: () => Promise<void>
@@ -179,30 +185,27 @@ const init = makeCallListener(async (
 
   let remuxer: ReturnType<typeof makeRemuxer> = makeRemuxer()
 
-  let controller = new AbortController()
   const queue = new PQueue({ concurrency: 1 })
 
-  let currentTask: Promise<any> | undefined
+  queue.on('add', () => {
+    console.log('queue add', queue.size, queue.pending)
+  })
 
-  // const seekQueuedTask = queuedDebounceWithLastCall(0, async (timestamp: number) => {
-  //   console.log('seeking task started')
-  //   if (currentTask) throw new Error('Cannot seek while a task is running')
-  //   try {
-  //     currentTask = remuxer.seek(timestamp)
-  //     await Promise.race([
-  //       currentTask,
-  //       cancelledPromise
-  //     ])
-  //     currentTask = undefined
-  //     console.log('seeking task done')
-  //   } catch (err) {
-  //     currentTask = undefined
-  //     console.log('seeking task cancelled', err)
-  //     throw err
-  //   } finally {
-  //     currentTask = undefined
-  //   }
-  // })
+  queue.on('next', () => {
+    console.log('queue next', queue.size, queue.pending)
+  })
+
+  queue.on('idle', () => {
+    console.log('queue idle', queue.size, queue.pending)
+  })
+
+  queue.on('active', () => {
+    console.log('queue active', queue.size, queue.pending)
+  })
+
+  queue.on('error', () => {
+    console.log('queue error', queue.size, queue.pending)
+  })
 
   return {
     init: async () => {
@@ -220,24 +223,29 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: async (timestamp: number) => queue(() => {
-      let resolveCancel: ((value: any) => void)
-      let cancelPromise = new Promise<undefined>((resolve) => {
-        resolveCancel = resolve
+    seek: (timestamp: number) => queue.add(() => {
+      console.log('seek')
+      const seekPromise = remuxer.seek(timestamp)
+      seekPromise?.then((res) => {
+        console.log('seekResultPromise resolved', res)
       })
-
-      queue.on('add', () => {
-        resolveCancel(undefined)
-      }, { once: true })
-
-      return remuxer.seek(timestamp, cancelPromise)
+      seekPromise?.catch((err) => {
+        console.log('seekResultPromise rejected', err)
+      })
+      return seekPromise
     }),
-    read: async () => {
-      setupCancelPromise()
+    read: () => queue.add(() => {
+      console.log('read')
       setupReadPromise()
       remuxer.read()
+      readResultPromise?.then(() => {
+        console.log('readResultPromise resolved', readResultPromise)
+      })
+      readResultPromise?.catch((err) => {
+        console.log('readResultPromise rejected', err)
+      })
       return readResultPromise
-    },
+    }),
     getInfo: () => remuxer.getInfo()
   }
 })

@@ -474,6 +474,9 @@ extern "C" {
         AVPacket* packet = av_packet_alloc();
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
+          // free packet
+          av_packet_unref(packet);
+          av_packet_free(&packet);
           if (res == AVERROR_EOF) {
             avio_flush(output_format_context->pb);
             is_flushing = true;
@@ -650,6 +653,7 @@ extern "C" {
       }
       seeking = false;
       first_seek = false;
+      cancelling = false;
       return 0;
     }
 
@@ -719,6 +723,7 @@ extern "C" {
             .await();
         printf("c++ read init done\n");
         bool is_cancelled = result["cancelled"].as<bool>();
+        remuxObject.cancelling = is_cancelled;
         if (is_cancelled) {
           return AVERROR_EXIT;
         }
@@ -771,6 +776,7 @@ extern "C" {
           .await();
       printf("c++ read normal done\n");
       bool is_cancelled = result["cancelled"].as<bool>();
+      remuxObject.cancelling = is_cancelled;
       if (is_cancelled) {
         return AVERROR_EXIT;
       }

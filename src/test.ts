@@ -88,7 +88,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       length: contentLength,
       getStream: async (offset, size) => {
         // console.log('get stream', offset, size, slow)
-        if (slow) {
+        if (slow && size !== BUFFER_SIZE) {
           await new Promise(resolve => setTimeout(resolve, 5000))
         }
 
@@ -363,5 +363,5 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // video.currentTime = 534.953306
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 100
-    }, 500)
+    }, 2_000)
   })
