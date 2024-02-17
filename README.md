@@ -2,6 +2,9 @@
 
 This library can be used to remux from MKV -> MP4, it could technically do any remux but i haven't had the need for it, create an issue if you'd like it.
 
+[src/test.ts](https://github.com/Banou26/libav-wasm/blob/main/src/test.ts)
+Contains a full example of a MKV video player
+
 Basic usage
 ```ts
 const remuxer = await makeRemuxer({
