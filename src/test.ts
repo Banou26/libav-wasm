@@ -299,17 +299,25 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     let firstSeekPaused: boolean | undefined
+    let seekCausedPause: boolean | undefined
 
     video.addEventListener('play', () => {
       console.log('PLAYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY')
     })
-        
-    video.addEventListener('pause', () => {
-      console.log('PAUSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
+
+    video.addEventListener('pause', (ev) => {
+      console.log('PAUSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE', ev)
+      setTimeout(() => {
+        if (seekCausedPause) {
+          seekCausedPause = undefined
+          firstSeekPaused = false
+        }
+      }, 0)
     })
 
     const seek = async (seekTime: number) => {
       console.log('BBBBBBBBBBBBBBBBBBBBBBBBB', video.paused)
+      if (seekCausedPause === undefined) seekCausedPause = true
       if (firstSeekPaused === undefined) firstSeekPaused = video.paused
       seeking = true
       chunks = []
@@ -329,6 +337,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         await video.play()
       }
       firstSeekPaused = undefined
+      seekCausedPause = undefined
     }
 
     const firstChunk = await pull()
