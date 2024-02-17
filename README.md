@@ -1,10 +1,10 @@
 # LibAV WASM
 
-This library can be used to transmux from MKV -> MP4, it could technically do any transmux but i haven't had the need for it, create an issue if you'd like it.
+This library can be used to remux from MKV -> MP4, it could technically do any remux but i haven't had the need for it, create an issue if you'd like it.
 
 Basic usage
 ```ts
-const remuxer = await makeTransmuxer({
+const remuxer = await makeRemuxer({
   // the path at which the wasm file is getting served
   publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
   // url of the worker file of libavWASM

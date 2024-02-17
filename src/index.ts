@@ -57,7 +57,7 @@ const convertTimestamp = (ms: number) =>
     .slice(11, 22)
     .replace(/^00/, '0')
 
-export const makeTransmuxer = async ({
+export const makeRemuxer = async ({
   publicPath,
   workerUrl,
   workerOptions, 

@@ -2,7 +2,7 @@
 import PQueue from 'p-queue'
 
 import { queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
-import { makeTransmuxer } from '.'
+import { makeRemuxer } from '.'
 import pDebounce from 'p-debounce'
 
 type Chunk = {
@@ -82,7 +82,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     let slow = false
 
-    const remuxer = await makeTransmuxer({
+    const remuxer = await makeRemuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
       bufferSize: BUFFER_SIZE,
