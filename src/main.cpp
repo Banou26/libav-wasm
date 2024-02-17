@@ -714,14 +714,12 @@ extern "C" {
     if (remuxObject.initializing) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
-        printf("c++ read started init\n");
         emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
             .await();
-        printf("c++ read init done\n");
         bool is_cancelled = result["cancelled"].as<bool>();
         remuxObject.cancelling = is_cancelled;
         if (is_cancelled) {
@@ -741,14 +739,12 @@ extern "C" {
     } else if(remuxObject.seeking) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_seek) {
-        printf("c++ read seeking started\n");
         emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
             .await();
-        printf("c++ read seeking done\n");
         bool is_cancelled = result["cancelled"].as<bool>();
         remuxObject.cancelling = is_cancelled;
         if (is_cancelled) {
@@ -766,7 +762,6 @@ extern "C" {
         remuxObject.seek_buffer_count++;
       }
     } else {
-      printf("c++ read normal started\n");
       emscripten::val result =
         remuxObject
           .streamRead(
@@ -774,7 +769,6 @@ extern "C" {
             buf_size
           )
           .await();
-      printf("c++ read normal done\n");
       bool is_cancelled = result["cancelled"].as<bool>();
       remuxObject.cancelling = is_cancelled;
       if (is_cancelled) {

@@ -69,7 +69,6 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, arraybuffer)
     },
     streamRead: async (_offset: string) =>
-      console.log('streamRead', _offset) ||
       Promise.race([
         new Promise(resolve => {
           queue.on('add', function listener() {
@@ -89,45 +88,15 @@ const init = makeCallListener(async (
             done,
             cancelled
           }))
-      ])
-      .then(res => console.log('streamRead done', res) || res),
+      ]),
     clearStream: () => clearStream(),
     randomRead: async (_offset: string, requestedBufferSize: number) =>
-      console.log('randomRead', _offset, requestedBufferSize) ||
       randomRead(Number(_offset), requestedBufferSize)
-      .then((buffer) => ({
-        buffer: buffer ? new Uint8Array(buffer) : undefined,
-        done: false,
-        cancelled: false
-      }))
-      .then(res => console.log('randomRead done', res) || res),
-      // (requestedBufferSize !== bufferSize
-      //   ? (
-      //     randomRead(Number(_offset), requestedBufferSize)
-      //       .then((buffer) => ({
-      //         buffer: buffer ? new Uint8Array(buffer) : undefined,
-      //         done: false,
-      //         cancelled: false
-      //       }))
-      //       .then(res => console.log('randomRead done', res) || res)
-      //   )
-      //   : (
-      //     Promise.race([
-      //       new Promise(resolve => queue.on('add', resolve, { once: true }))
-      //         .then(() => ({
-      //           buffer: undefined,
-      //           done: false,
-      //           cancelled: true
-      //         })),
-      //       randomRead(Number(_offset), requestedBufferSize)
-      //         .then((buffer) => ({
-      //           buffer: buffer ? new Uint8Array(buffer) : undefined,
-      //           done: false,
-      //           cancelled: false
-      //         }))
-      //     ])
-      //       .then(res => console.log('randomRead done', res) || res)
-      //   )),
+        .then((buffer) => ({
+          buffer: buffer ? new Uint8Array(buffer) : undefined,
+          done: false,
+          cancelled: false
+        })),
     write: (buffer: Uint8Array) => {
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
@@ -161,7 +130,6 @@ const init = makeCallListener(async (
       readResultPromiseResolve = undefined
       readResultPromiseReject = undefined
       readResultPromise = undefined
-      console.log('EXITTTTTTTTTTTTTTTTTTTTTTTT')
       _readResultPromiseReject?.(new Error('exit'))
     }
   }) as {
@@ -191,26 +159,6 @@ const init = makeCallListener(async (
 
   const queue = new PQueue({ concurrency: 1 })
 
-  queue.on('add', () => {
-    console.log('queue add', queue.size, queue.pending)
-  })
-
-  queue.on('next', () => {
-    console.log('queue next', queue.size, queue.pending)
-  })
-
-  queue.on('idle', () => {
-    console.log('queue idle', queue.size, queue.pending)
-  })
-
-  queue.on('active', () => {
-    console.log('queue active', queue.size, queue.pending)
-  })
-
-  queue.on('error', () => {
-    console.log('queue error', queue.size, queue.pending)
-  })
-
   return {
     init: async () => {
       writeBuffer = new Uint8Array(0)
@@ -227,27 +175,10 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: (timestamp: number) => queue.add(() => {
-      console.log('seek')
-      const seekPromise = remuxer.seek(timestamp)
-      seekPromise?.then((res) => {
-        console.log('seekResultPromise resolved', res)
-      })
-      seekPromise?.catch((err) => {
-        console.log('seekResultPromise rejected', err)
-      })
-      return seekPromise
-    }),
+    seek: (timestamp: number) => queue.add(() => remuxer.seek(timestamp)),
     read: () => queue.add(() => {
-      console.log('read')
       setupReadPromise()
       remuxer.read()
-      readResultPromise?.then(() => {
-        console.log('readResultPromise resolved', readResultPromise)
-      })
-      readResultPromise?.catch((err) => {
-        console.log('readResultPromise rejected', err)
-      })
       return readResultPromise
     }),
     getInfo: () => remuxer.getInfo()

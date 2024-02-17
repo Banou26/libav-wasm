@@ -299,35 +299,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     let firstSeekPaused: boolean | undefined
-    let seekCausedPause: boolean | undefined
-
-    video.addEventListener('play', () => {
-      console.log('PLAYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY')
-    })
-
-    video.addEventListener('pause', (ev) => {
-      console.log('PAUSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE', ev)
-      setTimeout(() => {
-        if (seekCausedPause) {
-          seekCausedPause = undefined
-          firstSeekPaused = false
-        }
-      }, 0)
-    })
 
     const seek = async (seekTime: number) => {
-      console.log('BBBBBBBBBBBBBBBBBBBBBBBBB', video.paused)
-      if (seekCausedPause === undefined) seekCausedPause = true
       if (firstSeekPaused === undefined) firstSeekPaused = video.paused
       seeking = true
       chunks = []
-      console.log('front seek')
       await remuxer.seek(seekTime)
-      console.log('front seek done')
       const chunk1 = await pull()
       sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
-      console.log('AAAAAAAAAAAAAAAAAAAAA', firstSeekPaused)
       if (firstSeekPaused === false) {
         await video.play()
       }
@@ -337,7 +317,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         await video.play()
       }
       firstSeekPaused = undefined
-      seekCausedPause = undefined
     }
 
     const firstChunk = await pull()
@@ -352,7 +331,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     video.addEventListener('seeking', (ev) => {
-      console.log('seek ev', ev)
       seek(video.currentTime)
     })
 
@@ -372,17 +350,17 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // await new Promise(resolve => setTimeout(resolve, 500))
       // video.playbackRate = 5
 
-      video.pause()
+      // video.pause()
 
-      console.log('START SLOW SEEK')
+      // console.log('START SLOW SEEK')
       slow = true
       video.currentTime = 400
-      console.log('SLOW SEEK STARTED')
+      // console.log('SLOW SEEK STARTED')
       await new Promise(resolve => setTimeout(resolve, 1000))
       slow = false
-      console.log('START END SEEK')
+      // console.log('START END SEEK')
       video.currentTime = 300
-      console.log('END SEEK STARTED')
+      // console.log('END SEEK STARTED')
 
 
       // await new Promise(resolve => setTimeout(resolve, 1000))
