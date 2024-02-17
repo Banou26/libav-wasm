@@ -157,8 +157,12 @@ const init = makeCallListener(async (
       return false
     },
     exit: () => {
+      const _readResultPromiseReject = readResultPromiseReject
+      readResultPromiseResolve = undefined
+      readResultPromiseReject = undefined
+      readResultPromise = undefined
       console.log('EXITTTTTTTTTTTTTTTTTTTTTTTT')
-      readResultPromiseReject?.(new Error('exit'))
+      _readResultPromiseReject?.(new Error('exit'))
     }
   }) as {
     init: () => Promise<void>

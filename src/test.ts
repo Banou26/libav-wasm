@@ -87,7 +87,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        // console.log('get stream', offset, size, slow)
+        console.log('get stream', offset, size, slow)
         if (slow && size !== BUFFER_SIZE) {
           await new Promise(resolve => setTimeout(resolve, 5000))
         }
@@ -298,7 +298,19 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
+    let firstSeekPaused: boolean | undefined
+
+    video.addEventListener('play', () => {
+      console.log('PLAYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY')
+    })
+        
+    video.addEventListener('pause', () => {
+      console.log('PAUSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
+    })
+
     const seek = async (seekTime: number) => {
+      console.log('BBBBBBBBBBBBBBBBBBBBBBBBB', video.paused)
+      if (firstSeekPaused === undefined) firstSeekPaused = video.paused
       seeking = true
       chunks = []
       console.log('front seek')
@@ -307,8 +319,16 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const chunk1 = await pull()
       sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
+      console.log('AAAAAAAAAAAAAAAAAAAAA', firstSeekPaused)
+      if (firstSeekPaused === false) {
+        await video.play()
+      }
       seeking = false
       await updateBuffers()
+      if (firstSeekPaused === false) {
+        await video.play()
+      }
+      firstSeekPaused = undefined
     }
 
     const firstChunk = await pull()
@@ -322,7 +342,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       updateBuffers()
     })
 
-    video.addEventListener('seeking', (ev) => seek(video.currentTime))
+    video.addEventListener('seeking', (ev) => {
+      console.log('seek ev', ev)
+      seek(video.currentTime)
+    })
 
     updateBuffers()
 
