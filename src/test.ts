@@ -88,7 +88,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        // console.log('get stream', offset, size, slow)
         if (slow && size !== BUFFER_SIZE) {
           await new Promise(resolve => setTimeout(resolve, 5000))
         }
@@ -129,41 +128,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const video = document.createElement('video')
     video.width = 1440
-
-    const allVideoEvents = [
-      'abort',
-      'canplay',
-      'canplaythrough',
-      'durationchange',
-      'emptied',
-      'encrypted',
-      'ended',
-      'error',
-      'interruptbegin',
-      'interruptend',
-      'loadeddata',
-      'loadedmetadata',
-      'loadstart',
-      'mozaudioavailable',
-      'pause',
-      'play',
-      'playing',
-      'progress',
-      'ratechange',
-      'seeked',
-      'seeking',
-      'stalled',
-      'suspend',
-      // 'timeupdate',
-      'volumechange',
-      'waiting'
-    ]
-
-    // for (const event of allVideoEvents) {
-    //   video.addEventListener(event, ev => {
-    //     console.log('video event', event, ev)
-    //   })
-    // }
 
     const seconds = document.createElement('div')
     video.controls = true
@@ -344,38 +308,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       seconds.textContent = video.currentTime.toString()
     }, 100)
 
-    // setInterval(async () => {
-    //   console.log('time ranges', getTimeRanges(), chunks)
-    // }, 1000)
-
     setTimeout(async () => {
-      // await video.pause()
-      // video.currentTime = 587.618314
-      // await new Promise(resolve => setTimeout(resolve, 500))
-      // video.playbackRate = 5
-
-      // video.pause()
-
-      // console.log('START SLOW SEEK')
       slow = true
       video.currentTime = 400
-      // console.log('SLOW SEEK STARTED')
       await new Promise(resolve => setTimeout(resolve, 1000))
       slow = false
-      // console.log('START END SEEK')
       video.currentTime = 300
-      // console.log('END SEEK STARTED')
-
-
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 500
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 600
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 300
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 534.953306
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 100
     }, 2_000)
   })

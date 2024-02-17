@@ -202,21 +202,8 @@ export const makeTransmuxer = async ({
       }
       return workerDestroy()
     },
-    read: () =>{
-      // console.log('read')
-      return workerRead()
-    },
+    read: () => workerRead(),
     seek: (time: number) => workerSeek(Math.max(0, time) * 1000),
-    // seek: (time: number) => {
-    //   console.log('seek', streamResultPromiseReject)
-    //   if (streamResultPromiseReject) {
-    //     console.log('cancel seek')
-    //     streamResultPromiseReject(new Error('Seeking to a new position.'))
-    //     reader?.cancel()
-    //     console.log('cancelled seek')
-    //   }
-    //   return workerSeek(Math.max(0, time) * 1000)
-    // },
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 

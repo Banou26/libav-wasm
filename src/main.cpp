@@ -101,8 +101,6 @@ extern "C" {
     int seek_buffer_count = 0;
 
     val promise = val::undefined();
-    // val promise = val::global("Promise")["resolve"]().as<val>();
-    // val promise = val::global("Promise").get("resolve").as<val>();
 
     static void print_dict(const AVDictionary *m)
     {
@@ -487,11 +485,9 @@ extern "C" {
               pts,
               duration
             );
-            // destroy();
             break;
           } else if (res == AVERROR_EXIT) {
             cancelling = false;
-            // printf("ERROR: could not read frame, exit requested | %s \n", av_err2str(res));
             exit();
             break;
           }
@@ -544,7 +540,6 @@ extern "C" {
         av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
         if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          // printf("pts: %f, prev duration: %f, duration: %f\n", packet->pts * av_q2d(out_stream->time_base), duration, packet->duration * av_q2d(out_stream->time_base));
           duration += packet->duration * av_q2d(out_stream->time_base);
         }
 
@@ -568,7 +563,6 @@ extern "C" {
 
           prev_duration = duration;
           prev_pts = pts;
-          // printf("pts: %f, duration: %f\n", prev_pts, duration);
           prev_pos = pos;
 
           duration = 0;
