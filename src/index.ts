@@ -86,11 +86,9 @@ export const makeTransmuxer = async ({
   const subtitles = new Map<number, Subtitle>()
 
   let currentStream: ReadableStream<Uint8Array> | undefined
+  let currentStreamOffset: number | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
 
-  let streamResultPromiseResolve: ((value: { value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }) => void) | undefined
-  let streamResultPromiseReject: ((reason?: any) => void) | undefined
-  let streamResultPromise: Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }> | undefined
 
   const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =
     await target(
@@ -141,77 +139,35 @@ export const makeTransmuxer = async ({
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
         randomRead: async (offset, bufferSize) => {
-          console.log('random read', offset, bufferSize)
           const stream = toStreamChunkSize(bufferSize)(await _getStream(offset, bufferSize))
           const reader = stream.getReader()
           const { value, done } = await reader.read()
           reader.cancel()
-          // console.log('randomRead done', value, done)
           return value?.buffer ?? new ArrayBuffer(0)
         },
         streamRead: async (offset: number) => {
-          console.log('streamRead read', offset)
-          if (!currentStream) {
+          if (
+            !currentStream ||
+            (currentStreamOffset && currentStreamOffset + bufferSize !== offset)
+          ) {
+            reader?.cancel()
+
             currentStream = await _getStream(offset)
             reader = currentStream.getReader()
           }
-    
-          streamResultPromise = new Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>((resolve, reject) => {
-            streamResultPromiseResolve = resolve
-            streamResultPromiseReject = reject
-          })
-    
-          const tryReading = (): Promise<void> | undefined =>
-            reader
-              ?.read()
-              .then(result => ({
-                value: result.value?.buffer,
-                done: result.value === undefined,
-                cancelled: false
-              }))
-              .then(async (result) => {
-                if (!streamResultPromiseResolve) return
-                if (result.done) {
-                  reader?.cancel()
-                  if (offset >= length) {
-                    return streamResultPromiseResolve(result)
-                  }
-                  currentStream = await _getStream(offset)
-                  reader = currentStream.getReader()
-                  return tryReading()
-                }
-    
-                return streamResultPromiseResolve(result)
-              })
-              .catch((err) => streamResultPromiseReject?.(err))
-    
-          tryReading()
+
+          if (!reader) throw new Error('No reader found')
+
+          currentStreamOffset = offset
     
           return (
-            streamResultPromise
-              .then((value) => {
-                // console.log('returning streamRead read then')
-                streamResultPromise = undefined
-                streamResultPromiseResolve = undefined
-                streamResultPromiseReject = undefined
-                return {
-                  buffer: value.value,
-                  done: value.done,
-                  cancelled: false
-                }
-              })
-              .catch(err => {
-                // console.error(err)
-                // console.log('returning streamRead read result from catch')
-                streamResultPromise = undefined
-                streamResultPromiseResolve = undefined
-                streamResultPromiseReject = undefined
-                return {
-                  buffer: undefined,
-                  done: false,
-                  cancelled: true
-                }
-              })
+            reader
+              .read()
+              .then(({ value, done }) => ({
+                buffer: value?.buffer,
+                done,
+                cancelled: false
+              }))
           )
         },
         clearStream: async () => {
