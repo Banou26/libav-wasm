@@ -68,6 +68,7 @@ extern "C" {
     double pts;
     double duration;
     bool first_frame = true;
+    bool cancelling = false;
 
     std::string video_mime_type;
     std::string audio_mime_type;
@@ -83,6 +84,7 @@ extern "C" {
     val write = val::undefined();
     val flush = val::undefined();
     val error = val::undefined();
+    val exit = val::undefined();
 
     double currentOffset = 0;
 
@@ -122,6 +124,7 @@ extern "C" {
       write = options["write"];
       flush = options["flush"];
       error = options["error"];
+      exit = options["exit"];
     }
 
     auto decimalToHex(int d, int padding) {
@@ -471,6 +474,9 @@ extern "C" {
         AVPacket* packet = av_packet_alloc();
 
         if ((res = av_read_frame(input_format_context, packet)) < 0) {
+          // free packet
+          av_packet_unref(packet);
+          av_packet_free(&packet);
           if (res == AVERROR_EOF) {
             avio_flush(output_format_context->pb);
             is_flushing = true;
@@ -482,6 +488,11 @@ extern "C" {
               duration
             );
             // destroy();
+            break;
+          } else if (res == AVERROR_EXIT) {
+            cancelling = false;
+            // printf("ERROR: could not read frame, exit requested | %s \n", av_err2str(res));
+            exit();
             break;
           }
           printf("ERROR: could not read frame | %s \n", av_err2str(res));
@@ -635,10 +646,14 @@ extern "C" {
       pts = 0;
       pos = 0;
       if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD)) < 0) {
+        seeking = false;
+        first_seek = false;
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
+        return 1;
       }
       seeking = false;
       first_seek = false;
+      cancelling = false;
       return 0;
     }
 
@@ -691,16 +706,30 @@ extern "C" {
     Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
     std::string buffer;
 
+    if (remuxObject.cancelling) {
+      remuxObject.promise.await();
+      return AVERROR_EXIT;
+    }
+
     if (remuxObject.initializing) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_init) {
-        buffer =
+        emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
-            .await()
-            .as<std::string>();
+            .await();
+        bool is_cancelled = result["cancelled"].as<bool>();
+        remuxObject.cancelling = is_cancelled;
+        if (is_cancelled) {
+          return AVERROR_EXIT;
+        }
+        bool is_done = result["done"].as<bool>();
+        if (is_done) {
+          return AVERROR_EOF;
+        }
+        buffer = result["buffer"].as<std::string>();
         remuxObject.init_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
@@ -710,13 +739,22 @@ extern "C" {
     } else if(remuxObject.seeking) {
       emscripten::val &randomRead = remuxObject.randomRead;
       if (remuxObject.first_seek) {
-        buffer =
+        emscripten::val result =
           randomRead(
             to_string(remuxObject.input_format_context->pb->pos),
             buf_size
           )
-            .await()
-            .as<std::string>();
+            .await();
+        bool is_cancelled = result["cancelled"].as<bool>();
+        remuxObject.cancelling = is_cancelled;
+        if (is_cancelled) {
+          return AVERROR_EXIT;
+        }
+        bool is_done = result["done"].as<bool>();
+        if (is_done) {
+          return AVERROR_EOF;
+        }
+        buffer = result["buffer"].as<std::string>();
         remuxObject.seek_buffers.push_back(buffer);
       } else {
         remuxObject.promise.await();
@@ -732,6 +770,7 @@ extern "C" {
           )
           .await();
       bool is_cancelled = result["cancelled"].as<bool>();
+      remuxObject.cancelling = is_cancelled;
       if (is_cancelled) {
         return AVERROR_EXIT;
       }
@@ -739,7 +778,7 @@ extern "C" {
       if (is_done) {
         return AVERROR_EOF;
       }
-      buffer = result["value"].as<std::string>();
+      buffer = result["buffer"].as<std::string>();
     }
 
     int buffer_size = buffer.size();
@@ -772,7 +811,7 @@ extern "C" {
           buf
         )
       )
-    ).await();
+    );
 
     return buf_size;
   }

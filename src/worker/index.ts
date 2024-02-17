@@ -3,12 +3,13 @@ import type { Chunk } from '..'
 
 // @ts-ignore
 import WASMModule from 'libav'
+import PQueue from 'p-queue'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     printErr: (text: string) =>
-      text.includes('Timestamps are unset in a packet')
+      text.includes('Timestamps are unset in a packet') || (import.meta.env.PROD && text.includes('Read error at pos.'))
         ? undefined
         : console.error(text),
   })
@@ -26,7 +27,7 @@ const init = makeCallListener(async (
     length: number
     bufferSize: number
     randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
-    streamRead: (offset: number) => Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+    streamRead: (offset: number) => Promise<{ buffer: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
     clearStream: () => Promise<void>
     write: (params: {
       offset: number, arrayBuffer: ArrayBuffer, isHeader: boolean,
@@ -39,9 +40,17 @@ const init = makeCallListener(async (
 
   let writeBuffer = new Uint8Array(0)
 
-  let readResultPromiseResolve: (value: Chunk) => void
-  let readResultPromiseReject: (reason?: any) => void
-  let readResultPromise: Promise<Chunk>
+  let readResultPromiseResolve: ((value: Chunk) => void) | undefined
+  let readResultPromiseReject: ((reason?: any) => void) | undefined
+  let readResultPromise: Promise<Chunk> | undefined
+
+  const setupReadPromise = () => {
+    if (readResultPromise) return
+    readResultPromise = new Promise<Chunk>((resolve, reject) => {
+      readResultPromiseResolve = resolve
+      readResultPromiseReject = reject
+    })
+  }
 
   const makeRemuxer = () => new module.Remuxer({
     promise: Promise.resolve(),
@@ -58,21 +67,36 @@ const init = makeCallListener(async (
       const arraybuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength)
       attachment(filename, mimetype, arraybuffer)
     },
-    streamRead: async (_offset: string) => {
-      const offset = Number(_offset)
-      const res = await streamRead(offset)
-      return {
-        ...res,
-        value: new Uint8Array(res.value ?? [])
-      }
-    },
+    streamRead: async (_offset: string) =>
+      Promise.race([
+        new Promise(resolve => {
+          queue.on('add', function listener() {
+            if (queue.size === 0) return
+            resolve(undefined)
+            queue.off('add', listener)
+          })
+        })
+          .then(() => ({
+            buffer: undefined,
+            done: false,
+            cancelled: true
+          })),
+        streamRead(Number(_offset))
+          .then(({ buffer, done, cancelled }) => ({
+            buffer: buffer ? new Uint8Array(buffer) : undefined,
+            done,
+            cancelled
+          }))
+      ]),
     clearStream: () => clearStream(),
-    randomRead: async (_offset: number, bufferSize: number) => {
-      const offset = Number(_offset)
-      const buffer = await randomRead(offset, bufferSize)
-      return buffer
-    },
-    write: async (buffer: Uint8Array) => {
+    randomRead: async (_offset: string, requestedBufferSize: number) =>
+      randomRead(Number(_offset), requestedBufferSize)
+        .then((buffer) => ({
+          buffer: buffer ? new Uint8Array(buffer) : undefined,
+          done: false,
+          cancelled: false
+        })),
+    write: (buffer: Uint8Array) => {
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -85,6 +109,7 @@ const init = makeCallListener(async (
       const offset = Number(_offset)
       const position = Number(_position)
       if (!writeBuffer.byteLength) return true
+      if (!readResultPromiseResolve) throw new Error('No readResultPromiseResolve on libav flush')
       readResultPromiseResolve({
         isHeader: false,
         offset,
@@ -93,12 +118,45 @@ const init = makeCallListener(async (
         pts,
         duration
       })
+      readResultPromiseResolve = undefined
+      readResultPromiseReject = undefined
+      readResultPromise = undefined
       writeBuffer = new Uint8Array(0)
       return false
+    },
+    exit: () => {
+      const _readResultPromiseReject = readResultPromiseReject
+      readResultPromiseResolve = undefined
+      readResultPromiseReject = undefined
+      readResultPromise = undefined
+      _readResultPromiseReject?.(new Error('exit'))
     }
-  })
+  }) as {
+    init: () => Promise<void>
+    destroy: () => void
+    seek: (timestamp: number) => Promise<void>
+    read: () => Promise<void>
+    getInfo: () => ({
+      input: {
+        formatName: string
+        mimeType: string
+        duration: number
+        video_mime_type: string
+        audio_mime_type: string
+      },
+      output: {
+        formatName: string
+        mimeType: string
+        duration: number
+        video_mime_type: string
+        audio_mime_type: string
+      }
+    })
+  }
 
   let remuxer: ReturnType<typeof makeRemuxer> = makeRemuxer()
+
+  const queue = new PQueue({ concurrency: 1 })
 
   return {
     init: async () => {
@@ -106,10 +164,7 @@ const init = makeCallListener(async (
       module = await makeModule(publicPath)
       remuxer = makeRemuxer()
 
-      readResultPromise = new Promise<Chunk>((resolve, reject) => {
-        readResultPromiseResolve = resolve
-        readResultPromiseReject = reject
-      })
+      setupReadPromise()
       remuxer.init()
       return readResultPromise
     },
@@ -119,15 +174,12 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: (timestamp: number) => remuxer.seek(timestamp),
-    read: () => {
-      readResultPromise = new Promise<Chunk>((resolve, reject) => {
-        readResultPromiseResolve = resolve
-        readResultPromiseReject = reject
-      })
+    seek: (timestamp: number) => queue.add(() => remuxer.seek(timestamp)),
+    read: () => queue.add(() => {
+      setupReadPromise()
       remuxer.read()
       return readResultPromise
-    },
+    }),
     getInfo: () => remuxer.getInfo()
   }
 })

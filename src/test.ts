@@ -3,6 +3,7 @@ import PQueue from 'p-queue'
 
 import { queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeTransmuxer } from '.'
+import pDebounce from 'p-debounce'
 
 type Chunk = {
   offset: number
@@ -79,54 +80,43 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const blob = new Blob([`importScripts(${JSON.stringify(workerUrl2)})`], { type: 'application/javascript' })
     const workerUrl = URL.createObjectURL(blob)
 
+    let slow = false
+
     const remuxer = await makeTransmuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
-      randomRead: (offset, size) =>
-        fetch(
+      getStream: async (offset, size) => {
+        // console.log('get stream', offset, size, slow)
+        if (slow && size !== BUFFER_SIZE) {
+          await new Promise(resolve => setTimeout(resolve, 5000))
+        }
+
+        return fetch(
           VIDEO_URL,
           {
             headers: {
-              Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}`
+              Range: `bytes=${offset}-${size ? Math.min(offset + size, contentLength) - 1 : ''}`
             }
           }
-        ).then(res => res.arrayBuffer()),
-        getStream: (offset) =>
-          fetch(
-            VIDEO_URL,
-            {
-              headers: {
-                Range: `bytes=${offset}-`
-              }
-            }
-          ).then(res =>
-            toBufferedStream(3)(
-              toStreamChunkSize(BUFFER_SIZE)(
-                res.body!
+        ).then(res =>
+          size
+            ? res.body!
+            : (
+              toBufferedStream(3)(
+                toStreamChunkSize(BUFFER_SIZE)(
+                  res.body!
+                )
               )
             )
-          ),
+        )
+      },
       subtitle: (title, language, subtitle) => {
         // console.log('SUBTITLE HEADER', title, language, subtitle)
       },
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
         // console.log('attachment', filename, mimetype, buffer)
-      },
-      write: ({ isHeader, offset, buffer, pts, duration: chunkDuration, pos }) => {
-        // if (isHeader) {
-        //   if (!headerChunk) {
-        //     headerChunk = {
-        //       offset,
-        //       buffer: new Uint8Array(buffer),
-        //       pts,
-        //       duration: chunkDuration,
-        //       pos
-        //     }
-        //   }
-        //   return
-        // }
       }
     })
 
@@ -279,13 +269,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
       const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
-      // console.log('currentChunkIndex', currentChunkIndex, chunks.length, currentTime)
       for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
-        // console.log('pull check', i, chunks[i])
         if (chunks[i]) continue
-        // console.log('pulling')
         const chunk = await pull()
-        // console.log('pull', chunk)
         await appendBuffer(chunk.buffer)
       }
 
@@ -313,17 +299,26 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    const seek = queuedDebounceWithLastCall(500, async (seekTime: number) => {
+    let firstSeekPaused: boolean | undefined
+
+    const seek = pDebounce(async (seekTime: number) => {
+      if (firstSeekPaused === undefined) firstSeekPaused = video.paused
       seeking = true
-      await appendBuffer(headerChunk.buffer)
       chunks = []
       await remuxer.seek(seekTime)
       const chunk1 = await pull()
       sourceBuffer.timestampOffset = chunk1.pts
       await appendBuffer(chunk1.buffer)
+      if (firstSeekPaused === false) {
+        await video.play()
+      }
       seeking = false
       await updateBuffers()
-    })
+      if (firstSeekPaused === false) {
+        await video.play()
+      }
+      firstSeekPaused = undefined
+    }, 250)
 
     const firstChunk = await pull()
     appendBuffer(firstChunk.buffer)
@@ -337,8 +332,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     video.addEventListener('seeking', (ev) => {
-      if (seeking) return
       seek(video.currentTime)
+        .catch(err => {
+          if (err.message !== 'exit') throw err
+        })
     })
 
     updateBuffers()
@@ -354,11 +351,22 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     setTimeout(async () => {
       // await video.pause()
       // video.currentTime = 587.618314
-      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // await new Promise(resolve => setTimeout(resolve, 500))
       // video.playbackRate = 5
-      // video.currentTime = 400
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // video.currentTime = 300
+
+      // video.pause()
+
+      // console.log('START SLOW SEEK')
+      slow = true
+      video.currentTime = 400
+      // console.log('SLOW SEEK STARTED')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      slow = false
+      // console.log('START END SEEK')
+      video.currentTime = 300
+      // console.log('END SEEK STARTED')
+
+
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 500
       // await new Promise(resolve => setTimeout(resolve, 1000))
@@ -369,5 +377,5 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       // video.currentTime = 534.953306
       // await new Promise(resolve => setTimeout(resolve, 1000))
       // video.currentTime = 100
-    }, 1000)
+    }, 2_000)
   })

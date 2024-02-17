@@ -1,3 +1,4 @@
+import { toStreamChunkSize } from './utils'
 import type { Resolvers as WorkerResolvers } from './worker'
 
 import { call } from 'osra'
@@ -8,18 +9,9 @@ export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the javascript worker file */
   workerUrl: string
   workerOptions?: WorkerOptions
-  randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
-  getStream: (offset: number) => Promise<ReadableStream<Uint8Array>>
+  getStream: (offset: number, size?: number) => Promise<ReadableStream<Uint8Array>>
   subtitle: (title: string, language: string, data: string) => Promise<void> | void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
-  write: (params: {
-    isHeader: boolean,
-    offset: number,
-    buffer: Uint8Array,
-    pos: number,
-    pts: number,
-    duration: number
-  }) => Promise<void> | void
   length: number
   bufferSize: number
 }
@@ -94,11 +86,9 @@ export const makeTransmuxer = async ({
   const subtitles = new Map<number, Subtitle>()
 
   let currentStream: ReadableStream<Uint8Array> | undefined
+  let currentStreamOffset: number | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
 
-  let streamResultPromiseResolve: (value: { value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }) => void
-  let streamResultPromiseReject: (reason?: any) => void
-  let streamResultPromise: Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
 
   const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =
     await target(
@@ -148,58 +138,36 @@ export const makeTransmuxer = async ({
           _subtitle(subtitle.title, subtitle.language, subtitleString)
         },
         attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
-        randomRead: (offset, bufferSize) => _randomRead(offset, bufferSize),
+        randomRead: async (offset, bufferSize) => {
+          const stream = toStreamChunkSize(bufferSize)(await _getStream(offset, bufferSize))
+          const reader = stream.getReader()
+          const { value, done } = await reader.read()
+          reader.cancel()
+          return value?.buffer ?? new ArrayBuffer(0)
+        },
         streamRead: async (offset: number) => {
-          if (!currentStream) {
+          if (
+            !currentStream ||
+            (currentStreamOffset && currentStreamOffset + bufferSize !== offset)
+          ) {
+            reader?.cancel()
+
             currentStream = await _getStream(offset)
             reader = currentStream.getReader()
           }
-    
-          streamResultPromise = new Promise<{ value: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>((resolve, reject) => {
-            streamResultPromiseResolve = resolve
-            streamResultPromiseReject = reject
-          })
-    
-          const tryReading = (): Promise<void> | undefined =>
-            reader
-              ?.read()
-              .then(result => ({
-                value: result.value?.buffer,
-                done: result.value === undefined,
-                cancelled: false
-              }))
-              .then(async (result) => {
-                if (result.done) {
-                  reader?.cancel()
-                  if (offset >= length) {
-                    return streamResultPromiseResolve(result)
-                  }
-                  currentStream = await _getStream(offset)
-                  reader = currentStream.getReader()
-                  return tryReading()
-                }
-    
-                return streamResultPromiseResolve(result)
-              })
-              .catch((err) => streamResultPromiseReject(err))
-    
-          tryReading()
+
+          if (!reader) throw new Error('No reader found')
+
+          currentStreamOffset = offset
     
           return (
-            streamResultPromise
-              .then((value) => ({
-                value: value.value,
-                done: value.done,
+            reader
+              .read()
+              .then(({ value, done }) => ({
+                buffer: value?.buffer,
+                done,
                 cancelled: false
               }))
-              .catch(err => {
-                console.error(err)
-                return {
-                  value: undefined,
-                  done: false,
-                  cancelled: true
-                }
-              })
           )
         },
         clearStream: async () => {
@@ -234,8 +202,21 @@ export const makeTransmuxer = async ({
       }
       return workerDestroy()
     },
-    read: () => workerRead(),
+    read: () =>{
+      // console.log('read')
+      return workerRead()
+    },
     seek: (time: number) => workerSeek(Math.max(0, time) * 1000),
+    // seek: (time: number) => {
+    //   console.log('seek', streamResultPromiseReject)
+    //   if (streamResultPromiseReject) {
+    //     console.log('cancel seek')
+    //     streamResultPromiseReject(new Error('Seeking to a new position.'))
+    //     reader?.cancel()
+    //     console.log('cancelled seek')
+    //   }
+    //   return workerSeek(Math.max(0, time) * 1000)
+    // },
     getInfo: () => getInfo() as Promise<{ input: MediaInfo, output: MediaInfo }>
   }
 
