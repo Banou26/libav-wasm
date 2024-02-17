@@ -3,6 +3,7 @@ import PQueue from 'p-queue'
 
 import { queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeTransmuxer } from '.'
+import pDebounce from 'p-debounce'
 
 type Chunk = {
   offset: number
@@ -300,7 +301,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     let firstSeekPaused: boolean | undefined
 
-    const seek = async (seekTime: number) => {
+    const seek = pDebounce(async (seekTime: number) => {
       if (firstSeekPaused === undefined) firstSeekPaused = video.paused
       seeking = true
       chunks = []
@@ -317,7 +318,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         await video.play()
       }
       firstSeekPaused = undefined
-    }
+    }, 250)
 
     const firstChunk = await pull()
     appendBuffer(firstChunk.buffer)
