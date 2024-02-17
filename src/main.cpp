@@ -491,7 +491,7 @@ extern "C" {
             break;
           } else if (res == AVERROR_EXIT) {
             cancelling = false;
-            printf("ERROR: could not read frame, exit requested | %s \n", av_err2str(res));
+            // printf("ERROR: could not read frame, exit requested | %s \n", av_err2str(res));
             exit();
             break;
           }

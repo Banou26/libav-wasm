@@ -88,7 +88,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        console.log('get stream', offset, size, slow)
+        // console.log('get stream', offset, size, slow)
         if (slow && size !== BUFFER_SIZE) {
           await new Promise(resolve => setTimeout(resolve, 5000))
         }
@@ -333,6 +333,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     video.addEventListener('seeking', (ev) => {
       seek(video.currentTime)
+        .catch(err => {
+          if (err.message !== 'exit') throw err
+        })
     })
 
     updateBuffers()

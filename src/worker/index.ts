@@ -3,14 +3,13 @@ import type { Chunk } from '..'
 
 // @ts-ignore
 import WASMModule from 'libav'
-import { queuedDebounceWithLastCall } from '../utils'
 import PQueue from 'p-queue'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     printErr: (text: string) =>
-      text.includes('Timestamps are unset in a packet')
+      text.includes('Timestamps are unset in a packet') || (import.meta.env.PROD && text.includes('Read error at pos.'))
         ? undefined
         : console.error(text),
   })
