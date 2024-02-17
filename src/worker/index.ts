@@ -4,6 +4,7 @@ import type { Chunk } from '..'
 // @ts-ignore
 import WASMModule from 'libav'
 import { queuedDebounceWithLastCall } from '../utils'
+import PQueue from 'p-queue'
 
 const makeModule = (publicPath: string) =>
   WASMModule({
@@ -178,39 +179,30 @@ const init = makeCallListener(async (
 
   let remuxer: ReturnType<typeof makeRemuxer> = makeRemuxer()
 
+  let controller = new AbortController()
+  const queue = new PQueue({ concurrency: 1 })
+
   let currentTask: Promise<any> | undefined
 
-  const seekQueuedTask = queuedDebounceWithLastCall(0, async (timestamp: number) => {
-    console.log('seeking task started')
-    if (currentTask) throw new Error('Cannot seek while a task is running')
-    try {
-      currentTask = remuxer.seek(timestamp)
-      await Promise.race([
-        currentTask,
-        cancelledPromise
-      ])
-      currentTask = undefined
-      console.log('seeking task done')
-    } catch (err) {
-      currentTask = undefined
-      console.log('seeking task cancelled', err)
-      throw err
-    } finally {
-      currentTask = undefined
-    }
-  })
-
-  const waitUntilFreeToRead = () =>
-    Promise.any([
-      readResultPromise,
-      currentTask,
-      cancelledPromise
-    ]).then(() =>
-      cancelled
-      || currentTask
-      || cancelledPromise ? waitUntilFreeToRead()
-      : undefined
-    )
+  // const seekQueuedTask = queuedDebounceWithLastCall(0, async (timestamp: number) => {
+  //   console.log('seeking task started')
+  //   if (currentTask) throw new Error('Cannot seek while a task is running')
+  //   try {
+  //     currentTask = remuxer.seek(timestamp)
+  //     await Promise.race([
+  //       currentTask,
+  //       cancelledPromise
+  //     ])
+  //     currentTask = undefined
+  //     console.log('seeking task done')
+  //   } catch (err) {
+  //     currentTask = undefined
+  //     console.log('seeking task cancelled', err)
+  //     throw err
+  //   } finally {
+  //     currentTask = undefined
+  //   }
+  // })
 
   return {
     init: async () => {
@@ -228,15 +220,19 @@ const init = makeCallListener(async (
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
-    seek: async (timestamp: number) => {
-      setupCancelPromise()
-      if (currentTask && resolveCancel) {
+    seek: async (timestamp: number) => queue(() => {
+      let resolveCancel: ((value: any) => void)
+      let cancelPromise = new Promise<undefined>((resolve) => {
+        resolveCancel = resolve
+      })
+
+      queue.on('add', () => {
         resolveCancel(undefined)
-      }
-      return seekQueuedTask(timestamp)
-    },
+      }, { once: true })
+
+      return remuxer.seek(timestamp, cancelPromise)
+    }),
     read: async () => {
-      if (currentTask) await waitUntilFreeToRead()
       setupCancelPromise()
       setupReadPromise()
       remuxer.read()
