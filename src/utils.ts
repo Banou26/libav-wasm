@@ -56,6 +56,38 @@ export const waitSyncForInterfaceNotification = (sharedArrayBuffer: SharedArrayB
 
 export const freeInterface = (sharedArrayBuffer: SharedArrayBuffer) => new Uint8Array(sharedArrayBuffer).fill(0)
 
+export function debounceImmediateAndLatest<T extends (...args: any[]) => any>(
+  wait: number,
+  func: T
+): T {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let lastArgs: any[] | null = null;
+
+  const debouncedFunction = function(...args: any[]) {
+    const context = this;
+
+    if (timeoutId === null) {
+      // Call immediately on the first call
+      func.apply(context, args);
+    } else {
+      // Store the latest arguments for the last call
+      lastArgs = args;
+    }
+
+    clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+
+    timeoutId = setTimeout(() => {
+      if (lastArgs) {
+        func.apply(context, lastArgs);
+        lastArgs = null;
+      }
+      timeoutId = null;
+    }, wait);
+  };
+
+  return debouncedFunction as T;
+}
+
 export const queuedDebounceWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
   let runningFunction: Promise<ReturnType<T>> | undefined
   let lastCall: Promise<ReturnType<T>> | undefined

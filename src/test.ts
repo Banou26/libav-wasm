@@ -1,9 +1,8 @@
 // @ts-ignore
 import PQueue from 'p-queue'
 
-import { queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
+import { debounceImmediateAndLatest, queuedDebounceWithLastCall, throttle, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeRemuxer } from '.'
-import pDebounce from 'p-debounce'
 
 type Chunk = {
   offset: number
@@ -265,24 +264,28 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     let firstSeekPaused: boolean | undefined
 
-    const seek = pDebounce(async (seekTime: number) => {
-      if (firstSeekPaused === undefined) firstSeekPaused = video.paused
-      seeking = true
-      chunks = []
-      await remuxer.seek(seekTime)
-      const chunk1 = await pull()
-      sourceBuffer.timestampOffset = chunk1.pts
-      await appendBuffer(chunk1.buffer)
-      if (firstSeekPaused === false) {
-        await video.play()
+    const seek = debounceImmediateAndLatest(250, async (seekTime: number) => {
+      try {
+        if (firstSeekPaused === undefined) firstSeekPaused = video.paused
+        seeking = true
+        chunks = []
+        await remuxer.seek(seekTime)
+        const chunk1 = await pull()
+        sourceBuffer.timestampOffset = chunk1.pts
+        await appendBuffer(chunk1.buffer)
+        if (firstSeekPaused === false) {
+          await video.play()
+        }
+        seeking = false
+        await updateBuffers()
+        if (firstSeekPaused === false) {
+          await video.play()
+        }
+        firstSeekPaused = undefined
+      } catch (err: any) {
+        if (err.message !== 'exit') throw err
       }
-      seeking = false
-      await updateBuffers()
-      if (firstSeekPaused === false) {
-        await video.play()
-      }
-      firstSeekPaused = undefined
-    }, 250)
+    })
 
     const firstChunk = await pull()
     appendBuffer(firstChunk.buffer)
@@ -297,9 +300,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     video.addEventListener('seeking', (ev) => {
       seek(video.currentTime)
-        .catch(err => {
-          if (err.message !== 'exit') throw err
-        })
     })
 
     updateBuffers()
