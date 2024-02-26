@@ -1,6 +1,6 @@
 {
   "name": "libav-wasm",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "main": "build/index.js",
   "files": [
     "build"
