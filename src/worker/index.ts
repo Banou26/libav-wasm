@@ -21,7 +21,7 @@ let module: ReturnType<typeof makeModule>
 
 // @ts-ignore
 const init = makeCallListener(async (
-  { publicPath, length, bufferSize, randomRead, streamRead, clearStream, write, attachment, subtitle }:
+  { publicPath, length, bufferSize, randomRead, streamRead, clearStream, attachment, subtitle }:
   {
     publicPath: string
     length: number
@@ -29,10 +29,6 @@ const init = makeCallListener(async (
     randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
     streamRead: (offset: number) => Promise<{ buffer: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
     clearStream: () => Promise<void>
-    write: (params: {
-      offset: number, arrayBuffer: ArrayBuffer, isHeader: boolean,
-      position: number, pts: number, duration: number
-    }) => Promise<void> | void
     subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
     attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
   }) => {
@@ -170,17 +166,18 @@ const init = makeCallListener(async (
     },
     destroy: () => {
       remuxer.destroy()
+      // @ts-ignore
       remuxer = undefined
       module = undefined
       writeBuffer = new Uint8Array(0)
     },
     seek: (timestamp: number) => queue.add(() => remuxer.seek(timestamp)),
-    read: () => queue.add(() => {
+    read: () => queue.add(async () => {
       setupReadPromise()
       remuxer.read()
       return readResultPromise
     }),
-    getInfo: () => remuxer.getInfo()
+    getInfo: async () => remuxer.getInfo()
   }
 })
 

@@ -61,9 +61,7 @@ export const makeRemuxer = async ({
   publicPath,
   workerUrl,
   workerOptions, 
-  randomRead: _randomRead,
   getStream: _getStream,
-  write: _write,
   attachment,
   subtitle: _subtitle,
   length,
@@ -174,22 +172,7 @@ export const makeRemuxer = async ({
           reader?.cancel()
           currentStream = undefined
           reader = undefined
-        },
-        write: ({
-          isHeader,
-          offset,
-          arrayBuffer,
-          position,
-          pts,
-          duration
-        }) => _write({
-          isHeader,
-          offset,
-          buffer: new Uint8Array(arrayBuffer),
-          pts,
-          duration,
-          pos: position
-        })
+        }
       }
     )
 

@@ -64,6 +64,7 @@ export function debounceImmediateAndLatest<T extends (...args: any[]) => any>(
   let lastArgs: any[] | null = null;
 
   const debouncedFunction = function(...args: any[]) {
+    // @ts-expect-error
     const context = this;
 
     if (timeoutId === null) {
