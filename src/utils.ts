@@ -204,8 +204,18 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
       }
 
       await tryToBuffer()
-      controller.enqueue(this.buffers.shift())
-      tryToBuffer()
+      try {
+        controller.enqueue(this.buffers.shift())
+        tryToBuffer()
+      } catch(err) {
+        // firefox somehow shits the bed here
+        if (!(
+          err instanceof TypeError &&
+          err.message === 'ReadableStreamDefaultController.enqueue: Cannot enqueue into a stream that has already been requested to close.'
+        )) {
+          throw err
+        }
+      }
     },
     cancel() {
       this.reader!.cancel()
