@@ -41,11 +41,12 @@ const init = makeCallListener(async (
   let readResultPromise: Promise<Chunk> | undefined
 
   const setupReadPromise = () => {
-    if (readResultPromise) return
+    if (readResultPromise) return readResultPromise
     readResultPromise = new Promise<Chunk>((resolve, reject) => {
       readResultPromiseResolve = resolve
       readResultPromiseReject = reject
     })
+    return readResultPromise
   }
 
   const makeRemuxer = () => new module.Remuxer({
@@ -160,9 +161,9 @@ const init = makeCallListener(async (
       module = await makeModule(publicPath)
       remuxer = makeRemuxer()
 
-      setupReadPromise()
+      const promise = setupReadPromise()
       remuxer.init()
-      return readResultPromise
+      return promise
     },
     destroy: () => {
       remuxer.destroy()
@@ -173,9 +174,9 @@ const init = makeCallListener(async (
     },
     seek: (timestamp: number) => queue.add(() => remuxer.seek(timestamp)),
     read: () => queue.add(async () => {
-      setupReadPromise()
+      const promise = setupReadPromise()
       remuxer.read()
-      return readResultPromise
+      return promise
     }),
     getInfo: async () => remuxer.getInfo()
   }
