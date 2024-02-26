@@ -220,7 +220,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const pull = async () => {
       const chunk = await remuxer.read()
-      // @ts-expect-error
       chunks = [...chunks, chunk]
       return chunk
     }
@@ -236,7 +235,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
         if (chunks[i]) continue
         const chunk = await pull()
-        // @ts-expect-error
         await appendBuffer(chunk.buffer)
       }
 
@@ -273,9 +271,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         chunks = []
         await remuxer.seek(seekTime)
         const chunk1 = await pull()
-        // @ts-expect-error
         sourceBuffer.timestampOffset = chunk1.pts
-        // @ts-expect-error
         await appendBuffer(chunk1.buffer)
         if (firstSeekPaused === false) {
           await video.play()
@@ -292,7 +288,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const firstChunk = await pull()
-    // @ts-expect-error
     appendBuffer(firstChunk.buffer)
 
     video.addEventListener('timeupdate', () => {
