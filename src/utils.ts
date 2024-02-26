@@ -174,6 +174,7 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
         if (this.buffers.length >= SIZE) return
         this.currentPullPromise = this.reader!.read()
         const { value: newBuffer, done } = await this.currentPullPromise
+        console.log('pull', newBuffer, done)
         this.currentPullPromise = undefined
         if (done) {
           try {

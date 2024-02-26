@@ -101,14 +101,14 @@ const init = makeCallListener(async (
     },
     flush: async (
       _offset: number, _position: number,
-      pts: number, duration: number
+      pts: number, duration: number, isTrailer: boolean
     ) => {
       const offset = Number(_offset)
       const position = Number(_position)
       if (!writeBuffer.byteLength) return true
       if (!readResultPromiseResolve) throw new Error('No readResultPromiseResolve on libav flush')
       readResultPromiseResolve({
-        isHeader: false,
+        isTrailer,
         offset,
         buffer: writeBuffer.buffer as Uint8Array,
         pos: position,

@@ -13,7 +13,7 @@ type Chunk = {
 }
 
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video5.mkv'
+const VIDEO_URL = '../video10.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
@@ -218,8 +218,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     await appendBuffer(headerChunk.buffer)
 
+    let reachedEnd = false
+
     const pull = async () => {
+      if (reachedEnd) throw new Error('end')
       const chunk = await remuxer.read()
+      if (chunk.isTrailer) reachedEnd = true
       chunks = [...chunks, chunk]
       return chunk
     }
@@ -233,7 +237,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
       for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
-        if (chunks[i]) continue
+        if (chunks[i] || reachedEnd) continue
         const chunk = await pull()
         await appendBuffer(chunk.buffer)
       }
@@ -266,6 +270,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     const seek = debounceImmediateAndLatest(250, async (seekTime: number) => {
       try {
+        reachedEnd = false
         if (firstSeekPaused === undefined) firstSeekPaused = video.paused
         seeking = true
         chunks = []
@@ -309,10 +314,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     }, 100)
 
     setTimeout(async () => {
-      slow = true
-      video.currentTime = 400
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      slow = false
-      video.currentTime = 300
+      video.playbackRate = 1
+      video.currentTime = 1410
+
+      // slow = true
+      // video.currentTime = 400
+      // await new Promise(resolve => setTimeout(resolve, 1000))
+      // slow = false
+      // video.currentTime = 300
     }, 2_000)
   })

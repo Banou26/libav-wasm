@@ -454,7 +454,8 @@ extern "C" {
           to_string(input_format_context->pb->pos),
           to_string(0),
           0,
-          0
+          0,
+          false
         );
         is_flushing = false;
       }
@@ -483,7 +484,8 @@ extern "C" {
               to_string(input_format_context->pb->pos),
               to_string(pos),
               pts,
-              duration
+              duration,
+              true
             );
             break;
           } else if (res == AVERROR_EXIT) {
@@ -556,7 +558,8 @@ extern "C" {
               to_string(input_format_context->pb->pos),
               to_string(prev_pos),
               prev_pts,
-              prev_duration
+              prev_duration,
+              false
             ).await().as<bool>();
             flushed = true;
           }
@@ -582,7 +585,8 @@ extern "C" {
             to_string(input_format_context->pb->pos),
             to_string(prev_pos),
             prev_pts,
-            prev_duration
+            prev_duration,
+            false
           ).await().as<bool>();
           is_flushing = false;
           flushed = true;
@@ -703,6 +707,10 @@ extern "C" {
     if (remuxObject.cancelling) {
       remuxObject.promise.await();
       return AVERROR_EXIT;
+    }
+
+    if (remuxObject.input_format_context->pb->pos >= remuxObject.input_length) {
+      return AVERROR_EOF;
     }
 
     if (remuxObject.initializing) {

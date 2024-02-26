@@ -42,7 +42,7 @@ export type MediaInfo = {
 }
 
 export type Chunk = {
-  isHeader: boolean
+  isTrailer: boolean
   offset: number
   buffer: Uint8Array
   pts: number
