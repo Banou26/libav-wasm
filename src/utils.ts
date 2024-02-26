@@ -174,10 +174,10 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
         if (this.buffers.length >= SIZE) return
         this.currentPullPromise = this.reader!.read()
         const { value: newBuffer, done } = await this.currentPullPromise
-        console.log('pull', newBuffer, done)
         this.currentPullPromise = undefined
         if (done) {
           try {
+            for (const buffer of this.buffers) controller.enqueue(buffer)
             controller.close()
           } catch (err) {
             // console.error(err)
