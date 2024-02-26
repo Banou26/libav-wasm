@@ -12,6 +12,7 @@ type Chunk = {
   pos: number
 }
 
+const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
 const VIDEO_URL = '../video10.mkv'
 // const VIDEO_URL = '../spidey.mkv'
@@ -62,7 +63,6 @@ export default async function saveFile(plaintext: ArrayBuffer, fileName: string,
 
 
 
-
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
     if (!body) throw new Error('no body')
@@ -95,7 +95,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           VIDEO_URL,
           {
             headers: {
-              Range: `bytes=${offset}-${size ? Math.min(offset + size, contentLength) - 1 : ''}`
+              Range: `bytes=${offset}-${(size ? Math.min(offset + size, contentLength) - 1 : undefined) ?? (!BACKPRESSURE_STREAM_ENABLED ? Math.min(offset + BUFFER_SIZE, size!) : '')}`
             }
           }
         ).then(res =>
