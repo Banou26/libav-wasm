@@ -276,6 +276,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         chunks = []
         await remuxer.seek(seekTime)
         const chunk1 = await pull()
+        // todo: FIX firefox sometimes throws "Uncaught (in promise) DOMException: An attempt was made to use an object that is not, or is no longer, usable"
         sourceBuffer.timestampOffset = chunk1.pts
         await appendBuffer(chunk1.buffer)
         if (firstSeekPaused === false) {
