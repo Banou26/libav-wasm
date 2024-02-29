@@ -208,10 +208,11 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
         controller.enqueue(this.buffers.shift())
         tryToBuffer()
       } catch(err) {
-        // firefox somehow shits the bed here
         if (!(
-          err instanceof TypeError &&
-          err.message === 'ReadableStreamDefaultController.enqueue: Cannot enqueue into a stream that has already been requested to close.'
+          err instanceof TypeError && (
+            err.message === 'ReadableStreamDefaultController.enqueue: Cannot enqueue into a stream that has already been requested to close.' ||
+            err.message === `Failed to execute 'enqueue' on 'ReadableStreamDefaultController': Cannot enqueue a chunk into a readable stream that is closed or has been requested to be closed`
+          )
         )) {
           throw err
         }
