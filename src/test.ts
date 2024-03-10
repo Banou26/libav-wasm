@@ -14,7 +14,7 @@ type Chunk = {
 
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video10.mkv'
+const VIDEO_URL = '../video12.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
@@ -87,9 +87,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        if (slow && size !== BUFFER_SIZE) {
-          await new Promise(resolve => setTimeout(resolve, 5000))
-        }
+        // if (slow && size !== BUFFER_SIZE) {
+        //   await new Promise(resolve => setTimeout(resolve, 5000))
+        // }
 
         return fetch(
           VIDEO_URL,
@@ -214,7 +214,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let chunks: Chunk[] = []
 
     const PREVIOUS_BUFFER_COUNT = 1
-    const BUFFER_COUNT = 3
+    const NEEDED_TIME_IN_SECONDS = 15
 
     await appendBuffer(headerChunk.buffer)
 
@@ -236,8 +236,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
       const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
-      for (let i = 0; i < sliceIndex + BUFFER_COUNT; i++) {
-        if (chunks[i] || reachedEnd) continue
+      const getLastChunkEndTime = () => {
+        const lastChunk = chunks.at(-1)
+        if (!lastChunk) return 0
+        return lastChunk.pts + lastChunk.duration
+      }
+
+      // pull and append buffers up until the needed time
+      while (getLastChunkEndTime() < currentTime + NEEDED_TIME_IN_SECONDS){
         const chunk = await pull()
         await appendBuffer(chunk.buffer)
       }
@@ -316,7 +322,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     setTimeout(async () => {
       video.playbackRate = 1
-      video.currentTime = 1410
+      video.currentTime = 290
 
       // slow = true
       // video.currentTime = 400
