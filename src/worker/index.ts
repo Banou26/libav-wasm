@@ -46,6 +46,9 @@ const init = makeCallListener(async (
       readResultPromiseResolve = resolve
       readResultPromiseReject = reject
     })
+    readResultPromise
+      .then(() => console.log('readResultPromise resolve'))
+      .catch(() => console.log('readResultPromise reject'))
     return readResultPromise
   }
 
@@ -65,6 +68,7 @@ const init = makeCallListener(async (
       attachment(filename, mimetype, arraybuffer)
     },
     streamRead: async (_offset: string) =>
+      console.log('streamRead') ||
       Promise.race([
         new Promise(resolve => {
           queue.on('add', function listener() {
@@ -85,8 +89,9 @@ const init = makeCallListener(async (
             cancelled
           }))
       ]),
-    clearStream: () => clearStream(),
+    clearStream: () => console.log('clearStream') || clearStream(),
     randomRead: async (_offset: string, requestedBufferSize: number) =>
+      console.log('randomRead') ||
       randomRead(Number(_offset), requestedBufferSize)
         .then((buffer) => ({
           buffer: buffer ? new Uint8Array(buffer) : undefined,
@@ -94,6 +99,7 @@ const init = makeCallListener(async (
           cancelled: false
         })),
     write: (buffer: Uint8Array) => {
+      console.log('write')
       const newBuffer = new Uint8Array(writeBuffer.byteLength + buffer.byteLength)
       newBuffer.set(writeBuffer)
       newBuffer.set(new Uint8Array(buffer), writeBuffer.byteLength)
@@ -103,6 +109,7 @@ const init = makeCallListener(async (
       _offset: number, _position: number,
       pts: number, duration: number, isTrailer: boolean
     ) => {
+      console.log('flush')
       const offset = Number(_offset)
       const position = Number(_position)
       if (!writeBuffer.byteLength) return true
@@ -122,6 +129,7 @@ const init = makeCallListener(async (
       return false
     },
     exit: () => {
+      console.log('exit')
       const _readResultPromiseReject = readResultPromiseReject
       readResultPromiseResolve = undefined
       readResultPromiseReject = undefined

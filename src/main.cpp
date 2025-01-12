@@ -233,6 +233,14 @@ extern "C" {
       );
       return mime_type;
     }
+
+    void init_output_context () {
+      // Initialize the output format stream context as an mp4 file
+      avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
+      // Set the avio context to the output format context
+      output_format_context->pb = output_avio_context;
+      // output_format_context->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
     
     void init () {
       initializing = true;
@@ -294,11 +302,7 @@ extern "C" {
         nullptr
       );
 
-      // Initialize the output format stream context as an mp4 file
-      avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
-      // Set the avio context to the output format context
-      output_format_context->pb = output_avio_context;
-      // output_format_context->flags |= AVFMT_FLAG_CUSTOM_IO;
+      init_output_context();
 
       number_of_streams = input_format_context->nb_streams;
       streams_list = (int *)av_calloc(number_of_streams, sizeof(*streams_list));
@@ -632,30 +636,179 @@ extern "C" {
     }
 
     int _seek(int timestamp) {
+      // Mark that we're in a seek operation
       seeking = true;
-      destroy();
-      init();
 
+      // ------------------------------------------------------------------
+      // 1) Close and free the *output* context only.
+      //    We keep input_format_context open so we can av_seek_frame on it.
+      // ------------------------------------------------------------------
+      if (output_format_context) {
+        // Write out anything pending, then close the output
+        // av_write_trailer(output_format_context);
+
+        // Free the stream index list
+        if (streams_list) {
+          av_freep(&streams_list);
+          streams_list = nullptr;
+        }
+
+        // Free the output AVIO buffer/context
+        if (output_avio_context) {
+          av_free(output_avio_context->buffer);
+          avio_context_free(&output_avio_context);
+          output_avio_context = nullptr;
+        }
+
+        // Finally, free the output format context
+        avformat_free_context(output_format_context);
+        output_format_context = nullptr;
+      }
+
+      // Make sure to clear any old output data or pending MSE source buffers
+      // if that's part of your pipeline:
       clearStream().await();
 
-      int res;
+      // Reset these timestamps so the new MP4 segment starts fresh
+      // (same logic you had in init() or after a new segment)
       prev_duration = 0;
-      prev_pts = 0;
-      prev_pos = 0;
-      duration = 0;
-      pts = 0;
-      pos = 0;
-      if ((res = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD)) < 0) {
+      prev_pts      = 0;
+      prev_pos      = 0;
+      duration      = 0;
+      pts           = 0;
+      pos           = 0;
+
+      // ------------------------------------------------------------------
+      // 2) Actually seek the *input* (which remains open).
+      // ------------------------------------------------------------------
+      int res = av_seek_frame(input_format_context, video_stream_index,
+                              timestamp, AVSEEK_FLAG_BACKWARD);
+      if (res < 0) {
         seeking = false;
         first_seek = false;
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
         return 1;
       }
+
+      // If you're decoding, flush decoders here (omitted for pure remux).
+
+      // ------------------------------------------------------------------
+      // 3) Re-initialize ONLY the *output* context for a new MP4 segment.
+      //    This is basically the "output half" of your init() method.
+      // ------------------------------------------------------------------
+      {
+        // Mark that we're setting up the output
+        // (if you rely on "initializing" checks in read/write)
+        initializing = true;
+
+        // Allocate a fresh output context for MP4
+        avformat_alloc_output_context2(&output_format_context, nullptr, "mp4", nullptr);
+        if (!output_format_context) {
+          seeking = false;
+          printf("ERROR: could not allocate output context\n");
+          return 1;
+        }
+
+        // Allocate the output AVIO buffer
+        output_avio_buffer = static_cast<uint8_t*>(av_malloc(buffer_size));
+        if (!output_avio_buffer) {
+          seeking = false;
+          printf("ERROR: could not allocate output_avio_buffer\n");
+          return 1;
+        }
+
+        // Create an AVIO context for writing
+        output_avio_context = avio_alloc_context(
+          output_avio_buffer, 
+          buffer_size, 
+          1,                         // writeable
+          reinterpret_cast<void*>(this),
+          nullptr,                   // readFunction not needed for output
+          &writeFunction,            // your existing write callback
+          nullptr
+        );
+        if (!output_avio_context) {
+          seeking = false;
+          printf("ERROR: could not allocate output_avio_context\n");
+          return 1;
+        }
+
+        // Attach it to the new output format context
+        output_format_context->pb = output_avio_context;
+
+        // Allocate streams_list again
+        number_of_streams = input_format_context->nb_streams;
+        streams_list = static_cast<int*>(av_calloc(number_of_streams, sizeof(*streams_list)));
+        if (!streams_list) {
+          seeking = false;
+          printf("ERROR: could not allocate streams_list\n");
+          return 1;
+        }
+
+        // Loop over the existing (already open) input streams
+        // and create corresponding output streams.
+        int out_index = 0;
+        for (int i = 0; i < number_of_streams; i++) {
+          AVStream* in_stream = input_format_context->streams[i];
+          AVCodecParameters* in_codecpar = in_stream->codecpar;
+
+          // Filter out streams you don't want to remux
+          if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
+              in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO // &&
+              // in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
+          ) {
+            streams_list[i] = -1;
+            continue;
+          }
+
+          // Create an output stream
+          AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
+          if (!out_stream) {
+            seeking = false;
+            res = AVERROR_UNKNOWN;
+            printf("ERROR: could not allocate output stream | %s\n", av_err2str(res));
+            return 1;
+          }
+          // Copy codec params
+          res = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+          if (res < 0) {
+            seeking = false;
+            printf("ERROR: could not copy codec parameters | %s\n", av_err2str(res));
+            return 1;
+          }
+
+          // Remember mapping
+          streams_list[i] = out_index++;
+        }
+
+        // Set fragmentation flags, etc. so MSE can handle it
+        AVDictionary* opts = nullptr;
+        av_dict_set(&opts, "c", "copy", 0);
+        av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+
+        // Finally, write out the MP4 header for this new segment
+        if ((res = avformat_write_header(output_format_context, &opts)) < 0) {
+          seeking = false;
+          printf("ERROR: could not write output header | %s\n", av_err2str(res));
+          return 1;
+        }
+
+        // If you rely on writing partial init segment, flush it out here:
+        // e.g. avio_flush(output_format_context->pb);
+
+        // Done initializing the new output
+        initializing = false;
+      }
+
+      // ------------------------------------------------------------------
+      // 4) Final housekeeping
+      // ------------------------------------------------------------------
       seeking = false;
       first_seek = false;
       cancelling = false;
       return 0;
     }
+
 
     void destroy () {
       // check if we need to write trailer at some point
@@ -683,13 +836,19 @@ extern "C" {
   // Seek callback called by AVIOContext
   static int64_t seekFunction(void* opaque, int64_t offset, int whence) {
     Remuxer &remuxObject = *reinterpret_cast<Remuxer*>(opaque);
+    if (whence == AVSEEK_SIZE) {
+      return remuxObject.input_length;
+    }
     if (whence == SEEK_CUR) {
-      return remuxObject.currentOffset + offset;
+      remuxObject.currentOffset += offset;
+      return remuxObject.currentOffset;
     }
     if (whence == SEEK_END) {
-      return -1;
+      remuxObject.currentOffset = remuxObject.input_length + offset;
+      return remuxObject.currentOffset;
     }
     if (whence == SEEK_SET) {
+      remuxObject.currentOffset = offset;
       return offset;
     }
     if (whence == AVSEEK_SIZE) {

@@ -14,7 +14,7 @@ type Chunk = {
 
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video12.mkv'
+const VIDEO_URL = '../video.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
@@ -223,6 +223,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const pull = async () => {
       if (reachedEnd) throw new Error('end')
       const chunk = await remuxer.read()
+      console.log('chunk', chunk)
       if (chunk.isTrailer) reachedEnd = true
       chunks = [...chunks, chunk]
       return chunk
@@ -280,8 +281,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         if (firstSeekPaused === undefined) firstSeekPaused = video.paused
         seeking = true
         chunks = []
+        console.log('SEEKING')
         await remuxer.seek(seekTime)
         const chunk1 = await pull()
+        console.log('SEEKING chunk1', chunk1)
+        console.log('SEEKING chunks', chunks)
         // todo: FIX firefox sometimes throws "Uncaught (in promise) DOMException: An attempt was made to use an object that is not, or is no longer, usable"
         sourceBuffer.timestampOffset = chunk1.pts
         await appendBuffer(chunk1.buffer)
@@ -317,17 +321,30 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     updateBuffers()
 
     setInterval(() => {
-      seconds.textContent = video.currentTime.toString()
+      seconds.textContent = `
+      ${video.currentTime.toString()}
+      ${
+        video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
+        : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
+        : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
+        : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
+        : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
+        : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
+        : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
+        : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
+        : undefined as never
+      }
+      `
     }, 100)
 
-    setTimeout(async () => {
-      video.playbackRate = 1
-      video.currentTime = 290
+    // setTimeout(async () => {
+    //   video.playbackRate = 1
+    //   video.currentTime = 290
 
-      // slow = true
-      // video.currentTime = 400
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // slow = false
-      // video.currentTime = 300
-    }, 2_000)
+    //   // slow = true
+    //   // video.currentTime = 400
+    //   // await new Promise(resolve => setTimeout(resolve, 1000))
+    //   // slow = false
+    //   // video.currentTime = 300
+    // }, 2_000)
   })
