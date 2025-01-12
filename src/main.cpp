@@ -438,6 +438,8 @@ extern "C" {
       }
 
       AVDictionary* opts = nullptr;
+      // Supports the experimental codecs like FLAC in mp4 container
+      av_dict_set(&opts, "strict", "experimental", 0);
       // Force transmuxing instead of re-encoding by copying the codecs
       av_dict_set(&opts, "c", "copy", 0);
       // https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API/Transcoding_assets_for_MSE
