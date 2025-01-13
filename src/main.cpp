@@ -685,7 +685,7 @@ extern "C" {
                               timestamp, AVSEEK_FLAG_BACKWARD);
       if (res < 0) {
         seeking = false;
-        first_seek = false;
+        // first_seek = false;
         printf("ERROR: could not seek frame | %s \n", av_err2str(res));
         return 1;
       }
@@ -804,7 +804,7 @@ extern "C" {
       // 4) Final housekeeping
       // ------------------------------------------------------------------
       seeking = false;
-      first_seek = false;
+      // first_seek = false;
       cancelling = false;
       return 0;
     }
