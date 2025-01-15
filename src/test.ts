@@ -276,12 +276,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let firstSeekPaused: boolean | undefined
 
     const seek = debounceImmediateAndLatest(250, async (seekTime: number) => {
+      console.log('AAAAAAAAAAAAAAAAAAAAAAAAAAAASEEKING')
+      reachedEnd = false
+      if (firstSeekPaused === undefined) firstSeekPaused = video.paused
+      seeking = true
+      chunks = []
+      console.log('SEEKING')
       try {
-        reachedEnd = false
-        if (firstSeekPaused === undefined) firstSeekPaused = video.paused
-        seeking = true
-        chunks = []
-        console.log('SEEKING')
         await remuxer.seek(seekTime)
         const chunk1 = await pull()
         console.log('SEEKING chunk1', chunk1)
@@ -289,18 +290,20 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // todo: FIX firefox sometimes throws "Uncaught (in promise) DOMException: An attempt was made to use an object that is not, or is no longer, usable"
         sourceBuffer.timestampOffset = chunk1.pts
         await appendBuffer(chunk1.buffer)
-        if (firstSeekPaused === false) {
-          await video.play()
-        }
-        seeking = false
-        await updateBuffers()
-        if (firstSeekPaused === false) {
-          await video.play()
-        }
-        firstSeekPaused = undefined
       } catch (err: any) {
-        if (err.message !== 'exit') throw err
+        console.log('test err')
+        console.error(err)
+        return
       }
+      if (firstSeekPaused === false) {
+        await video.play()
+      }
+      seeking = false
+      await updateBuffers()
+      if (firstSeekPaused === false) {
+        await video.play()
+      }
+      firstSeekPaused = undefined
     })
 
     const firstChunk = await pull()

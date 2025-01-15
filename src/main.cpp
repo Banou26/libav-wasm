@@ -496,6 +496,7 @@ extern "C" {
             break;
           } else if (res == AVERROR_EXIT) {
             cancelling = false;
+            printf("read AVERROR_EXIT");
             exit();
             break;
           }
@@ -886,6 +887,7 @@ extern "C" {
         bool is_cancelled = result["cancelled"].as<bool>();
         remuxObject.cancelling = is_cancelled;
         if (is_cancelled) {
+          printf("read init AVERROR_EXIT");
           return AVERROR_EXIT;
         }
         bool is_done = result["done"].as<bool>();
@@ -911,6 +913,7 @@ extern "C" {
         bool is_cancelled = result["cancelled"].as<bool>();
         remuxObject.cancelling = is_cancelled;
         if (is_cancelled) {
+          printf("read seek AVERROR_EXIT");
           return AVERROR_EXIT;
         }
         bool is_done = result["done"].as<bool>();
@@ -935,6 +938,7 @@ extern "C" {
       bool is_cancelled = result["cancelled"].as<bool>();
       remuxObject.cancelling = is_cancelled;
       if (is_cancelled) {
+        printf("read AVERROR_EXIT");
         return AVERROR_EXIT;
       }
       bool is_done = result["done"].as<bool>();

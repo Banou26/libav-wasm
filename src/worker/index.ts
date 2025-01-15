@@ -4,6 +4,45 @@ import type { Chunk } from '..'
 // @ts-ignore
 import WASMModule from 'libav'
 import PQueue from 'p-queue'
+import { setup, emit, createActor, assign, fromPromise } from 'xstate'
+
+export type RemuxerOptions = {
+  promise: Promise<void>
+  length: number
+  bufferSize: number
+  error: (critical: boolean, message: string) => void
+  subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => void
+  attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => void
+  streamRead: (offset: number) => Promise<{ buffer: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+  clearStream: () => void
+  randomRead: (offset: number, requestedBufferSize: number) => Promise<ArrayBuffer>
+  write: (buffer: ArrayBuffer) => void
+  flush: () => void
+  exit: () => void
+}
+
+export type RemuxerInstance = {
+  init: () => Promise<void>
+  destroy: () => void
+  seek: (timestamp: number) => Promise<void>
+  read: () => Promise<void>
+  getInfo: () => ({
+    input: {
+      formatName: string
+      mimeType: string
+      duration: number
+      video_mime_type: string
+      audio_mime_type: string
+    },
+    output: {
+      formatName: string
+      mimeType: string
+      duration: number
+      video_mime_type: string
+      audio_mime_type: string
+    }
+  })
+}
 
 const makeModule = (publicPath: string) =>
   WASMModule({
@@ -16,8 +55,108 @@ const makeModule = (publicPath: string) =>
 
 let module: ReturnType<typeof makeModule>
 
-// todo: if seek latency is too slow, because of destroy + init + seek + process, we can use multiple remuxer alrandomReady initialized waiting to seek + process
-// todo: We can keep in memory all of the chunks needed to initialize the remuxer
+const getModule = (publicPath: string) => {
+  if (!module) module = makeModule(publicPath)
+  return module as {  makeRemuxer: (options: RemuxerOptions) => RemuxerInstance }
+}
+
+const remuxerMachine =
+  setup({
+    types: {} as {
+      input: {
+        publicPath: string
+        length: number
+        bufferSize: number
+      }
+      context: {
+        publicPath: string
+        length: number
+        bufferSize: number
+        remuxer?: RemuxerInstance
+        error?: string
+      }
+      events: 
+        | { type: 'INIT', publicPath: string, length: number, bufferSize: number }
+        | { type: 'SEEK', offset: number }
+        | { type: 'READ', offset: number }
+        | { type: 'EXIT' }
+    },
+    actors: {
+      createRemuxer: fromPromise(async ({ input }: { input: { publicPath: string, length: number, bufferSize: number } }) => {
+        const { publicPath, length, bufferSize } = input
+        const module = await getModule(publicPath)
+        const remuxer = module.makeRemuxer({
+          publicPath,
+          length,
+          bufferSize,
+          error: (critical: boolean, message: string) => {
+          },
+          subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
+          },
+          // @ts-ignore
+          attachment: (filename: string, mimetype: string, _buffer: Uint8Array) => {
+          },
+          // @ts-ignore
+          streamRead: async (_offset: string) => {
+          },
+          clearStream: async () => {
+
+          }
+        })
+        return remuxer
+      }),
+    }
+  }).createMachine({
+    initial: 'CREATING',  
+    context: ({ input: { publicPath, length, bufferSize } }) => ({
+      publicPath,
+      length,
+      bufferSize,
+      remuxer: undefined
+    }),
+    states: {
+      'CREATING': {
+        invoke: [
+          {
+            id: 'CreateRemuxer',
+            src: 'createRemuxer',
+            input: ({ context: { publicPath, length, bufferSize } }) => ({ publicPath, length, bufferSize }),
+            onDone: {
+              target: 'success',
+              actions: assign({ remuxer: ({ event }) => event.output }),
+            },
+            onError: {
+              target: 'failure',
+              actions: assign({ error: ({ event }) => (event.error as Error).message })
+            },
+          }
+        ]
+      },
+      'IDLING': {
+        on: {
+          'INIT': {
+            target: 'INITIALIZING',
+          }
+        }
+      },
+      'INITIALIZING': {
+      },
+      'READING': {
+
+      },
+      'SEEKING': {
+
+      }
+    }
+  })
+
+const actor = createActor(remuxerMachine, { input: { publicPath: 'asd', length: 1, bufferSize: 1 } })
+  
+actor.subscribe(state => {
+  const actualState = state.value
+  console.log('state', state)
+})
+
 
 // @ts-ignore
 const init = makeCallListener(async (
@@ -46,9 +185,10 @@ const init = makeCallListener(async (
       readResultPromiseResolve = resolve
       readResultPromiseReject = reject
     })
+    let prom = readResultPromise
     readResultPromise
-      .then(() => console.log('readResultPromise resolve'))
-      .catch(() => console.log('readResultPromise reject'))
+      .then(() => console.log('readResultPromise resolve', prom))
+      .catch(() => console.log('readResultPromise reject', prom))
     return readResultPromise
   }
 
