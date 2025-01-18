@@ -1,10 +1,10 @@
-import { makeCallListener, registerListener } from 'osra'
+import { expose, makeCallListener, registerListener } from 'osra'
 import type { Chunk } from '..'
 
 // @ts-ignore
 import WASMModule from 'libav'
 import PQueue from 'p-queue'
-import { setup, emit, createActor, assign, fromPromise } from 'xstate'
+import { setup, emit, createActor, assign, fromPromise, fromCallback, EventObject } from 'xstate'
 
 export type RemuxerOptions = {
   promise: Promise<void>
@@ -55,100 +55,67 @@ const makeModule = (publicPath: string) =>
 
 let module: ReturnType<typeof makeModule>
 
-const getModule = (publicPath: string) => {
-  if (!module) module = makeModule(publicPath)
-  return module as {  makeRemuxer: (options: RemuxerOptions) => RemuxerInstance }
+const getModule = async (publicPath: string) => {
+  if (!module) module = await makeModule(publicPath)
+  return module as { makeRemuxer: (options: RemuxerOptions) => RemuxerInstance }
 }
 
-const remuxerMachine =
-  setup({
-    types: {} as {
-      input: {
-        publicPath: string
-        length: number
-        bufferSize: number
-      }
-      context: {
-        publicPath: string
-        length: number
-        bufferSize: number
-        remuxer?: RemuxerInstance
-        error?: string
-      }
-      events: 
-        | { type: 'INIT', publicPath: string, length: number, bufferSize: number }
-        | { type: 'SEEK', offset: number }
-        | { type: 'READ', offset: number }
-        | { type: 'EXIT' }
-    },
-    actors: {
-      createRemuxer: fromPromise(async ({ input }: { input: { publicPath: string, length: number, bufferSize: number } }) => {
-        const { publicPath, length, bufferSize } = input
-        const module = await getModule(publicPath)
-        const remuxer = module.makeRemuxer({
-          publicPath,
-          length,
-          bufferSize,
-          error: (critical: boolean, message: string) => {
-          },
-          subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
-          },
-          // @ts-ignore
-          attachment: (filename: string, mimetype: string, _buffer: Uint8Array) => {
-          },
-          // @ts-ignore
-          streamRead: async (_offset: string) => {
-          },
-          clearStream: async () => {
+type WasmModule = ReturnType<typeof getModule>
 
-          }
-        })
-        return remuxer
-      }),
+type RemuxerReceivedEvents =
+  | { type: 'INIT' }
+  | { type: 'READ' }
+  | { type: 'SEEK' }
+  | { type: 'EXIT' }
+
+type RemuxerEmittedEvents =
+  | { type: 'INITIALIZING' }
+  | { type: 'IDLING' }
+  | { type: 'READING' }
+  | { type: 'EXITING' }
+
+type RemuxerInput = {
+  module: WasmModule
+  publicPath: string
+  length: number
+  bufferSize: number
+}
+
+expose({
+  makeRemuxer: async (
+    { publicPath, length, bufferSize, randomRead, streamRead, clearStream, attachment, subtitle }:
+    {
+      publicPath: string
+      length: number
+      bufferSize: number
+      randomRead: (offset: number, size: number) => Promise<ArrayBuffer>
+      streamRead: (offset: number) => Promise<{ buffer: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
+      clearStream: () => Promise<void>
+      subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => Promise<void>
+      attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
     }
-  }).createMachine({
-    initial: 'CREATING',  
-    context: ({ input: { publicPath, length, bufferSize } }) => ({
+  ) => {
+    const { makeRemuxer } = await getModule(publicPath)
+    const remuxer = makeRemuxer({
       publicPath,
       length,
       bufferSize,
-      remuxer: undefined
-    }),
-    states: {
-      'CREATING': {
-        invoke: [
-          {
-            id: 'CreateRemuxer',
-            src: 'createRemuxer',
-            input: ({ context: { publicPath, length, bufferSize } }) => ({ publicPath, length, bufferSize }),
-            onDone: {
-              target: 'success',
-              actions: assign({ remuxer: ({ event }) => event.output }),
-            },
-            onError: {
-              target: 'failure',
-              actions: assign({ error: ({ event }) => (event.error as Error).message })
-            },
-          }
-        ]
+      error: (critical: boolean, message: string) => {
       },
-      'IDLING': {
-        on: {
-          'INIT': {
-            target: 'INITIALIZING',
-          }
-        }
+      subtitle: (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
       },
-      'INITIALIZING': {
+      // @ts-ignore
+      attachment: (filename: string, mimetype: string, _buffer: Uint8Array) => {
       },
-      'READING': {
-
+      // @ts-ignore
+      streamRead: async (_offset: string) => {
       },
-      'SEEKING': {
-
+      clearStream: async () => {
+  
       }
-    }
-  })
+    })
+  }
+}, { remote: globalThis, local: globalThis })
 
 const actor = createActor(remuxerMachine, { input: { publicPath: 'asd', length: 1, bufferSize: 1 } })
   

@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "libav": "file:dist",
-    "osra": "^0.0.11",
+    "osra": "^0.1.2",
     "p-queue": "^7.3.0",
     "xstate": "^5.19.2"
   }
