@@ -1,7 +1,8 @@
-import { toStreamChunkSize } from './utils'
-import type { Resolvers as WorkerResolvers } from './worker'
+import type { Resolvers, Resolvers as WorkerResolvers } from './worker'
 
-import { call } from 'osra'
+import { expose } from 'osra'
+
+import { toStreamChunkSize } from './utils'
 
 export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
@@ -10,8 +11,9 @@ export type MakeTransmuxerOptions = {
   workerUrl: string
   workerOptions?: WorkerOptions
   getStream: (offset: number, size?: number) => Promise<ReadableStream<Uint8Array>>
-  subtitle: (title: string, language: string, data: string) => Promise<void> | void
-  attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void> | void
+  subtitle: (subtitleFragment: SubtitleFragment) => Promise<void>
+  attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
+  fragment: (fragment: Fragment) => Promise<void>
   length: number
   bufferSize: number
 }
@@ -41,13 +43,13 @@ export type MediaInfo = {
   audio_mime_type: string
 }
 
-export type Chunk = {
+export type Fragment = {
   isTrailer: boolean
   offset: number
-  buffer: Uint8Array
+  buffer: ArrayBuffer
   pts: number
   duration: number
-  pos: number
+  position: number
 }
 
 // converts ms to 'h:mm:ss.cc' format
@@ -57,17 +59,119 @@ const convertTimestamp = (ms: number) =>
     .slice(11, 22)
     .replace(/^00/, '0')
 
+const abortControllerToPromise = (abortController: AbortController) => new Promise<void>((resolve, reject) => {
+  abortController.signal.addEventListener('abort', () => {
+    resolve()
+  })
+})
+
+const normalizeSubtitlePart = (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
+  console.log('normalizeSubtitlePart', streamIndex, isHeader, data, ...rest)
+  if (isHeader) {
+    const [language, title] = rest as [string, string]
+    return {
+      type: 'header',
+      streamIndex,
+      data,
+      language,
+      title
+    }
+  } else {
+    const [startTime, endTime] = rest as number[]
+    const [dialogueIndex, layer] = data.split(',')
+    const startTimestamp = convertTimestamp(startTime)
+    const endTimestamp = convertTimestamp(endTime)
+    const dialogueContent = data.replace(`${dialogueIndex},${layer},`, '')
+    return {
+      type: 'dialogue',
+      streamIndex,
+      data,
+      startTime,
+      endTime,
+      dialogueIndex,
+      layer,
+      dialogueContent,
+      startTimestamp,
+      endTimestamp
+    }
+  }
+}
+
+export type SubtitleFragment = ReturnType<typeof normalizeSubtitlePart>
+
 export const makeRemuxer = async ({
   publicPath,
   workerUrl,
   workerOptions, 
-  getStream: _getStream,
+  getStream,
   attachment,
-  subtitle: _subtitle,
+  subtitle,
+  fragment,
   length,
   bufferSize = 1_000_000
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
+
+  const { makeRemuxer } = await expose<Resolvers>({}, { remote: worker, local: worker })
+
+  let currentStream: ReadableStream<Uint8Array> | undefined
+  let currentStreamOffset: number | undefined
+  let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
+
+  const remuxer = await makeRemuxer({
+    publicPath,
+    length,
+    bufferSize,
+    log: async (isError, text) => {
+      if (isError) console.error(text)
+      else console.log(text)
+    },
+    read: async (offset: number) => {
+      if (
+        !currentStream ||
+        (currentStreamOffset && currentStreamOffset + bufferSize !== offset)
+      ) {
+        reader?.cancel()
+        currentStream = await getStream(offset)
+        reader = currentStream.getReader() as ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>
+      }
+
+      if (!reader) throw new Error('No reader found')
+
+      currentStreamOffset = offset
+
+      return (
+        reader
+          .read()
+          .then(({ value, done }) => ({
+            buffer: value?.buffer,
+            done,
+            cancelled: false
+          }))
+      )
+    },
+    attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
+    subtitle: (streamIndex, isHeader, data, ...rest) => subtitle(normalizeSubtitlePart(streamIndex, isHeader, data, ...rest)),
+    fragment: (_fragment) => fragment(_fragment)
+  })
+
+  await remuxer.init()
+
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+  await remuxer.read()
+
+  return {
+
+  }
 
   await new Promise((resolve, reject) => {
     const onMessage = (message: MessageEvent) => {
@@ -83,9 +187,9 @@ export const makeRemuxer = async ({
 
   const subtitles = new Map<number, Subtitle>()
 
-  let currentStream: ReadableStream<Uint8Array> | undefined
-  let currentStreamOffset: number | undefined
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  // let currentStream: ReadableStream<Uint8Array> | undefined
+  // let currentStreamOffset: number | undefined
+  // let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
 
 
   const { init: workerInit, destroy: workerDestroy, read: workerRead, seek: workerSeek, getInfo: getInfo } =

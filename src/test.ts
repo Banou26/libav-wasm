@@ -110,235 +110,238 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             )
         )
       },
-      subtitle: (title, language, subtitle) => {
-        // console.log('SUBTITLE HEADER', title, language, subtitle)
+      subtitle: (subtitleFragment) => {
+        console.log('subtitle fragment', subtitleFragment)
       },
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
-        // console.log('attachment', filename, mimetype, buffer)
+        console.log('attachment', filename, mimetype, buffer)
+      },
+      fragment: (fragment) => {
+        console.log('fragment', fragment)
       }
     })
 
-    const headerChunk = await remuxer.init()
+    // const headerChunk = await remuxer.init()
 
-    if (!headerChunk) throw new Error('No header chunk found after remuxer init')
+    // if (!headerChunk) throw new Error('No header chunk found after remuxer init')
 
-    const mediaInfo = await remuxer.getInfo()
-    const duration = mediaInfo.input.duration / 1_000_000
+    // const mediaInfo = await remuxer.getInfo()
+    // const duration = mediaInfo.input.duration / 1_000_000
 
-    const video = document.createElement('video')
-    video.width = 1440
+    // const video = document.createElement('video')
+    // video.width = 1440
 
-    const seconds = document.createElement('div')
-    video.controls = true
-    video.volume = 0
-    video.addEventListener('error', ev => {
-      // @ts-expect-error
-      console.error(ev.target?.error)
-    })
-    document.body.appendChild(video)
-    document.body.appendChild(seconds)
+    // const seconds = document.createElement('div')
+    // video.controls = true
+    // video.volume = 0
+    // video.addEventListener('error', ev => {
+    //   // @ts-expect-error
+    //   console.error(ev.target?.error)
+    // })
+    // document.body.appendChild(video)
+    // document.body.appendChild(seconds)
 
-    const mediaSource = new MediaSource()
-    video.src = URL.createObjectURL(mediaSource)
+    // const mediaSource = new MediaSource()
+    // video.src = URL.createObjectURL(mediaSource)
 
-    const sourceBuffer: SourceBuffer =
-      await new Promise(resolve =>
-        mediaSource.addEventListener(
-          'sourceopen',
-          () => {
-            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${mediaInfo.input.video_mime_type},${mediaInfo.input.audio_mime_type}"`)
-            mediaSource.duration = duration
-            sourceBuffer.mode = 'segments'
-            resolve(sourceBuffer)
-          },
-          { once: true }
-        )
-      )
+    // const sourceBuffer: SourceBuffer =
+    //   await new Promise(resolve =>
+    //     mediaSource.addEventListener(
+    //       'sourceopen',
+    //       () => {
+    //         const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${mediaInfo.input.video_mime_type},${mediaInfo.input.audio_mime_type}"`)
+    //         mediaSource.duration = duration
+    //         sourceBuffer.mode = 'segments'
+    //         resolve(sourceBuffer)
+    //       },
+    //       { once: true }
+    //     )
+    //   )
 
-    const queue = new PQueue({ concurrency: 1 })
+    // const queue = new PQueue({ concurrency: 1 })
 
-    const setupListeners = (resolve: (value: Event) => void, reject: (reason: Event) => void) => {
-      const updateEndListener = (ev: Event) => {
-        resolve(ev)
-        unregisterListeners()
-      }
-      const abortListener = (ev: Event) => {
-        resolve(ev)
-        unregisterListeners()
-      }
-      const errorListener = (ev: Event) => {
-        console.error(ev)
-        reject(ev)
-        unregisterListeners()
-      }
-      const unregisterListeners = () => {
-        sourceBuffer.removeEventListener('updateend', updateEndListener)
-        sourceBuffer.removeEventListener('abort', abortListener)
-        sourceBuffer.removeEventListener('error', errorListener)
-      }
-      sourceBuffer.addEventListener('updateend', updateEndListener, { once: true })
-      sourceBuffer.addEventListener('abort', abortListener, { once: true })
-      sourceBuffer.addEventListener('error', errorListener, { once: true })
-    }
+    // const setupListeners = (resolve: (value: Event) => void, reject: (reason: Event) => void) => {
+    //   const updateEndListener = (ev: Event) => {
+    //     resolve(ev)
+    //     unregisterListeners()
+    //   }
+    //   const abortListener = (ev: Event) => {
+    //     resolve(ev)
+    //     unregisterListeners()
+    //   }
+    //   const errorListener = (ev: Event) => {
+    //     console.error(ev)
+    //     reject(ev)
+    //     unregisterListeners()
+    //   }
+    //   const unregisterListeners = () => {
+    //     sourceBuffer.removeEventListener('updateend', updateEndListener)
+    //     sourceBuffer.removeEventListener('abort', abortListener)
+    //     sourceBuffer.removeEventListener('error', errorListener)
+    //   }
+    //   sourceBuffer.addEventListener('updateend', updateEndListener, { once: true })
+    //   sourceBuffer.addEventListener('abort', abortListener, { once: true })
+    //   sourceBuffer.addEventListener('error', errorListener, { once: true })
+    // }
 
-    const appendBuffer = (buffer: ArrayBuffer) =>
-      queue.add(() =>
-        new Promise<Event>((resolve, reject) => {
-          setupListeners(resolve, reject)
-          sourceBuffer.appendBuffer(buffer)
-        })
-      )
+    // const appendBuffer = (buffer: ArrayBuffer) =>
+    //   queue.add(() =>
+    //     new Promise<Event>((resolve, reject) => {
+    //       setupListeners(resolve, reject)
+    //       sourceBuffer.appendBuffer(buffer)
+    //     })
+    //   )
 
-    const unbufferRange = async (start: number, end: number) =>
-      queue.add(() =>
-        new Promise((resolve, reject) => {
-          setupListeners(resolve, reject)
-          sourceBuffer.remove(start, end)
-        })
-      )
+    // const unbufferRange = async (start: number, end: number) =>
+    //   queue.add(() =>
+    //     new Promise((resolve, reject) => {
+    //       setupListeners(resolve, reject)
+    //       sourceBuffer.remove(start, end)
+    //     })
+    //   )
 
-    const getTimeRanges = () =>
-      Array(sourceBuffer.buffered.length)
-        .fill(undefined)
-        .map((_, index) => ({
-          index,
-          start: sourceBuffer.buffered.start(index),
-          end: sourceBuffer.buffered.end(index)
-        }))
+    // const getTimeRanges = () =>
+    //   Array(sourceBuffer.buffered.length)
+    //     .fill(undefined)
+    //     .map((_, index) => ({
+    //       index,
+    //       start: sourceBuffer.buffered.start(index),
+    //       end: sourceBuffer.buffered.end(index)
+    //     }))
 
-    video.addEventListener('canplaythrough', () => {
-      video.playbackRate = 1
-      video.play()
-    }, { once: true })
+    // video.addEventListener('canplaythrough', () => {
+    //   video.playbackRate = 1
+    //   video.play()
+    // }, { once: true })
 
-    let chunks: Chunk[] = []
+    // let chunks: Chunk[] = []
 
-    const PREVIOUS_BUFFER_COUNT = 1
-    const NEEDED_TIME_IN_SECONDS = 15
+    // const PREVIOUS_BUFFER_COUNT = 1
+    // const NEEDED_TIME_IN_SECONDS = 15
 
-    await appendBuffer(headerChunk.buffer)
+    // await appendBuffer(headerChunk.buffer)
 
-    let reachedEnd = false
+    // let reachedEnd = false
 
-    const pull = async () => {
-      if (reachedEnd) throw new Error('end')
-      const chunk = await remuxer.read()
-      console.log('chunk', chunk)
-      if (chunk.isTrailer) reachedEnd = true
-      chunks = [...chunks, chunk]
-      return chunk
-    }
+    // const pull = async () => {
+    //   if (reachedEnd) throw new Error('end')
+    //   const chunk = await remuxer.read()
+    //   console.log('chunk', chunk)
+    //   if (chunk.isTrailer) reachedEnd = true
+    //   chunks = [...chunks, chunk]
+    //   return chunk
+    // }
 
-    let seeking = false
+    // let seeking = false
 
-    const updateBuffers = queuedDebounceWithLastCall(250, async () => {
-      if (seeking) return
-      const { currentTime } = video
-      const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
-      const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
+    // const updateBuffers = queuedDebounceWithLastCall(250, async () => {
+    //   if (seeking) return
+    //   const { currentTime } = video
+    //   const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
+    //   const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
 
-      const getLastChunkEndTime = () => {
-        const lastChunk = chunks.at(-1)
-        if (!lastChunk) return 0
-        return lastChunk.pts + lastChunk.duration
-      }
+    //   const getLastChunkEndTime = () => {
+    //     const lastChunk = chunks.at(-1)
+    //     if (!lastChunk) return 0
+    //     return lastChunk.pts + lastChunk.duration
+    //   }
 
-      // pull and append buffers up until the needed time
-      while (getLastChunkEndTime() < currentTime + NEEDED_TIME_IN_SECONDS){
-        const chunk = await pull()
-        await appendBuffer(chunk.buffer)
-      }
+    //   // pull and append buffers up until the needed time
+    //   while (getLastChunkEndTime() < currentTime + NEEDED_TIME_IN_SECONDS){
+    //     const chunk = await pull()
+    //     await appendBuffer(chunk.buffer)
+    //   }
 
-      if (sliceIndex) chunks = chunks.slice(sliceIndex)
+    //   if (sliceIndex) chunks = chunks.slice(sliceIndex)
 
-      const bufferedRanges = getTimeRanges()
+    //   const bufferedRanges = getTimeRanges()
 
-      const firstChunk = chunks.at(0)
-      const lastChunk = chunks.at(-1)
-      if (!firstChunk || !lastChunk || firstChunk === lastChunk) return
-      const minTime = firstChunk.pts
+    //   const firstChunk = chunks.at(0)
+    //   const lastChunk = chunks.at(-1)
+    //   if (!firstChunk || !lastChunk || firstChunk === lastChunk) return
+    //   const minTime = firstChunk.pts
 
-      for (const { start, end } of bufferedRanges) {
-        const chunkIndex = chunks.findIndex(({ pts, duration }) => start <= (pts + (duration / 2)) && (pts + (duration / 2)) <= end)
-        if (chunkIndex === -1) {
-          await unbufferRange(start, end)
-        } else {
-          if (start < minTime) {
-            await unbufferRange(
-              start,
-              minTime
-            )
-          }
-        }
-      }
-    })
+    //   for (const { start, end } of bufferedRanges) {
+    //     const chunkIndex = chunks.findIndex(({ pts, duration }) => start <= (pts + (duration / 2)) && (pts + (duration / 2)) <= end)
+    //     if (chunkIndex === -1) {
+    //       await unbufferRange(start, end)
+    //     } else {
+    //       if (start < minTime) {
+    //         await unbufferRange(
+    //           start,
+    //           minTime
+    //         )
+    //       }
+    //     }
+    //   }
+    // })
 
-    let firstSeekPaused: boolean | undefined
+    // let firstSeekPaused: boolean | undefined
 
-    const seek = debounceImmediateAndLatest(250, async (seekTime: number) => {
-      console.log('AAAAAAAAAAAAAAAAAAAAAAAAAAAASEEKING')
-      reachedEnd = false
-      if (firstSeekPaused === undefined) firstSeekPaused = video.paused
-      seeking = true
-      chunks = []
-      console.log('SEEKING')
-      try {
-        await remuxer.seek(seekTime)
-        const chunk1 = await pull()
-        console.log('SEEKING chunk1', chunk1)
-        console.log('SEEKING chunks', chunks)
-        // todo: FIX firefox sometimes throws "Uncaught (in promise) DOMException: An attempt was made to use an object that is not, or is no longer, usable"
-        sourceBuffer.timestampOffset = chunk1.pts
-        await appendBuffer(chunk1.buffer)
-      } catch (err: any) {
-        console.log('test err')
-        console.error(err)
-        return
-      }
-      if (firstSeekPaused === false) {
-        await video.play()
-      }
-      seeking = false
-      await updateBuffers()
-      if (firstSeekPaused === false) {
-        await video.play()
-      }
-      firstSeekPaused = undefined
-    })
+    // const seek = debounceImmediateAndLatest(250, async (seekTime: number) => {
+    //   console.log('AAAAAAAAAAAAAAAAAAAAAAAAAAAASEEKING')
+    //   reachedEnd = false
+    //   if (firstSeekPaused === undefined) firstSeekPaused = video.paused
+    //   seeking = true
+    //   chunks = []
+    //   console.log('SEEKING')
+    //   try {
+    //     await remuxer.seek(seekTime)
+    //     const chunk1 = await pull()
+    //     console.log('SEEKING chunk1', chunk1)
+    //     console.log('SEEKING chunks', chunks)
+    //     // todo: FIX firefox sometimes throws "Uncaught (in promise) DOMException: An attempt was made to use an object that is not, or is no longer, usable"
+    //     sourceBuffer.timestampOffset = chunk1.pts
+    //     await appendBuffer(chunk1.buffer)
+    //   } catch (err: any) {
+    //     console.log('test err')
+    //     console.error(err)
+    //     return
+    //   }
+    //   if (firstSeekPaused === false) {
+    //     await video.play()
+    //   }
+    //   seeking = false
+    //   await updateBuffers()
+    //   if (firstSeekPaused === false) {
+    //     await video.play()
+    //   }
+    //   firstSeekPaused = undefined
+    // })
 
-    const firstChunk = await pull()
-    appendBuffer(firstChunk.buffer)
+    // const firstChunk = await pull()
+    // appendBuffer(firstChunk.buffer)
 
-    video.addEventListener('timeupdate', () => {
-      updateBuffers()
-    })
+    // video.addEventListener('timeupdate', () => {
+    //   updateBuffers()
+    // })
 
-    video.addEventListener('waiting', () => {
-      updateBuffers()
-    })
+    // video.addEventListener('waiting', () => {
+    //   updateBuffers()
+    // })
 
-    video.addEventListener('seeking', (ev) => {
-      seek(video.currentTime)
-    })
+    // video.addEventListener('seeking', (ev) => {
+    //   seek(video.currentTime)
+    // })
 
-    updateBuffers()
+    // updateBuffers()
 
-    setInterval(() => {
-      seconds.textContent = `
-      ${video.currentTime.toString()}
-      ${
-        video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
-        : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
-        : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
-        : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
-        : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
-        : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
-        : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
-        : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
-        : undefined as never
-      }
-      `
-    }, 100)
+    // setInterval(() => {
+    //   seconds.textContent = `
+    //   ${video.currentTime.toString()}
+    //   ${
+    //     video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
+    //     : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
+    //     : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
+    //     : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
+    //     : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
+    //     : undefined as never
+    //   }
+    //   `
+    // }, 100)
 
     // setTimeout(async () => {
     //   video.playbackRate = 1

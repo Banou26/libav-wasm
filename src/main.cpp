@@ -73,18 +73,11 @@ extern "C" {
     std::string video_mime_type;
     std::string audio_mime_type;
 
-    val randomRead = val::undefined();
-
-    val streamRead = val::undefined();
-    val currentReadStream = val::undefined();
-    val clearStream = val::undefined();
-
+    val read = val::undefined();
     val attachment = val::undefined();
     val subtitle = val::undefined();
     val write = val::undefined();
     val flush = val::undefined();
-    val error = val::undefined();
-    val exit = val::undefined();
 
     double currentOffset = 0;
 
@@ -114,15 +107,11 @@ extern "C" {
       promise = options["promise"];
       input_length = options["length"].as<float>();
       buffer_size = options["bufferSize"].as<int>();
-      randomRead = options["randomRead"];
-      streamRead = options["streamRead"];
-      clearStream = options["clearStream"];
+      read = options["read"];
       attachment = options["attachment"];
       subtitle = options["subtitle"];
       write = options["write"];
       flush = options["flush"];
-      error = options["error"];
-      exit = options["exit"];
     }
 
     auto decimalToHex(int d, int padding) {
@@ -470,7 +459,7 @@ extern "C" {
       first_init = false;
     }
 
-    void read() {
+    void _read() {
       int res;
 
       bool flushed = false;
@@ -497,7 +486,6 @@ extern "C" {
           } else if (res == AVERROR_EXIT) {
             cancelling = false;
             printf("read AVERROR_EXIT");
-            exit();
             break;
           }
           printf("ERROR: could not read frame | %s \n", av_err2str(res));
@@ -665,10 +653,6 @@ extern "C" {
         avformat_free_context(output_format_context);
         output_format_context = nullptr;
       }
-
-      // Make sure to clear any old output data or pending MSE source buffers
-      // if that's part of your pipeline:
-      clearStream().await();
 
       // Reset these timestamps so the new MP4 segment starts fresh
       // (same logic you had in init() or after a new segment)
@@ -875,83 +859,24 @@ extern "C" {
       return AVERROR_EOF;
     }
 
-    if (remuxObject.initializing) {
-      emscripten::val &randomRead = remuxObject.randomRead;
-      if (remuxObject.first_init) {
-        emscripten::val result =
-          randomRead(
-            to_string(remuxObject.input_format_context->pb->pos),
-            buf_size
-          )
-            .await();
-        bool is_cancelled = result["cancelled"].as<bool>();
-        remuxObject.cancelling = is_cancelled;
-        if (is_cancelled) {
-          printf("read init AVERROR_EXIT");
-          return AVERROR_EXIT;
-        }
-        bool is_done = result["done"].as<bool>();
-        if (is_done) {
-          return AVERROR_EOF;
-        }
-        buffer = result["buffer"].as<std::string>();
-        remuxObject.init_buffers.push_back(buffer);
-      } else {
-        remuxObject.promise.await();
-        buffer = remuxObject.init_buffers[remuxObject.init_buffer_count];
-        remuxObject.init_buffer_count++;
-      }
-    } else if(remuxObject.seeking) {
-      emscripten::val &randomRead = remuxObject.randomRead;
-      if (remuxObject.first_seek) {
-        emscripten::val result =
-          randomRead(
-            to_string(remuxObject.input_format_context->pb->pos),
-            buf_size
-          )
-            .await();
-        bool is_cancelled = result["cancelled"].as<bool>();
-        remuxObject.cancelling = is_cancelled;
-        if (is_cancelled) {
-          printf("read seek AVERROR_EXIT");
-          return AVERROR_EXIT;
-        }
-        bool is_done = result["done"].as<bool>();
-        if (is_done) {
-          return AVERROR_EOF;
-        }
-        buffer = result["buffer"].as<std::string>();
-        remuxObject.seek_buffers.push_back(buffer);
-      } else {
-        remuxObject.promise.await();
-        buffer = remuxObject.seek_buffers[remuxObject.seek_buffer_count];
-        remuxObject.seek_buffer_count++;
-      }
-    } else {
-      emscripten::val result =
-        remuxObject
-          .streamRead(
-            to_string(remuxObject.input_format_context->pb->pos),
-            buf_size
-          )
-          .await();
-      bool is_cancelled = result["cancelled"].as<bool>();
-      remuxObject.cancelling = is_cancelled;
-      if (is_cancelled) {
-        printf("read AVERROR_EXIT");
-        return AVERROR_EXIT;
-      }
-      bool is_done = result["done"].as<bool>();
-      if (is_done) {
-        return AVERROR_EOF;
-      }
-      buffer = result["buffer"].as<std::string>();
+    emscripten::val result =
+      remuxObject
+        .read(
+          to_string(remuxObject.input_format_context->pb->pos),
+          buf_size
+        )
+        .await();
+    bool is_cancelled = result["cancelled"].as<bool>();
+    remuxObject.cancelling = is_cancelled;
+    if (is_cancelled) {
+      return AVERROR_EXIT;
     }
-
-    int buffer_size = buffer.size();
-    if (buffer_size == 0) {
+    bool is_done = result["done"].as<bool>();
+    if (is_done) {
       return AVERROR_EOF;
     }
+    buffer = result["buffer"].as<std::string>();
+    int buffer_size = buffer.size();
     // copy the result buffer into AVIO's buffer
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
 
@@ -1000,7 +925,7 @@ extern "C" {
     class_<Remuxer>("Remuxer")
       .constructor<emscripten::val>()
       .function("init", &Remuxer::init)
-      .function("read", &Remuxer::read)
+      .function("read", &Remuxer::_read)
       .function("destroy", &Remuxer::destroy)
       .function("seek", &Remuxer::_seek)
       .function("getInfo", &Remuxer::getInfo);
