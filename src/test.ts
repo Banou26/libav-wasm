@@ -81,6 +81,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     let slow = false
 
+    const events = new EventTarget()
+
     const remuxer = await makeRemuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
@@ -118,8 +120,61 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       },
       fragment: (fragment) => {
         console.log('fragment', fragment)
+        events.dispatchEvent(new CustomEvent('fragment', { detail: { fragment } }))
       }
     })
+
+    
+    const headerFragment = await new Promise(resolve => {
+      events.addEventListener('fragment', (ev) => console.log('ev', ev) || resolve(ev.detail.fragment), { once: true })
+      remuxer.init()
+    })
+
+    console.log('headerFragment', headerFragment)
+
+    const mediaInfo = await remuxer.getInfo()
+    const duration = mediaInfo.input.duration / 1_000_000
+
+    const video = document.createElement('video')
+    video.width = 1440
+
+    const seconds = document.createElement('div')
+    video.controls = true
+    video.volume = 0
+    video.addEventListener('error', ev => {
+      // @ts-expect-error
+      console.error(ev.target?.error)
+    })
+    document.body.appendChild(video)
+    document.body.appendChild(seconds)
+
+    const mediaSource = new MediaSource()
+    video.src = URL.createObjectURL(mediaSource)
+
+    const sourceBuffer: SourceBuffer =
+      await new Promise(resolve =>
+        mediaSource.addEventListener(
+          'sourceopen',
+          () => {
+            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${mediaInfo.input.video_mime_type},${mediaInfo.input.audio_mime_type}"`)
+            mediaSource.duration = duration
+            sourceBuffer.mode = 'segments'
+            resolve(sourceBuffer)
+          },
+          { once: true }
+        )
+      )
+
+
+
+
+
+
+
+
+
+
+
 
     // const headerChunk = await remuxer.init()
 

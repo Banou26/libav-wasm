@@ -108,15 +108,17 @@ const resolvers = {
       subtitle: (streamIndex, isHeader, data, ...rest) => {
         if (isHeader) {
           const lines = data.split('\n')
+          const eventsFormatStartIndex = lines.findIndex((line) => line.startsWith('[Events]'))
           const format =
             lines
-              .filter((line) => line.startsWith('Format:'))
-              // [0] is the style header, [1] is the dialogue header
-              [1]
-              .split(':')
+              .slice(eventsFormatStartIndex)
+              .find((line) => line.startsWith('Format:'))
+              ?.split(':')
               [1]
               .split(',')
               .map((value) => value.trim())
+
+          if (!format) throw new Error('Subtitle format not found')
 
           const header = {
             type: 'header',
@@ -128,16 +130,20 @@ const resolvers = {
           } as const
 
           subtitleHeaders.set(streamIndex, header)
-          
+
           subtitle(header)
         } else {
           const header = subtitleHeaders.get(streamIndex)
           if (!header) throw new Error('Subtitle header not found')
           const dialogueContent =
             [
+              // layer
               data.split(',')[1],
+              // start time
               convertTimestamp(rest[0] as number),
+              // end time
               convertTimestamp(rest[1] as number),
+              // dialogue content, generally [Style, Name, MarginL, MarginR, MarginV, Effect, Text]
               data.replace(`${data.split(',')[0]},${data.split(',')[1]},`, '')
             ]
               .join(',')
