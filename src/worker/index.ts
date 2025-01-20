@@ -3,11 +3,32 @@ import { expose } from 'osra'
 // @ts-ignore
 import WASMModule from 'libav'
 
+export type SubtitleFragment =
+  | {
+    type: 'header'
+    streamIndex: number
+    data: string
+    format: string[]
+    language: string
+    title: string
+  }
+  | {
+    type: 'dialogue'
+    streamIndex: any
+    startTime: number
+    endTime: number
+    dialogueIndex: number
+    layer: number
+    dialogue: string
+    fields: Record<string, string>
+  }
+
+
 export type RemuxerOptions = {
   promise: Promise<void>
   length: number
   bufferSize: number
-  subtitle: <T extends boolean>(streamIndex: number, isHeader: T, data: string, ...rest: T extends true ? [string, string] : [number, number]) => void
+  subtitle: (streamIndex: number, isHeader: T, data: string, ...rest: T extends true ? [string, string] : [number, number]) => void
   attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => void
   read: (offset: string) => Promise<{ buffer: Uint8Array | undefined, done: boolean, cancelled: boolean }>
   write: (buffer: ArrayBuffer) => void
@@ -53,6 +74,13 @@ type Fragment = {
   isTrailer: boolean
 }
 
+// converts ms to 'h:mm:ss.cc' format
+const convertTimestamp = (ms: number) =>
+  new Date(ms)
+    .toISOString()
+    .slice(11, 22)
+    .replace(/^00/, '0')
+
 const resolvers = {
   makeRemuxer: async (
     { publicPath, length, bufferSize, log, read, attachment, subtitle, fragment }:
@@ -62,7 +90,8 @@ const resolvers = {
       bufferSize: number
       log: (isError: boolean, text: string) => Promise<void>
       read: (offset: number) => Promise<{ buffer: ArrayBuffer | undefined, done: boolean, cancelled: boolean }>
-      subtitle: <T extends boolean>(streamIndex: number, isHeader: T, data: string, ...rest: T extends true ? [string, string] : [number, number]) => void
+      subtitle: (subtitleFragment: SubtitleFragment) => Promise<void>
+      // subtitle: <T extends boolean>(streamIndex: number, isHeader: T, data: string, ...rest: T extends true ? [string, string] : [number, number]) => void
       attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => Promise<void>
       fragment: (fragment: Fragment) => Promise<void>
     }
@@ -70,12 +99,84 @@ const resolvers = {
     const { Remuxer } = await makeModule(publicPath, log)
 
     let writeBuffer = new Uint8Array(0)
+    const subtitleHeaders = new Map<number, SubtitleFragment & { type: 'header' }>()
 
     const remuxer = new Remuxer({
       promise: Promise.resolve(),
       length,
       bufferSize,
-      subtitle: (streamIndex, isHeader, data, ...rest) => subtitle(streamIndex, isHeader, data, ...rest),
+      subtitle: (streamIndex, isHeader, data, ...rest) => {
+        if (isHeader) {
+          const lines = data.split('\n')
+          const format =
+            lines
+              .filter((line) => line.startsWith('Format:'))
+              // [0] is the style header, [1] is the dialogue header
+              [1]
+              .split(':')
+              [1]
+              .split(',')
+              .map((value) => value.trim())
+
+          const header = {
+            type: 'header',
+            streamIndex,
+            data,
+            format,
+            language: rest[0] as string,
+            title: rest[1] as string
+          } as const
+
+          subtitleHeaders.set(streamIndex, header)
+          
+          subtitle(header)
+        } else {
+          const header = subtitleHeaders.get(streamIndex)
+          if (!header) throw new Error('Subtitle header not found')
+          const dialogueContent =
+            [
+              data.split(',')[1],
+              convertTimestamp(rest[0] as number),
+              convertTimestamp(rest[1] as number),
+              data.replace(`${data.split(',')[0]},${data.split(',')[1]},`, '')
+            ]
+              .join(',')
+
+          const separatorIndexes =
+            [...dialogueContent]
+              .map((char, index) => char === ',' ? index : undefined)
+              .filter((value): value is number => value !== undefined)
+
+          const formatSlices =
+            [0, ...separatorIndexes]
+              .map((charIndex, index, indexArr) =>
+                dialogueContent.slice(
+                  index === 0 ? 0 : charIndex + 1,
+                  indexArr.length - 2 === index ? undefined : indexArr[index + 1]
+                )
+              )
+              .filter((value): value is string => value !== undefined)
+              .filter((value) => value.length)
+
+          const fields = Object.fromEntries(
+            header
+              .format
+              .map((key, index) => [key, formatSlices[index]])
+              .filter(([key, value]) => key && value)
+          )
+
+          subtitle({
+            type: 'dialogue',
+            streamIndex,
+            startTime: rest[0] as number,
+            endTime: rest[1] as number,
+            dialogueIndex: Number(data.split(',')[0]),
+            layer: Number(data.split(',')[1]),
+            dialogue: `Dialogue: ${dialogueContent}`,
+            fields
+          })
+        }
+      },
       attachment: (filename, mimetype, buffer) => {
         // We need to create a new buffer since the argument buffer is attached to the WASM's memory
         const uint8 = new Uint8Array(buffer)

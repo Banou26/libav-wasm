@@ -3,6 +3,7 @@ import type { Resolvers, Resolvers as WorkerResolvers } from './worker'
 import { expose } from 'osra'
 
 import { toStreamChunkSize } from './utils'
+import type { SubtitleFragment } from './worker'
 
 export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
@@ -65,40 +66,6 @@ const abortControllerToPromise = (abortController: AbortController) => new Promi
   })
 })
 
-const normalizeSubtitlePart = (streamIndex: number, isHeader: boolean, data: string, ...rest: [number, number] | [string, string]) => {
-  console.log('normalizeSubtitlePart', streamIndex, isHeader, data, ...rest)
-  if (isHeader) {
-    const [language, title] = rest as [string, string]
-    return {
-      type: 'header',
-      streamIndex,
-      data,
-      language,
-      title
-    }
-  } else {
-    const [startTime, endTime] = rest as number[]
-    const [dialogueIndex, layer] = data.split(',')
-    const startTimestamp = convertTimestamp(startTime)
-    const endTimestamp = convertTimestamp(endTime)
-    const dialogueContent = data.replace(`${dialogueIndex},${layer},`, '')
-    return {
-      type: 'dialogue',
-      streamIndex,
-      data,
-      startTime,
-      endTime,
-      dialogueIndex,
-      layer,
-      dialogueContent,
-      startTimestamp,
-      endTimestamp
-    }
-  }
-}
-
-export type SubtitleFragment = ReturnType<typeof normalizeSubtitlePart>
-
 export const makeRemuxer = async ({
   publicPath,
   workerUrl,
@@ -151,7 +118,7 @@ export const makeRemuxer = async ({
       )
     },
     attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
-    subtitle: (streamIndex, isHeader, data, ...rest) => subtitle(normalizeSubtitlePart(streamIndex, isHeader, data, ...rest)),
+    subtitle: (subtitleFragment: SubtitleFragment) => subtitle(subtitleFragment),
     fragment: (_fragment) => fragment(_fragment)
   })
 
