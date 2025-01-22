@@ -83,6 +83,18 @@ const vectorToArray = <T>(vector: WASMVector<T>) =>
     .fill(undefined)
     .map((_, index) => vector.get(index))
 
+const uint8VectorToUint8Array = (vector: WASMVector<Uint8Array>) => {
+  const arrays = vectorToArray(vector)
+  const length = arrays.reduce((acc, arr) => acc + arr.length, 0)
+  const buffer = new Uint8Array(length)
+  let offset = 0
+  for (const arr of arrays) {
+    buffer.set(arr, offset)
+    offset += arr.length
+  }
+  return buffer
+}
+
 const resolvers = {
   makeRemuxer: async (
     { publicPath, length, bufferSize, log, read }:
@@ -101,9 +113,12 @@ const resolvers = {
     const _remuxer = new Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => ({
-        data: new Uint8Array(result.data.buffer),
+        data: uint8VectorToUint8Array(result.data),
         attachments: vectorToArray(result.attachments),
-        subtitles: vectorToArray(result.subtitles),
+        subtitles: vectorToArray(result.subtitles).map(subtitle => ({
+          ...subtitle,
+          data: new TextDecoder().decode(subtitle.data)
+        })),
         info: {
           input: {
             audioMimeType: result.info.input.audio_mime_type,
@@ -123,7 +138,14 @@ const resolvers = {
       })),
       destroy: () => _remuxer.destroy(),
       seek: (read, timestamp) => _remuxer.seek(read, timestamp),
-      read: (read) => _remuxer.read(read)
+      read: (read) => _remuxer.read(read).then(result => ({
+        data: uint8VectorToUint8Array(result.data),
+        subtitles: vectorToArray(result.subtitles).map(subtitle => ({
+          ...subtitle,
+          data: new TextDecoder().decode(subtitle.data)
+        })),
+        finished: result.finished
+      }))
     } as RemuxerInstance
 
     const runTask = <T extends any>(func: (abortedPromise: Promise<void>) => Promise<T>) => {
@@ -137,7 +159,7 @@ const resolvers = {
     const wasmRead = (abortedPromise: Promise<void>) => (offset: number, size: number) =>
       Promise.race([
         read(offset, size)
-          .then(buffer => console.log('read', buffer) || ({
+          .then(buffer => ({
             resolved: new Uint8Array(buffer),
             rejected: false
           })),

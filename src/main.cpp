@@ -52,14 +52,14 @@ typedef struct SubtitleFragment {
 } SubtitleFragment;
 
 typedef struct InitResult {
-  emscripten::val data;
+  std::vector<emscripten::val> data;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
   IOInfo info;
 } InitResult;
 
 typedef struct ReadResult {
-  emscripten::val data;
+  std::vector<emscripten::val> data;
   std::vector<SubtitleFragment> subtitles;
   bool finished;
 } ReadResult;
@@ -95,7 +95,7 @@ public:
   std::string video_mime_type;
   std::string audio_mime_type;
 
-  std::vector<std::string> write_vector;
+  std::vector<emscripten::val> write_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
 
@@ -144,20 +144,6 @@ public:
     }
     // Just a placeholder for demonstration
     return "hev1.1.6.L93";
-  }
-
-  emscripten::val accumulate_write_vector() {
-    // accumulates the write_vector into a single string
-    size_t totalSize = 0;
-    for (const auto& vec : write_vector) {
-      totalSize += vec.size();
-    }
-    std::string str;
-    str.reserve(totalSize);
-    str = std::accumulate(write_vector.begin(), write_vector.end(), str);
-    write_vector.clear();
-
-    return emscripten::val(emscripten::typed_memory_view(str.size(), str.c_str()));
   }
 
   InitResult init(emscripten::val read_function) {
@@ -329,7 +315,7 @@ public:
 
     // Return everything the caller needs from init
     InitResult result;
-    result.data = accumulate_write_vector();
+    result.data = write_vector;
     result.attachments = attachments;
     result.subtitles = subtitles;
     result.info = infoObj;
@@ -441,7 +427,7 @@ public:
     }
 
     ReadResult result;
-    result.data = accumulate_write_vector();
+    result.data = write_vector;
     result.subtitles = subtitles;
     result.finished = finished;
 
@@ -609,10 +595,17 @@ private:
 
   static int avio_write(void* opaque, uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
-    std::string chunk;
-    chunk.assign((char*)buf, buf_size);
 
-    self->write_vector.push_back(std::move(chunk));
+    printf("avio_write %d\n", buf_size);
+
+    emscripten::val uint8_array = emscripten::val(
+      emscripten::typed_memory_view(
+        buf_size,
+        buf
+      )
+    );
+
+    self->write_vector.push_back(uint8_array);
 
     return buf_size;
   }
@@ -622,6 +615,7 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
   emscripten::register_vector<Attachment>("VectorAttachment");
   emscripten::register_vector<SubtitleFragment>("VectorSubtitleFragment");
   emscripten::register_vector<uint8_t>("VectorUInt8");
+  emscripten::register_vector<emscripten::val>("VectorVal");
 
   emscripten::value_object<Attachment>("Attachment")
     .field("filename", &Attachment::filename)
@@ -638,31 +632,31 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("end",         &SubtitleFragment::end);
 
   emscripten::value_object<MediaInfo>("MediaInfo")
-    .field("formatName", &MediaInfo::formatName)
-    .field("mimeType", &MediaInfo::mimeType)
-    .field("duration", &MediaInfo::duration)
+    .field("formatName",      &MediaInfo::formatName)
+    .field("mimeType",        &MediaInfo::mimeType)
+    .field("duration",        &MediaInfo::duration)
     .field("video_mime_type", &MediaInfo::video_mime_type)
     .field("audio_mime_type", &MediaInfo::audio_mime_type);
 
   emscripten::value_object<IOInfo>("IOInfo")
-    .field("input", &IOInfo::input)
+    .field("input",  &IOInfo::input)
     .field("output", &IOInfo::output);
 
   emscripten::value_object<InitResult>("InitResult")
-    .field("data", &InitResult::data)
+    .field("data",        &InitResult::data)
     .field("attachments", &InitResult::attachments)
-    .field("subtitles", &InitResult::subtitles)
-    .field("info", &InitResult::info);
+    .field("subtitles",   &InitResult::subtitles)
+    .field("info",        &InitResult::info);
 
   emscripten::value_object<ReadResult>("ReadResult")
-    .field("data", &ReadResult::data)
+    .field("data",      &ReadResult::data)
     .field("subtitles", &ReadResult::subtitles)
-    .field("finished", &ReadResult::finished);
+    .field("finished",  &ReadResult::finished);
 
   emscripten::class_<Remuxer>("Remuxer")
     .constructor<emscripten::val>()
-    .function("init", &Remuxer::init)
-    .function("read", &Remuxer::read)
-    .function("seek", &Remuxer::seek)
+    .function("init",    &Remuxer::init)
+    .function("read",    &Remuxer::read)
+    .function("seek",    &Remuxer::seek)
     .function("destroy", &Remuxer::destroy);
 }
