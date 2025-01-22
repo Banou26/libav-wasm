@@ -124,6 +124,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
+    return
+
     
     const headerFragment = await new Promise(resolve => {
       events.addEventListener('fragment', (ev) => console.log('ev', ev) || resolve(ev.detail.fragment), { once: true })

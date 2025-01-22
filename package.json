@@ -12,6 +12,7 @@
     "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
     "build-worker": "vite build --config vite-worker.config.ts",
     "make-docker": "docker-compose run libav-wasm make",
+    "docker-clean": "docker compose up --remove-orphans",
     "dev-web": "vite --port 1234",
     "vite-build": "vite build",
     "worker-build-dev": "nodemon -e ts --watch src/worker --exec \"npm run build-worker\"",

@@ -112,26 +112,7 @@ export const makeRemuxer = async ({
 
       currentStreamOffset = offset
 
-      if (!readAbortController) throw new Error('No readAbortController found')
-
-      return (
-        Promise.race([
-          reader
-            .read()
-            .then(({ value, done }) => ({
-              buffer: value?.buffer,
-              done,
-              cancelled: false
-            })),
-          // this throws, the then is just for the types to be happy
-          abortControllerToPromise(readAbortController)
-            .then(() => ({
-              buffer: undefined,
-              done: false,
-              cancelled: true
-            })),
-        ])
-      )
+      return reader.read().then(({ value }) => value?.buffer ?? new ArrayBuffer(0))
     },
     attachment: async (filename, mimetype, buffer) => attachment(filename, mimetype, buffer),
     subtitle: (subtitleFragment: SubtitleFragment) => subtitle(subtitleFragment),
