@@ -81,18 +81,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     let slow = false
 
-    const events = new EventTarget()
-
     const remuxer = await makeRemuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        // if (slow && size !== BUFFER_SIZE) {
-        //   await new Promise(resolve => setTimeout(resolve, 5000))
-        // }
-
         return fetch(
           VIDEO_URL,
           {
@@ -111,31 +105,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               )
             )
         )
-      },
-      subtitle: (subtitleFragment) => {
-        console.log('subtitle fragment', subtitleFragment)
-      },
-      attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
-        console.log('attachment', filename, mimetype, buffer)
-      },
-      fragment: (fragment) => {
-        console.log('fragment', fragment)
-        events.dispatchEvent(new CustomEvent('fragment', { detail: { fragment } }))
       }
     })
-
-    return
-
     
-    const headerFragment = await new Promise(resolve => {
-      events.addEventListener('fragment', (ev) => console.log('ev', ev) || resolve(ev.detail.fragment), { once: true })
-      remuxer.init()
-    })
-
-    console.log('headerFragment', headerFragment)
-
-    const mediaInfo = await remuxer.getInfo()
-    const duration = mediaInfo.input.duration / 1_000_000
+    console.log('initializing remuxer')
+    const header = await remuxer.init()
+    console.log('initialized remuxer', header)
 
     const video = document.createElement('video')
     video.width = 1440
@@ -153,28 +128,89 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const mediaSource = new MediaSource()
     video.src = URL.createObjectURL(mediaSource)
 
+    console.log('setting up source buffer')
     const sourceBuffer: SourceBuffer =
       await new Promise(resolve =>
         mediaSource.addEventListener(
           'sourceopen',
           () => {
-            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${mediaInfo.input.video_mime_type},${mediaInfo.input.audio_mime_type}"`)
-            mediaSource.duration = duration
+            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${header.info.input.videoMimeType},${header.info.input.audioMimeType}"`)
+            mediaSource.duration = header.info.input.duration
             sourceBuffer.mode = 'segments'
             resolve(sourceBuffer)
           },
           { once: true }
         )
       )
+    console.log('source buffer setup', sourceBuffer)
+
+    const setupListeners = (resolve: (value: Event) => void, reject: (reason: Event) => void) => {
+      const updateEndListener = (ev: Event) => {
+        resolve(ev)
+        unregisterListeners()
+      }
+      const abortListener = (ev: Event) => {
+        resolve(ev)
+        unregisterListeners()
+      }
+      const errorListener = (ev: Event) => {
+        console.error(ev)
+        reject(ev)
+        unregisterListeners()
+      }
+      const unregisterListeners = () => {
+        sourceBuffer.removeEventListener('updateend', updateEndListener)
+        sourceBuffer.removeEventListener('abort', abortListener)
+        sourceBuffer.removeEventListener('error', errorListener)
+      }
+      sourceBuffer.addEventListener('updateend', updateEndListener, { once: true })
+      sourceBuffer.addEventListener('abort', abortListener, { once: true })
+      sourceBuffer.addEventListener('error', errorListener, { once: true })
+    }
+
+    const queue = new PQueue({ concurrency: 1 })
+
+    const appendBuffer = (buffer: ArrayBuffer) =>
+      queue.add(() =>
+        new Promise<Event>((resolve, reject) => {
+          setupListeners(resolve, reject)
+          sourceBuffer.appendBuffer(buffer)
+        })
+      )
+
+    const unbufferRange = async (start: number, end: number) =>
+      queue.add(() =>
+        new Promise((resolve, reject) => {
+          setupListeners(resolve, reject)
+          sourceBuffer.remove(start, end)
+        })
+      )
+
+    console.log('appending header', header)
+    await appendBuffer(header.data)
+    console.log('appended header')
+
+    const res = await remuxer.read()
+    console.log('read', res)
+    appendBuffer(res.data)
 
 
-
-
-
-
-
-
-
+    // setInterval(() => {
+    //   seconds.textContent = `
+    //   ${video.currentTime.toString()}
+    //   ${
+    //     video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
+    //     : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
+    //     : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
+    //     : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
+    //     : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
+    //     : undefined as never
+    //   }
+    //   `
+    // }, 100)
 
 
 
