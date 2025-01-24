@@ -52,14 +52,14 @@ typedef struct SubtitleFragment {
 } SubtitleFragment;
 
 typedef struct InitResult {
-  std::vector<emscripten::val> data;
+  emscripten::val data;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
   IOInfo info;
 } InitResult;
 
 typedef struct ReadResult {
-  std::vector<emscripten::val> data;
+  emscripten::val data;
   std::vector<SubtitleFragment> subtitles;
   bool finished;
 } ReadResult;
@@ -95,7 +95,7 @@ public:
   std::string video_mime_type;
   std::string audio_mime_type;
 
-  std::vector<emscripten::val> write_vector;
+  std::vector<uint8_t> write_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
 
@@ -103,8 +103,7 @@ public:
   emscripten::val read_data_function = val::undefined();
 
   AVPacket* packet = nullptr;
-  bool has_seen_non_keyframe = false;
-  bool has_outputed_first_keyframe = false;
+  bool wrote = false;
 
   Remuxer(emscripten::val options) {
     resolved_promise = options["resolvedPromise"];
@@ -114,6 +113,14 @@ public:
 
   ~Remuxer() {
     destroy();
+  }
+
+  auto decimalToHex(int d, int padding) {
+    std::string hex = std::to_string(d);
+    while (hex.length() < padding) {
+      hex = "0" + hex;
+    }
+    return hex;
   }
 
   std::string parse_mp4a_mime_type(AVCodecParameters* in_codecpar) {
@@ -127,33 +134,91 @@ public:
     }
   }
 
-  std::string parse_h264_mime_type(AVCodecParameters* in_codecpar) {
-    if (!in_codecpar->extradata || in_codecpar->extradata_size < 4) {
-      return "avc1.invalid";
-    }
-    // extradata[1]=profile, [2]=constraints, [3]=level
-    uint8_t profile = in_codecpar->extradata[1];
-    uint8_t constraints = in_codecpar->extradata[2];
-    uint8_t level = in_codecpar->extradata[3];
+  std::string parse_h264_mime_type(AVCodecParameters *in_codecpar) {
+    auto extradata = in_codecpar->extradata;
+    auto extradata_size = in_codecpar->extradata_size;
+    char mime_type[50];
 
-    char mime_type[64] = {0};
+    if (!extradata || extradata_size < 1) {
+      printf("Invalid extradata.\n");
+      return mime_type;
+    }
+
+    if (extradata[0] != 1) {
+      printf("Unsupported extradata format.\n");
+      return mime_type;
+    }
+
+    // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/avcC.js#L6
+    uint8_t profile = extradata[1];
+    uint8_t constraints = extradata[2];
+    uint8_t level = extradata[3];
+
     sprintf(mime_type, "avc1.%02x%02x%02x", profile, constraints, level);
     return mime_type;
   }
 
+  std::string parse_h265_mime_type(AVCodecParameters *in_codecpar) {
+    auto extradata = in_codecpar->extradata;
+    auto extradata_size = in_codecpar->extradata_size;
+    char mime_type[50];
 
-  std::string parse_h265_mime_type(AVCodecParameters* in_codecpar) {
-    if (!in_codecpar->extradata || in_codecpar->extradata_size < 3) {
-      return "hev1.invalid";
+    if (!extradata || extradata_size < 1) {
+      printf("Invalid extradata.\n");
+      return mime_type;
     }
-    // Just a placeholder for demonstration
-    return "hev1.1.6.L93";
+
+    if (extradata[0] != 1) {
+      printf("Unsupported extradata format.\n");
+      return mime_type;
+    }
+
+    // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/hvcC.js
+    // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/box-codecs.js#L106
+    // https://github.com/paulhiggs/codec-string/blob/ab2e7869f1d9207b24cfd29031b79d7abf164a5e/src/decode-hevc.js
+    uint8_t multi = extradata[1];
+    uint8_t general_profile_space = multi >> 6;
+    uint8_t general_tier_flag = (multi & 0x20) >> 5;
+    uint8_t general_profile_idc = (multi & 0x1F);
+    uint32_t general_profile_compatibility_flags = extradata[2] << 24 | extradata[3] << 16 | extradata[4] << 8 | extradata[5];
+    uint8_t general_constraint_indicator_flags = extradata[6];
+    uint8_t general_level_idc = extradata[12];
+
+    auto general_profile_space_str =
+      general_profile_space == 0 ? "" :
+      general_profile_space == 1 ? "A" :
+      general_profile_space == 2 ? "B" :
+      "C";
+
+    uint8_t reversed = 0;
+    for (int i=0; i<32; i++) {
+      reversed |= general_profile_compatibility_flags & 1;
+      if (i==31) break;
+      reversed <<= 1;
+      general_profile_compatibility_flags >>=1;
+    }
+    uint8_t general_profile_compatibility_reversed = reversed;
+
+    auto general_tier_flag_str =
+      general_tier_flag == 0
+        ? "L"
+        : "H";
+
+    sprintf(
+      mime_type, "hev1.%s%d.%s.%s%d.%02x",
+      general_profile_space_str,
+      general_profile_idc,
+      decimalToHex(general_profile_compatibility_reversed, 0).c_str(),
+      general_tier_flag_str,
+      general_level_idc,
+      general_constraint_indicator_flags
+    );
+    return mime_type;
   }
 
   InitResult init(emscripten::val read_function) {
     read_data_function = read_function;
 
-    has_seen_non_keyframe = false;
     write_vector.clear();
     attachments.clear();
     subtitles.clear();
@@ -222,14 +287,17 @@ public:
         AVDictionaryEntry* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, 0);
         if (mimetype) attachment.mimetype = mimetype->value;
 
+        std::string attachment_data;
+        attachment_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+
         // The actual attachment bytes are in extradata
         attachment.data = emscripten::val(
           emscripten::typed_memory_view(
-            in_codecpar->extradata_size,
-            in_codecpar->extradata
+            attachment_data.size(),
+            attachment_data.data()
           )
         );
-        attachments.push_back(std::move(attachment));
+        attachments.push_back(attachment);
 
         streams_list[i] = -1;
         continue;
@@ -249,13 +317,17 @@ public:
         AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
         if (title) subtitle_fragment.title = title->value;
         // The extradata is the "header"
+
+        std::string subtitle_data;
+        subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+
         subtitle_fragment.data = emscripten::val(
           emscripten::typed_memory_view(
-            in_codecpar->extradata_size,
-            in_codecpar->extradata
+            subtitle_data.size(),
+            subtitle_data.data()
           )
         );
-        subtitles.push_back(std::move(subtitle_fragment));
+        subtitles.push_back(subtitle_fragment);
 
         // Mark not to be remuxed in the output container (mp4)
         streams_list[i] = -1;
@@ -321,174 +393,32 @@ public:
 
     // Return everything the caller needs from init
     InitResult result;
-    result.data = write_vector;
+    emscripten::val js_write_vector = emscripten::val(
+      emscripten::typed_memory_view(
+        write_vector.size(),
+        write_vector.data()
+      )
+    );
+
+    result.data = js_write_vector;
     result.attachments = attachments;
     result.subtitles = subtitles;
     result.info = infoObj;
 
     read_data_function = val::undefined();
+    wrote = false;
 
     return result;
   }
 
-  // int process_packet() {
-  //   resolved_promise.await();
-  //   printf("process \n");
-  //   int ret;
-
-  //   AVStream* in_stream  = input_format_context->streams[packet->stream_index];
-  //   if (packet->stream_index >= number_of_streams
-  //       || streams_list[packet->stream_index] < 0) {
-  //     // not an included stream, drop
-  //     av_packet_free(&packet);
-  //     return 1;
-  //   }
-  //   printf("process 2 \n");
-
-  //   // If it's a subtitle packet
-  //   if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-  //     SubtitleFragment subtitle_fragment;
-  //     subtitle_fragment.streamIndex = packet->stream_index;
-  //     subtitle_fragment.isHeader = false;
-  //     subtitle_fragment.start = packet->pts;
-  //     subtitle_fragment.end   = subtitle_fragment.start + packet->duration;
-  //     // The actual subtitle data
-  //     subtitle_fragment.data = emscripten::val(
-  //       emscripten::typed_memory_view(
-  //         packet->size,
-  //         packet->data
-  //       )
-  //     );
-  //     subtitles.push_back(std::move(subtitle_fragment));
-  //     printf("process 3 \n");
-
-  //     av_packet_free(&packet);
-  //     return 1;
-  //   }
-  //   printf("process 4 \n");
-
-  //   // If it's audio or video, we remux
-  //   AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
-
-  //   // If video, accumulate durations
-  //   if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-  //     duration += packet->duration * av_q2d(in_stream->time_base);
-  //   }
-
-  //   bool is_keyframe = (packet->flags & AV_PKT_FLAG_KEY) != 0;
-
-  //   // rescale timestamps
-  //   av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-  //   printf("process 5 \n");
-
-  //   // Write to output
-  //   ret = av_interleaved_write_frame(output_format_context, packet);
-  //   if (ret < 0) {
-  //     printf("err \n");
-  //     printf("Error writing frame: %s\n", ffmpegErrStr(ret).c_str());
-  //     av_packet_free(&packet);
-  //     return 2;
-  //   }
-  //   printf("process 6 \n");
-
-  //   av_packet_free(&packet);
-  //   printf("process 7 \n");
-
-  //   return 0;
-  // }
-
-  // ReadResult read(emscripten::val read_function) {
-  //   printf("read \n");
-  //   resolved_promise.await();
-
-  //   read_data_function = read_function;
-
-  //   write_vector.clear();
-  //   subtitles.clear();
-
-  //   bool finished = false;
-  //   printf("read2 \n");
-
-  //   while (true) {
-  //     printf("read3 \n");
-  //     int ret;
-  //     int process_ret;
-
-  //     if (packet != nullptr) {
-  //       printf("read3.5 \n");
-  //       process_ret = process_packet();
-  //       packet = nullptr;
-  //     }
-  //     printf("read4 \n");
-  //     if (process_ret == 2) break;
-  //     if (process_ret == 1) continue;
-  //     printf("read5 \n");
-
-  //     packet = av_packet_alloc();
-  //     ret = av_read_frame(input_format_context, packet);
-
-  //     if (ret < 0) {
-  //       // if ret == AVERROR_EOF, we finalize
-  //       if (ret == AVERROR_EOF) {
-  //         // flush + trailer
-  //         avio_flush(output_format_context->pb);
-  //         av_write_trailer(output_format_context);
-  //         finished = true;
-  //       }
-  //       av_packet_free(&packet);
-  //       break;
-  //     }
-  //     printf("read6 \n");
-
-  //     bool is_keyframe = (packet->flags & AV_PKT_FLAG_KEY) != 0;
-  //     if (!first_packet && is_keyframe) {
-  //       break;
-  //     }
-  //     first_packet = false;
-  //     printf("read7 \n");
-  //     process_ret = process_packet();
-  //     packet = nullptr;
-  //     printf("read8 \n");
-  //     if (process_ret == 2) break;
-  //     if (process_ret == 1) continue;
-  //     printf("read9 \n");
-  //   }
-
-  //   printf("read10 \n");
-  //   ReadResult result;
-  //   result.data = write_vector;
-  //   result.subtitles = subtitles;
-  //   result.finished = finished;
-
-  //   read_data_function = val::undefined();
-  //   return result;
-  // }
-
-  int process_packet() {
-    // AVPacket* packet = av_packet_alloc();
-    // int ret = av_read_frame(input_format_context, packet);
-    // if (ret < 0) {
-    //   // if ret == AVERROR_EOF, we finalize
-    //   if (ret == AVERROR_EOF) {
-    //     // flush + trailer
-    //     avio_flush(output_format_context->pb);
-    //     av_write_trailer(output_format_context);
-    //     av_packet_free(&packet);
-    //     // finished = true;
-    //     return 3;
-    //   }
-    //   av_packet_free(&packet);
-    //   return 2;
-    // }
-
+  void process_packet() {
     int ret;
 
     AVStream* in_stream  = input_format_context->streams[packet->stream_index];
     if (packet->stream_index >= number_of_streams
         || streams_list[packet->stream_index] < 0) {
       // not an included stream, drop
-      av_packet_free(&packet);
-      return 1;
+      return;
     }
 
     // If it's a subtitle packet
@@ -506,21 +436,23 @@ public:
         )
       );
       subtitles.push_back(std::move(subtitle_fragment));
-
-      av_packet_free(&packet);
-      return 1;
+      return;
     }
 
     // If it's audio or video, we remux
     AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
-    // If video, accumulate durations
-    if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-      duration += packet->duration * av_q2d(in_stream->time_base);
+    if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+      av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+      if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+        printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
+      }
+      av_packet_unref(packet);
+      av_packet_free(&packet);
+      return;
     }
 
-    bool is_keyframe = (packet->flags & AV_PKT_FLAG_KEY) != 0;
-
+    duration += packet->duration * av_q2d(in_stream->time_base);
     // rescale timestamps
     av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
@@ -528,25 +460,10 @@ public:
     ret = av_interleaved_write_frame(output_format_context, packet);
     if (ret < 0) {
       printf("Error writing frame: %s\n", ffmpegErrStr(ret).c_str());
-      av_packet_free(&packet);
-      return 2;
+      return;
     }
 
-    if (is_keyframe && !is_header) {
-      // We reached the next keyframe => let's return 2 to form a chunk
-      // If we are still in "header" mode (the very first keyframe after init),
-      // then we just switch off that mode and keep reading. 
-      if (is_header) {
-        is_header = false;
-      } else {
-        // we have ended a chunk 
-        av_packet_free(&packet);
-        return 2;
-      }
-    }
-
-    av_packet_free(&packet);
-    return 0;
+    return;
   }
 
   ReadResult read(emscripten::val read_function) {
@@ -560,20 +477,10 @@ public:
     bool finished = false;
 
     while (true) {
-      if (packet != nullptr) {
-        int process_ret = process_packet();
-        if (process_ret == 3) {
-          finished = true;
-          break;
-        }
-        if (process_ret == 2) break;
-        if (process_ret == 1) continue;
-        packet = nullptr;
-      }
-
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
       if (ret < 0) {
+        read_data_function = val::undefined();
         // if ret == AVERROR_EOF, we finalize
         if (ret == AVERROR_EOF) {
           // flush + trailer
@@ -593,30 +500,24 @@ public:
         av_packet_free(&packet);
         continue;
       }
-      AVStream* in_stream  = input_format_context->streams[packet->stream_index];
-      bool is_non_av = in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE;
-      printf("is_non_av %d\n", is_non_av);
 
-      bool is_keyframe = !is_non_av && (packet->flags & AV_PKT_FLAG_KEY) != 0;
-      if (!has_seen_non_keyframe && !is_keyframe) {
-        has_seen_non_keyframe = true;
-      }
-      printf("is_keyframe %d\n", is_keyframe);
-      if (has_seen_non_keyframe && is_keyframe && has_outputed_first_keyframe) {
+      process_packet();
+      av_packet_free(&packet);
+
+      if (wrote) {
+        wrote = false;
         break;
       }
-
-      int process_ret = process_packet();
-      if (process_ret == 3) {
-        finished = true;
-        break;
-      }
-      if (process_ret == 2) break;
-      if (process_ret == 1) continue;
     }
 
     ReadResult result;
-    result.data = write_vector;
+    emscripten::val js_write_vector = emscripten::val(
+      emscripten::typed_memory_view(
+        write_vector.size(),
+        write_vector.data()
+      )
+    );
+    result.data = js_write_vector;
     result.subtitles = subtitles;
     result.finished = finished;
 
@@ -786,19 +687,11 @@ private:
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
     printf("avio_write %d\n", buf_size);
+    self->wrote = true;
 
-    if (self->has_seen_non_keyframe && !self->has_outputed_first_keyframe) {
-      self->has_outputed_first_keyframe = true;
-    }
-
-    emscripten::val uint8_array = emscripten::val(
-      emscripten::typed_memory_view(
-        buf_size,
-        buf
-      )
-    );
-
-    self->write_vector.push_back(uint8_array);
+    std::vector<uint8_t> chunk(buf, buf + buf_size);
+    memcpy(chunk.data(), buf, buf_size);
+    self->write_vector.insert(self->write_vector.end(), chunk.begin(), chunk.end());
 
     return buf_size;
   }

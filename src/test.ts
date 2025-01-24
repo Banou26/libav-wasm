@@ -17,6 +17,8 @@ const BUFFER_SIZE = 2_500_000
 const VIDEO_URL = '../video.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 
+
+
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
   return new Promise((resolve, reject) => {
     const dataView = new DataView(plaintext);
@@ -188,12 +190,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
 
     console.log('appending header', header)
     await appendBuffer(header.data)
-    console.log('appended header')
-
+    
     const res = await remuxer.read()
-    console.log('read', res)
     appendBuffer(res.data)
-
 
     // setInterval(() => {
     //   seconds.textContent = `

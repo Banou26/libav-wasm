@@ -62,7 +62,7 @@ type WASMReadFunction = (offset: number, size: number) => Promise<{
 export interface RemuxerInstance {
   new(options: RemuxerInstanceOptions): RemuxerInstance
   init: (read: WASMReadFunction) => Promise<{
-    data: WASMVector<Uint8Array>
+    data: Uint8Array
     attachments: WASMVector<RemuxerInstanceAttachment>
     subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
     info: {
@@ -85,7 +85,7 @@ export interface RemuxerInstance {
   destroy: () => void
   seek: (read: WASMReadFunction, timestamp: number) => Promise<void>
   read: (read: WASMReadFunction) => Promise<{
-    data: WASMVector<Uint8Array>
+    data: Uint8Array
     subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
     finished: boolean
   }>
@@ -153,18 +153,6 @@ const vectorToArray = <T>(vector: WASMVector<T>) =>
     .fill(undefined)
     .map((_, index) => vector.get(index))
 
-const uint8VectorToUint8Array = (vector: WASMVector<Uint8Array>) => {
-  const arrays = vectorToArray(vector)
-  const length = arrays.reduce((acc, arr) => acc + arr.length, 0)
-  const buffer = new Uint8Array(length)
-  let offset = 0
-  for (const arr of arrays.reverse()) {
-    buffer.set(arr, offset)
-    offset += arr.length
-  }
-  return buffer
-}
-
 const resolvers = {
   makeRemuxer: async (
     { publicPath, length, bufferSize, log, read }:
@@ -178,89 +166,79 @@ const resolvers = {
   ) => {
     const { Remuxer } = await makeModule(publicPath, log)
 
-    let abortController: AbortController | undefined
     const queue = new PQueue({ concurrency: 1 })
     const _remuxer = new Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
     const remuxer = {
-      init: (read) => _remuxer.init(read).then(result => ({
-        data: uint8VectorToUint8Array(result.data).buffer,
-        attachments: vectorToArray(result.attachments).map(attachment => ({
-          filename: attachment.filename,
-          mimetype: attachment.mimetype,
-          data: new Uint8Array(attachment.data).buffer
-        })),
-        subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
-          if (!_subtitle.isHeader) throw new Error('Subtitle type is not header')
-          const { isHeader, data, ...subtitle } = _subtitle
-          return {
-            ...subtitle,
-            type: 'header',
-            content: new TextDecoder().decode(data)
-          }
-        }),
-        info: {
-          input: {
-            audioMimeType: result.info.input.audioMimeType,
-            duration: result.info.input.duration,
-            formatName: result.info.input.formatName,
-            mimeType: result.info.input.mimeType,
-            videoMimeType: result.info.input.videoMimeType
-          },
-          output: {
-            audioMimeType: result.info.output.audioMimeType,
-            duration: result.info.output.duration,
-            formatName: result.info.output.formatName,
-            mimeType: result.info.output.mimeType,
-            videoMimeType: result.info.output.videoMimeType
+      init: (read) => _remuxer.init(read).then(result => {
+        const typedArray = new Uint8Array(result.data.byteLength)
+        typedArray.set(new Uint8Array(result.data))
+        return {
+          data: typedArray.buffer,
+          attachments: vectorToArray(result.attachments).map(attachment => ({
+            filename: attachment.filename,
+            mimetype: attachment.mimetype,
+            data: new Uint8Array(attachment.data).buffer
+          })),
+          subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
+            if (!_subtitle.isHeader) throw new Error('Subtitle type is not header')
+            const { isHeader, data, ...subtitle } = _subtitle
+            return {
+              ...subtitle,
+              type: 'header',
+              content: new TextDecoder().decode(data)
+            }
+          }),
+          info: {
+            input: {
+              audioMimeType: result.info.input.audioMimeType,
+              duration: result.info.input.duration,
+              formatName: result.info.input.formatName,
+              mimeType: result.info.input.mimeType,
+              videoMimeType: result.info.input.videoMimeType
+            },
+            output: {
+              audioMimeType: result.info.output.audioMimeType,
+              duration: result.info.output.duration,
+              formatName: result.info.output.formatName,
+              mimeType: result.info.output.mimeType,
+              videoMimeType: result.info.output.videoMimeType
+            }
           }
         }
-      })),
+      }),
       destroy: () => _remuxer.destroy(),
       seek: (read, timestamp) => _remuxer.seek(read, timestamp),
-      read: (read) => _remuxer.read(read).then(result => ({
-        data: uint8VectorToUint8Array(result.data).buffer,
-        subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
-          if (_subtitle.isHeader) throw new Error('Subtitle type is header')
-          const { isHeader, data, ...subtitle } = _subtitle
-          return {
-            ...subtitle,
-            type: 'dialogue',
-            content: new TextDecoder().decode(data)
-          }
-        }),
-        finished: result.finished
-      }))
+      read: (read) => _remuxer.read(read).then(result => {
+        const typedArray = new Uint8Array(result.data.byteLength)
+        typedArray.set(new Uint8Array(result.data))
+        return {
+          data: typedArray.buffer,
+          subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
+            if (_subtitle.isHeader) throw new Error('Subtitle type is header')
+            const { isHeader, data, ...subtitle } = _subtitle
+            return {
+              ...subtitle,
+              type: 'dialogue',
+              content: new TextDecoder().decode(data)
+            }
+          }),
+          finished: result.finished
+        }
+      })
     } as Remuxer
 
-    const runTask = <T extends any>(func: (abortedPromise: Promise<void>) => Promise<T>) => {
-      if (abortController) abortController.abort()
-      const newAbortController = new AbortController()
-      abortController = newAbortController
-      const abortedPromise = abortControllerToPromise(newAbortController)
-      // queue.clear()
-      return queue.add(() => func(abortedPromise), { signal: abortController.signal })
-    }
-
-    const wasmRead = (abortedPromise: Promise<void>) => (offset: number, size: number) =>
-      Promise.race([
-        read(offset, size)
-          .then(buffer => ({
-            resolved: new Uint8Array(buffer),
-            rejected: false
-          })),
-        abortedPromise
-          .then(() => { throw new Error('This error should never happen') })
-          .catch(() => ({
-            resolved: new Uint8Array(0),
-            rejected: true
-          }))
-      ])
+    const wasmRead = (offset: number, size: number) =>
+      read(offset, size)
+        .then(buffer => ({
+          resolved: new Uint8Array(buffer),
+          rejected: false
+        }))
 
     return {
       destroy: async () => remuxer.destroy(),
-      init: () => runTask((abortedPromise) => remuxer.init(wasmRead(abortedPromise))),
-      seek: (timestamp: number) => runTask((abortedPromise) => remuxer.seek(wasmRead(abortedPromise), timestamp)),
-      read: () => runTask((abortedPromise) => remuxer.read(wasmRead(abortedPromise)))
+      init: () => queue.add(() => remuxer.init(wasmRead)),
+      seek: (timestamp: number) => queue.add(() => remuxer.seek(wasmRead, timestamp)),
+      read: () => queue.add(() => remuxer.read(wasmRead))
     }
   }
 }
