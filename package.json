@@ -35,6 +35,7 @@
   "dependencies": {
     "libav": "file:dist",
     "osra": "^0.1.2",
+    "p-mutex": "^0.1.0",
     "p-queue": "^7.3.0",
     "xstate": "^5.19.2"
   }

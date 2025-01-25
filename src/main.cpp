@@ -434,6 +434,7 @@ public:
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
       if (ret < 0) {
+        printf("CANCELLED? read error | %s \n", av_err2str(ret));
         read_data_function = val::undefined();
         // if ret == AVERROR_EOF, we finalize
         if (ret == AVERROR_EOF) {
@@ -676,6 +677,7 @@ private:
     emscripten::val result = self->read_data_function(to_string(self->input_format_context->pb->pos), buf_size).await();
 
     bool is_rejected = result["rejected"].as<bool>();
+    printf("CANCELLED? read | %s \n", is_rejected ? "true" : "false");
     if (is_rejected) {
       return AVERROR_EXIT;
     }

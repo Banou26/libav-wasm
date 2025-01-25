@@ -3,6 +3,7 @@ import { expose } from 'osra'
 // @ts-ignore
 import WASMModule from 'libav'
 import PQueue from 'p-queue'
+import Mutex from 'p-mutex'
 
 export type RemuxerInstanceSubtitleFragment =
   | {
@@ -143,8 +144,8 @@ const convertTimestamp = (ms: number) =>
     .slice(11, 22)
     .replace(/^00/, '0')
 
-const abortControllerToPromise = (abortController: AbortController) => new Promise<void>((resolve, reject) => {
-  abortController.signal.addEventListener('abort', () => {
+const abortSignalToPromise = (abortSignal: AbortSignal) => new Promise<void>((resolve, reject) => {
+  abortSignal.addEventListener('abort', () => {
     reject()
   })
 })
@@ -172,6 +173,8 @@ const resolvers = {
   ) => {
     const { Remuxer } = await makeModule(publicPath, log)
 
+    let abortControllers: AbortController[] = []
+    const mutex = new Mutex()
     const queue = new PQueue({ concurrency: 1 })
     const _remuxer = new Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
     const remuxer = {
@@ -213,7 +216,7 @@ const resolvers = {
         }
       }),
       destroy: () => _remuxer.destroy(),
-      seek: (read, timestamp) => _remuxer.seek(read, timestamp),
+      seek: (read, timestamp) => console.log('ACTUAL SEEK', timestamp) || _remuxer.seek(read, timestamp),
       read: (read) => _remuxer.read(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)
         typedArray.set(new Uint8Array(result.data))
@@ -236,18 +239,61 @@ const resolvers = {
       })
     } as Remuxer
 
-    const wasmRead = (offset: number, size: number) =>
-      read(offset, size)
-        .then(buffer => ({
-          resolved: new Uint8Array(buffer),
-          rejected: false
-        }))
+    const wasmRead = (abortController: AbortController) => (offset: number, size: number) =>
+      Promise.race([
+        read(offset, size)
+          .then(buffer => ({
+            resolved: new Uint8Array(buffer),
+            rejected: false
+          })),
+        abortSignalToPromise(abortController.signal)
+          .catch(() => {
+            abortControllers = abortControllers.filter(_abortController => _abortController !== abortController)
+            return {
+              resolved: new Uint8Array(0),
+              rejected: true
+            }
+          })
+      ])
 
     return {
       destroy: async () => remuxer.destroy(),
-      init: () => queue.add(() => remuxer.init(wasmRead)),
-      seek: (timestamp: number) => queue.add(() => remuxer.seek(wasmRead, timestamp)),
-      read: () => queue.add(() => remuxer.read(wasmRead))
+      init: () => {
+        console.log('initing')
+        abortControllers.forEach(abortController => abortController.abort())
+        const abortController = new AbortController()
+        const abortSignal = abortController.signal
+        abortControllers.push(abortController)
+        return mutex.withLock(() => {
+          if (abortSignal.aborted) throw new Error('aborted')
+          console.log('init')
+          return remuxer.init(wasmRead(abortController))
+        })
+      },
+      seek: (timestamp: number) => {
+        console.log('seeking', timestamp)
+        abortControllers.forEach(abortController => abortController.abort())
+        const abortController = new AbortController()
+        const abortSignal = abortController.signal
+        abortControllers.push(abortController)
+        return mutex.withLock(() => {
+          if (abortSignal.aborted) throw new Error('aborted')
+          console.log('seek', timestamp)
+          return remuxer.seek(wasmRead(abortController), timestamp)
+        })
+      },
+      read: () => {
+        console.log('reading')
+        abortControllers.forEach(abortController => abortController.abort())
+        const abortController = new AbortController()
+        const abortSignal = abortController.signal
+        abortControllers.push(abortController)
+        return mutex.withLock(() => {
+          if (abortSignal.aborted) throw new Error('aborted')
+          console.log('read')
+          return remuxer.read(wasmRead(abortController))
+        })
+      }
     }
   }
 }

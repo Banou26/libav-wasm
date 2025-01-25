@@ -191,10 +191,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     console.log('appending header', header)
     await appendBuffer(header.data)
     
-    const res = await remuxer.read()
-    console.log('initial read', res)
-    await appendBuffer(res.data)
-
     video.addEventListener('canplay', () => console.log('canplay'))
     video.addEventListener('canplaythrough', () => console.log('canplaythrough'))
 
@@ -206,6 +202,60 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           start: sourceBuffer.buffered.start(index),
           end: sourceBuffer.buffered.end(index)
         }))
+
+        
+    const PREVIOUS_BUFFER_COUNT = 1
+    const NEEDED_TIME_IN_SECONDS = 15
+    let reachedEnd = false
+    let fragments: Awaited<ReturnType<typeof remuxer.read>>[] = []
+
+    const pull = async () => {
+      const { data, subtitles, offset, pts, duration, finished } = await remuxer.read()
+      if (finished) reachedEnd = true
+      fragments = [...fragments, { data, subtitles, offset, pts, duration, finished }]
+      return { data, subtitles, offset, pts, duration, finished }
+    }
+
+    const updateBuffers = queuedDebounceWithLastCall(250, async () => {
+      const { currentTime } = video
+      const currentChunkIndex = fragments.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
+      const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
+
+      const getLastChunkEndTime = () => {
+        const lastChunk = fragments.at(-1)
+        if (!lastChunk) return 0
+        return lastChunk.pts + lastChunk.duration
+      }
+
+      // pull and append buffers up until the needed time
+      while (getLastChunkEndTime() < currentTime + NEEDED_TIME_IN_SECONDS){
+        const chunk = await pull()
+        await appendBuffer(chunk.data)
+      }
+
+      if (sliceIndex) fragments = fragments.slice(sliceIndex)
+
+      const bufferedRanges = getTimeRanges()
+
+      const firstChunk = fragments.at(0)
+      const lastChunk = fragments.at(-1)
+      if (!firstChunk || !lastChunk || firstChunk === lastChunk) return
+      const minTime = firstChunk.pts
+
+      for (const { start, end } of bufferedRanges) {
+        const chunkIndex = fragments.findIndex(({ pts, duration }) => start <= (pts + (duration / 2)) && (pts + (duration / 2)) <= end)
+        if (chunkIndex === -1) {
+          await unbufferRange(start, end)
+        } else {
+          if (start < minTime) {
+            await unbufferRange(
+              start,
+              minTime
+            )
+          }
+        }
+      }
+    })
 
     setInterval(async () => {
       const state =
@@ -224,19 +274,35 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       //   console.log('res', res)
       //   await appendBuffer(res.data)
       // }
-      console.log('ranges', getTimeRanges())
-      const res = await remuxer.read()
-      console.log('res', res)
-      await appendBuffer(res.data)
+      await updateBuffers()
+      // try {
+      //   console.log('ranges', getTimeRanges())
+      //   const res = await pull()
+      //   console.log('res', res)
+      //   await appendBuffer(res.data)
+      // } catch (err: any) {
+      //   if (err.message.includes('aborted')) return
+      //   console.error(err)
+      // }
     }, 1000)
 
     video.addEventListener('seeking', async (ev) => {
-      await remuxer.seek(video.currentTime * 1000)
-      const res = await remuxer.read()
-      console.log('seek res', res)
-      sourceBuffer.timestampOffset = res.pts
-      await appendBuffer(res.data)
+      try {
+        await remuxer.seek(video.currentTime * 1000)
+        const res = await pull()
+        console.log('seek res', res)
+        sourceBuffer.timestampOffset = res.pts
+        await appendBuffer(res.data)
+      } catch (err: any) {
+        if (err.message.includes('aborted')) return
+        console.error(err)
+      }
     })
+
+    const res = await pull()
+    console.log('initial read', res)
+    await appendBuffer(res.data)
+
 
     // const headerChunk = await remuxer.init()
 
