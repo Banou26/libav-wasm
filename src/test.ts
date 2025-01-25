@@ -198,6 +198,15 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     video.addEventListener('canplay', () => console.log('canplay'))
     video.addEventListener('canplaythrough', () => console.log('canplaythrough'))
 
+    const getTimeRanges = () =>
+      Array(sourceBuffer.buffered.length)
+        .fill(undefined)
+        .map((_, index) => ({
+          index,
+          start: sourceBuffer.buffered.start(index),
+          end: sourceBuffer.buffered.end(index)
+        }))
+
     setInterval(async () => {
       const state =
         video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
@@ -210,17 +219,22 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
         : undefined as never
       seconds.textContent = `${video.currentTime.toString()} ${state}`
-      if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
-        const res = await remuxer.read()
-        console.log('res', res)
-        await appendBuffer(res.data)
-      }
-    }, 100)
+      // if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+      //   const res = await remuxer.read()
+      //   console.log('res', res)
+      //   await appendBuffer(res.data)
+      // }
+      console.log('ranges', getTimeRanges())
+      const res = await remuxer.read()
+      console.log('res', res)
+      await appendBuffer(res.data)
+    }, 1000)
 
     video.addEventListener('seeking', async (ev) => {
-      await remuxer.seek(video.currentTime)
+      await remuxer.seek(video.currentTime * 1000)
       const res = await remuxer.read()
       console.log('seek res', res)
+      sourceBuffer.timestampOffset = res.pts
       await appendBuffer(res.data)
     })
 

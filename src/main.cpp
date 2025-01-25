@@ -67,6 +67,14 @@ typedef struct ReadResult {
   bool finished;
 } ReadResult;
 
+// typedef struct SeekResult {
+//   emscripten::val data;
+//   std::vector<SubtitleFragment> subtitles;
+//   long offset;
+//   double pts;
+//   double duration;
+// }
+
 class Remuxer {
 public:
   AVIOContext* input_avio_context = nullptr;
@@ -535,13 +543,13 @@ public:
     return result;
   }
 
-  int seek(emscripten::val read_function, int timestamp) {
+  void seek(emscripten::val read_function, int timestamp) {
     resolved_promise.await();
 
     read_data_function = read_function;
 
     if (output_format_context) {
-      av_write_trailer(output_format_context);
+      // av_write_trailer(output_format_context);
       if (streams_list) {
         av_freep(&streams_list);
         streams_list = nullptr;
@@ -555,6 +563,10 @@ public:
       output_format_context = nullptr;
     }
 
+    write_vector.clear();
+    attachments.clear();
+    subtitles.clear();
+
     prev_duration = 0;
     prev_pts = 0;
     prev_pos = 0;
@@ -565,7 +577,7 @@ public:
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
       printf("ERROR: av_seek_frame: %s\n", ffmpegErrStr(ret).c_str());
-      return 1;
+      return;
     }
 
     output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
@@ -587,7 +599,7 @@ public:
 
     if (!streams_list) {
       printf("ERROR: could not allocate stream_list\n");
-      return 1;
+      return;
     }
 
     int out_index = 0;
@@ -599,12 +611,12 @@ public:
         AVStream* out_stream = avformat_new_stream(output_format_context, NULL);
         if (!out_stream) {
           printf("ERROR: could not allocate out stream\n");
-          return 1;
+          return;
         }
         int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
         if (cpRet < 0) {
           printf("ERROR: copy codec params %s\n", ffmpegErrStr(cpRet).c_str());
-          return 1;
+          return;
         }
         streams_list[i] = out_index++;
       } else {
@@ -614,15 +626,17 @@ public:
 
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "c", "copy", 0);
+    av_dict_set(&opts, "strict", "experimental", 0);
     av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
     ret = avformat_write_header(output_format_context, &opts);
     if (ret < 0) {
       printf("ERROR: writing header after seek: %s\n", ffmpegErrStr(ret).c_str());
-      return 1;
+      return;
     }
 
     read_data_function = val::undefined();
-    return 0;
+    wrote = false;
+    return;
   }
 
   //-----------------------------------------
