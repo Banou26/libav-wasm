@@ -87,6 +87,9 @@ export interface RemuxerInstance {
   read: (read: WASMReadFunction) => Promise<{
     data: Uint8Array
     subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
+    offset: number
+    pts: number
+    duration: number
     finished: boolean
   }>
 }
@@ -119,6 +122,9 @@ export type Remuxer = {
   read: (read: WASMReadFunction) => Promise<{
     data: ArrayBuffer
     subtitles: SubtitleFragment[]
+    offset: number
+    pts: number
+    duration: number
     finished: boolean
   }>
 }
@@ -222,6 +228,9 @@ const resolvers = {
               content: new TextDecoder().decode(data)
             }
           }),
+          offset: result.offset,
+          pts: result.pts,
+          duration: result.duration,
           finished: result.finished
         }
       })

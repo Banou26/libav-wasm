@@ -192,26 +192,37 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await appendBuffer(header.data)
     
     const res = await remuxer.read()
-    appendBuffer(res.data)
+    console.log('initial read', res)
+    await appendBuffer(res.data)
 
-    // setInterval(() => {
-    //   seconds.textContent = `
-    //   ${video.currentTime.toString()}
-    //   ${
-    //     video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
-    //     : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
-    //     : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
-    //     : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
-    //     : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
-    //     : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
-    //     : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
-    //     : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
-    //     : undefined as never
-    //   }
-    //   `
-    // }, 100)
+    video.addEventListener('canplay', () => console.log('canplay'))
+    video.addEventListener('canplaythrough', () => console.log('canplaythrough'))
 
+    setInterval(async () => {
+      const state =
+        video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
+        : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
+        : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
+        : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
+        : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
+        : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
+        : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
+        : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
+        : undefined as never
+      seconds.textContent = `${video.currentTime.toString()} ${state}`
+      if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+        const res = await remuxer.read()
+        console.log('res', res)
+        await appendBuffer(res.data)
+      }
+    }, 100)
 
+    video.addEventListener('seeking', async (ev) => {
+      await remuxer.seek(video.currentTime)
+      const res = await remuxer.read()
+      console.log('seek res', res)
+      await appendBuffer(res.data)
+    })
 
     // const headerChunk = await remuxer.init()
 

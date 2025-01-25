@@ -61,6 +61,9 @@ typedef struct InitResult {
 typedef struct ReadResult {
   emscripten::val data;
   std::vector<SubtitleFragment> subtitles;
+  long offset;
+  double pts;
+  double duration;
   bool finished;
 } ReadResult;
 
@@ -82,8 +85,6 @@ public:
   int* streams_list = nullptr;
 
   // For partial segments
-  bool is_header = true;  // first keyframe triggers segment start
-  bool first_frame = true;
   double prev_duration = 0;
   double prev_pts = 0;
   long   prev_pos = 0;
@@ -411,61 +412,6 @@ public:
     return result;
   }
 
-  void process_packet() {
-    int ret;
-
-    AVStream* in_stream  = input_format_context->streams[packet->stream_index];
-    if (packet->stream_index >= number_of_streams
-        || streams_list[packet->stream_index] < 0) {
-      // not an included stream, drop
-      return;
-    }
-
-    // If it's a subtitle packet
-    if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-      SubtitleFragment subtitle_fragment;
-      subtitle_fragment.streamIndex = packet->stream_index;
-      subtitle_fragment.isHeader = false;
-      subtitle_fragment.start = packet->pts;
-      subtitle_fragment.end   = subtitle_fragment.start + packet->duration;
-      // The actual subtitle data
-      subtitle_fragment.data = emscripten::val(
-        emscripten::typed_memory_view(
-          packet->size,
-          packet->data
-        )
-      );
-      subtitles.push_back(std::move(subtitle_fragment));
-      return;
-    }
-
-    // If it's audio or video, we remux
-    AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
-
-    if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-      av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-      if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-        printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
-      }
-      av_packet_unref(packet);
-      av_packet_free(&packet);
-      return;
-    }
-
-    duration += packet->duration * av_q2d(in_stream->time_base);
-    // rescale timestamps
-    av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-
-    // Write to output
-    ret = av_interleaved_write_frame(output_format_context, packet);
-    if (ret < 0) {
-      printf("Error writing frame: %s\n", ffmpegErrStr(ret).c_str());
-      return;
-    }
-
-    return;
-  }
-
   ReadResult read(emscripten::val read_function) {
     resolved_promise.await();
 
@@ -501,7 +447,68 @@ public:
         continue;
       }
 
-      process_packet();
+      AVStream* in_stream  = input_format_context->streams[packet->stream_index];
+      if (packet->stream_index >= number_of_streams
+          || streams_list[packet->stream_index] < 0) {
+        // not an included stream, drop
+        continue;
+      }
+
+      // If it's a subtitle packet
+      if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        SubtitleFragment subtitle_fragment;
+        subtitle_fragment.streamIndex = packet->stream_index;
+        subtitle_fragment.isHeader = false;
+        subtitle_fragment.start = packet->pts;
+        subtitle_fragment.end   = subtitle_fragment.start + packet->duration;
+        // The actual subtitle data
+        subtitle_fragment.data = emscripten::val(
+          emscripten::typed_memory_view(
+            packet->size,
+            packet->data
+          )
+        );
+        subtitles.push_back(std::move(subtitle_fragment));
+        continue;
+      }
+
+      // If it's audio or video, we remux
+      AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
+
+      if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+        if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+          printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
+        }
+        av_packet_unref(packet);
+        av_packet_free(&packet);
+        continue;
+      }
+
+      bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
+
+      duration += packet->duration * av_q2d(in_stream->time_base);
+      // rescale timestamps
+      av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+
+      if (is_keyframe) {
+        prev_duration = duration;
+        prev_pts = pts;
+        prev_pos = pos;
+
+        duration = 0;
+
+        pts = packet->pts * av_q2d(out_stream->time_base);
+        pos = packet->pos;
+      }
+
+      // Write to output
+      ret = av_interleaved_write_frame(output_format_context, packet);
+      if (ret < 0) {
+        printf("Error writing frame: %s\n", ffmpegErrStr(ret).c_str());
+        break;
+      }
+
       av_packet_free(&packet);
 
       if (wrote) {
@@ -519,13 +526,20 @@ public:
     );
     result.data = js_write_vector;
     result.subtitles = subtitles;
+    result.offset = prev_pos;
+    result.pts = prev_pts;
+    result.duration = prev_duration;
     result.finished = finished;
 
     read_data_function = val::undefined();
     return result;
   }
 
-  int seek(int timestamp) {
+  int seek(emscripten::val read_function, int timestamp) {
+    resolved_promise.await();
+
+    read_data_function = read_function;
+
     if (output_format_context) {
       av_write_trailer(output_format_context);
       if (streams_list) {
@@ -547,7 +561,6 @@ public:
     duration = 0;
     pts = 0;
     pos = 0;
-    is_header = true;
 
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
@@ -608,6 +621,7 @@ public:
       return 1;
     }
 
+    read_data_function = val::undefined();
     return 0;
   }
 
@@ -686,9 +700,7 @@ private:
   static int avio_write(void* opaque, uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
-    printf("avio_write %d\n", buf_size);
     self->wrote = true;
-
     std::vector<uint8_t> chunk(buf, buf + buf_size);
     memcpy(chunk.data(), buf, buf_size);
     self->write_vector.insert(self->write_vector.end(), chunk.begin(), chunk.end());
@@ -737,6 +749,9 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
   emscripten::value_object<ReadResult>("ReadResult")
     .field("data",      &ReadResult::data)
     .field("subtitles", &ReadResult::subtitles)
+    .field("offset",    &ReadResult::offset)
+    .field("pts",       &ReadResult::pts)
+    .field("duration",  &ReadResult::duration)
     .field("finished",  &ReadResult::finished);
 
   emscripten::class_<Remuxer>("Remuxer")
