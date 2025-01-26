@@ -64,6 +64,7 @@ typedef struct ReadResult {
   long offset;
   double pts;
   double duration;
+  bool cancelled;
   bool finished;
 } ReadResult;
 
@@ -225,15 +226,7 @@ public:
     return mime_type;
   }
 
-  InitResult init(emscripten::val read_function) {
-    read_data_function = read_function;
-
-    write_vector.clear();
-    attachments.clear();
-    subtitles.clear();
-    video_mime_type.clear();
-    audio_mime_type.clear();
-
+  void init_input() {
     input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     input_avio_context = avio_alloc_context(
       input_avio_buffer,
@@ -253,27 +246,57 @@ public:
         "Could not open input: " + ffmpegErrStr(ret)
       );
     }
+  }
 
-    ret = avformat_find_stream_info(input_format_context, nullptr);
-    if (ret < 0) {
-      throw std::runtime_error(
-        "Could not find stream info: " + ffmpegErrStr(ret)
-      );
+  void destroy_input() {
+    if (input_avio_context) {
+      av_free(input_avio_context->buffer);
+      input_avio_context->buffer = nullptr;
+      avio_context_free(&input_avio_context);
+      input_avio_context = nullptr;
     }
+    if (input_format_context) {
+      avformat_close_input(&input_format_context);
+      input_format_context = nullptr;
+    }
+  }
 
+  void init_output() {
     output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     output_avio_context = avio_alloc_context(
       output_avio_buffer,
       buffer_size,
-      1,                     // writing
+      1,
       this,
-      nullptr,               // no read
+      nullptr,
       &Remuxer::avio_write,
       nullptr
     );
 
     avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
     output_format_context->pb = output_avio_context;
+  }
+
+  void destroy_output() {
+    if (output_avio_context) {
+      av_free(output_avio_context->buffer);
+      output_avio_context->buffer = nullptr;
+      avio_context_free(&output_avio_context);
+      output_avio_context = nullptr;
+    }
+    if (output_format_context) {
+      avformat_free_context(output_format_context);
+      output_format_context = nullptr;
+    }
+  }
+
+  void init_streams(bool skip = false) {
+    int ret = avformat_find_stream_info(input_format_context, nullptr);
+    if (ret < 0) {
+      throw std::runtime_error(
+        "Could not find stream info: " + ffmpegErrStr(ret)
+      );
+    }
 
     number_of_streams = input_format_context->nb_streams;
     streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
@@ -289,24 +312,27 @@ public:
 
       // We handle attachments separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-        // Extract the attachment info
-        Attachment attachment;
-        AVDictionaryEntry* filename = av_dict_get(in_stream->metadata, "filename", NULL, 0);
-        if (filename) attachment.filename = filename->value;
-        AVDictionaryEntry* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, 0);
-        if (mimetype) attachment.mimetype = mimetype->value;
 
-        std::string attachment_data;
-        attachment_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+        if (!skip) {
+          // Extract the attachment info
+          Attachment attachment;
+          AVDictionaryEntry* filename = av_dict_get(in_stream->metadata, "filename", NULL, 0);
+          if (filename) attachment.filename = filename->value;
+          AVDictionaryEntry* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, 0);
+          if (mimetype) attachment.mimetype = mimetype->value;
 
-        // The actual attachment bytes are in extradata
-        attachment.data = emscripten::val(
-          emscripten::typed_memory_view(
-            attachment_data.size(),
-            attachment_data.data()
-          )
-        );
-        attachments.push_back(attachment);
+          std::string attachment_data;
+          attachment_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+
+          // The actual attachment bytes are in extradata
+          attachment.data = emscripten::val(
+            emscripten::typed_memory_view(
+              attachment_data.size(),
+              attachment_data.data()
+            )
+          );
+          attachments.push_back(attachment);
+        }
 
         streams_list[i] = -1;
         continue;
@@ -314,29 +340,31 @@ public:
 
       // We handle subtitles separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        // It's a subtitle header
-        SubtitleFragment subtitle_fragment;
-        subtitle_fragment.streamIndex = i;
-        subtitle_fragment.isHeader = true;
-        subtitle_fragment.start = 0;
-        subtitle_fragment.end = 0;
-        // Try reading some metadata
-        AVDictionaryEntry* lang = av_dict_get(in_stream->metadata, "language", NULL, 0);
-        if (lang) subtitle_fragment.language = lang->value;
-        AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
-        if (title) subtitle_fragment.title = title->value;
-        // The extradata is the "header"
+        if (!skip) {
+          // It's a subtitle header
+          SubtitleFragment subtitle_fragment;
+          subtitle_fragment.streamIndex = i;
+          subtitle_fragment.isHeader = true;
+          subtitle_fragment.start = 0;
+          subtitle_fragment.end = 0;
+          // Try reading some metadata
+          AVDictionaryEntry* lang = av_dict_get(in_stream->metadata, "language", NULL, 0);
+          if (lang) subtitle_fragment.language = lang->value;
+          AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
+          if (title) subtitle_fragment.title = title->value;
+          // The extradata is the "header"
 
-        std::string subtitle_data;
-        subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+          std::string subtitle_data;
+          subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
 
-        subtitle_fragment.data = emscripten::val(
-          emscripten::typed_memory_view(
-            subtitle_data.size(),
-            subtitle_data.data()
-          )
-        );
-        subtitles.push_back(subtitle_fragment);
+          subtitle_fragment.data = emscripten::val(
+            emscripten::typed_memory_view(
+              subtitle_data.size(),
+              subtitle_data.data()
+            )
+          );
+          subtitles.push_back(subtitle_fragment);
+        }
 
         // Mark not to be remuxed in the output container (mp4)
         streams_list[i] = -1;
@@ -371,7 +399,16 @@ public:
       }
       streams_list[i] = out_index++;
     }
+  }
 
+  void destroy_streams() {
+    if (streams_list) {
+      av_freep(&streams_list);
+      streams_list = nullptr;
+    }
+  }
+
+  void write_header() {
     // Step E: set fragmentation flags
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "strict", "experimental", 0);
@@ -379,12 +416,37 @@ public:
     av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
 
     // Step F: write the MP4 header (this triggers avio_write => data -> data)
-    ret = avformat_write_header(output_format_context, &opts);
+    int ret = avformat_write_header(output_format_context, &opts);
     if (ret < 0) {
       throw std::runtime_error(
         "Could not write header: " + ffmpegErrStr(ret)
       );
     }
+  }
+
+  void reset_fragment() {
+    prev_duration = 0;
+    prev_pts = 0;
+    prev_pos = 0;
+    duration = 0;
+    pts = 0;
+    pos = 0;
+  }
+
+  InitResult init(emscripten::val read_function) {
+    read_data_function = read_function;
+
+    reset_fragment();
+    write_vector.clear();
+    attachments.clear();
+    subtitles.clear();
+    video_mime_type.clear();
+    audio_mime_type.clear();
+
+    init_input();
+    init_output();
+    init_streams();
+    write_header();
 
     // Build IOInfo
     IOInfo infoObj;
@@ -433,9 +495,38 @@ public:
     while (true) {
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
+      // printf("READ FRAME read error | %s \n", av_err2str(ret));
       if (ret < 0) {
-        printf("CANCELLED? read error | %s \n", av_err2str(ret));
-        read_data_function = val::undefined();
+        printf("READ CANCELLED? read error | %s \n", av_err2str(ret));
+        // read_data_function = val::undefined();
+        if (ret == AVERROR_EXIT) {
+          destroy_streams();
+          destroy_input();
+          destroy_output();
+
+          av_packet_free(&packet);
+          read_data_function = read_function;
+
+          reset_fragment();
+          write_vector.clear();
+          attachments.clear();
+          subtitles.clear();
+          video_mime_type.clear();
+          audio_mime_type.clear();
+
+          init_input();
+          init_output();
+          init_streams(true);
+          write_header();
+          write_vector.clear();
+          subtitles.clear();
+          wrote = false;
+
+          ReadResult cancelled_result;
+          cancelled_result.cancelled = true;
+          read_data_function = val::undefined();
+          return cancelled_result;
+        }
         // if ret == AVERROR_EOF, we finalize
         if (ret == AVERROR_EOF) {
           // flush + trailer
@@ -538,6 +629,7 @@ public:
     result.offset = prev_pos;
     result.pts = prev_pts;
     result.duration = prev_duration;
+    result.cancelled = false;
     result.finished = finished;
 
     read_data_function = val::undefined();
@@ -545,6 +637,7 @@ public:
   }
 
   void seek(emscripten::val read_function, int timestamp) {
+    printf("SEEKING\n");
     resolved_promise.await();
 
     read_data_function = read_function;
@@ -575,11 +668,13 @@ public:
     pts = 0;
     pos = 0;
 
+    printf("SEEKING av_seek_frame\n");
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
       printf("ERROR: av_seek_frame: %s\n", ffmpegErrStr(ret).c_str());
       return;
     }
+    printf("SEEKING av_seek_frame DONE\n");
 
     output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     output_avio_context = avio_alloc_context(
@@ -592,16 +687,19 @@ public:
       nullptr
     );
 
+    printf("SEEKING 1\n");
     avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
     output_format_context->pb = output_avio_context;
 
     number_of_streams = input_format_context->nb_streams;
     streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
+    printf("SEEKING 2\n");
 
     if (!streams_list) {
       printf("ERROR: could not allocate stream_list\n");
       return;
     }
+    printf("SEEKING 3\n");
 
     int out_index = 0;
     for (int i = 0; i < number_of_streams; i++) {
@@ -624,19 +722,23 @@ public:
         streams_list[i] = -1;
       }
     }
+    printf("SEEKING 4\n");
 
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "c", "copy", 0);
     av_dict_set(&opts, "strict", "experimental", 0);
     av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
     ret = avformat_write_header(output_format_context, &opts);
+    printf("SEEKING 5\n");
     if (ret < 0) {
       printf("ERROR: writing header after seek: %s\n", ffmpegErrStr(ret).c_str());
       return;
     }
+    printf("SEEKING 6\n");
 
     read_data_function = val::undefined();
     wrote = false;
+    printf("SEEKING 7\n");
     return;
   }
 
@@ -644,30 +746,9 @@ public:
   // Cleanup everything
   //-----------------------------------------
   void destroy() {
-    if (streams_list) {
-      av_freep(&streams_list);
-      streams_list = nullptr;
-    }
-    if (input_avio_context) {
-      av_free(input_avio_context->buffer);
-      input_avio_context->buffer = nullptr;
-      avio_context_free(&input_avio_context);
-      input_avio_context = nullptr;
-    }
-    if (input_format_context) {
-      avformat_close_input(&input_format_context);
-      input_format_context = nullptr;
-    }
-    if (output_avio_context) {
-      av_free(output_avio_context->buffer);
-      output_avio_context->buffer = nullptr;
-      avio_context_free(&output_avio_context);
-      output_avio_context = nullptr;
-    }
-    if (output_format_context) {
-      avformat_free_context(output_format_context);
-      output_format_context = nullptr;
-    }
+    destroy_streams();
+    destroy_input();
+    destroy_output();
   }
 
 private:
@@ -677,7 +758,7 @@ private:
     emscripten::val result = self->read_data_function(to_string(self->input_format_context->pb->pos), buf_size).await();
 
     bool is_rejected = result["rejected"].as<bool>();
-    printf("CANCELLED? read | %s \n", is_rejected ? "true" : "false");
+    printf("AVIO_READ CANCELLED? read | %s \n", is_rejected ? "true" : "false");
     if (is_rejected) {
       return AVERROR_EXIT;
     }
@@ -768,6 +849,7 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("offset",    &ReadResult::offset)
     .field("pts",       &ReadResult::pts)
     .field("duration",  &ReadResult::duration)
+    .field("cancelled", &ReadResult::cancelled)
     .field("finished",  &ReadResult::finished);
 
   emscripten::class_<Remuxer>("Remuxer")
