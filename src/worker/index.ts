@@ -136,8 +136,10 @@ export type Remuxer = {
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
-    print: (text: string) => log(false, text),
-    printErr: (text: string) => log(true, text),
+    print: (text: string) => console.log(text),
+    printErr: (text: string) => console.error(text),
+    // print: (text: string) => log(false, text),
+    // printErr: (text: string) => log(true, text),
   }) as Promise<{ Remuxer: RemuxerInstance }>
 
 // converts ms to 'h:mm:ss.cc' format
@@ -261,10 +263,10 @@ const resolvers = {
       if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0), rejected: true })
       return Promise.race([
         read(offset, size)
-          .then(buffer => ({
-            resolved: new Uint8Array(buffer),
-            rejected: false
-          })),
+          .then(
+            buffer => ({ resolved: new Uint8Array(buffer), rejected: false }),
+            () => ({ resolved: new Uint8Array(0), rejected: true })
+          ),
         abortSignalToPromise(abortController.signal)
           .then(
             () => ({ resolved: new Uint8Array(0), rejected: true }),
@@ -273,31 +275,38 @@ const resolvers = {
       ])
     }
 
-    // (async () => {
-    //   const _read = (cancel: boolean = false) => async (offset: number, size: number) =>
-    //     cancel
-    //       ? ({ resolved: new Uint8Array(0), rejected: true })
-    //       : ({ resolved: new Uint8Array(await read(offset, size)), rejected: false })
-    //   const header = await remuxer.init(_read())
-    //   console.log('header', header)
-    //   const firstChunk = await remuxer.read(_read())
-    //   console.log('first chunk', firstChunk)
-    //   let readCount = 0
-    //   const cancelledChunk = await remuxer.read(async (offset, size) => {
-    //     console.log('READ ON CANCEL')
-    //     const cancelOnReads = [0, 1, 2]
-    //     const result = await _read(cancelOnReads.includes(readCount))(offset, size)
-    //     readCount++
-    //     return result
-    //   }).catch((err) => { console.error(err) })
-    //   console.log('cancelledChunk', cancelledChunk)
-    //   // await remuxer.destroy()
-    //   // await remuxer.init(_read())
-    //   await remuxer.seek(_read(), 30)
-    //   // console.log('seeked')
-    //   const chunkAfterSeek = await remuxer.read(_read())
-    //   console.log('chunkAfterSeek', chunkAfterSeek)
-    // })();
+    (async () => {
+      const _read = (cancel: boolean = false) => async (offset: number, size: number) =>
+        cancel
+          ? ({ resolved: new Uint8Array(0), rejected: true })
+          : ({ resolved: new Uint8Array(await read(offset, size)), rejected: false })
+      const header = await remuxer.init(_read())
+      console.log('header', header)
+      const firstChunk = await remuxer.read(_read())
+      console.log('first chunk', firstChunk)
+      let readCount = 0
+      const cancelledChunk = await remuxer.read(async (offset, size) => {
+        console.log('READ ON CANCEL')
+        const cancelOnReads = [0, 1, 2]
+        const result = await _read(cancelOnReads.includes(readCount))(offset, size)
+        readCount++
+        return result
+      }).catch((err) => { console.error(err) })
+      console.log('cancelledChunk', cancelledChunk)
+      // await remuxer.destroy()
+      // await remuxer.init(_read())
+      console.log('SEEKING')
+      // await remuxer.seek(_read(), 30)
+      // console.log('seeked')
+
+      await remuxer.seek(async (offset, size) => {
+        console.log('SEEK ON CANCEL')
+        return _read(true)(offset, size)
+      }, 30).catch((err) => { console.error(err) })
+
+      const chunkAfterSeek = await remuxer.read(_read())
+      console.log('chunkAfterSeek', chunkAfterSeek)
+    })();
 
     return {
       destroy: async () => remuxer.destroy(),

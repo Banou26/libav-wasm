@@ -105,6 +105,10 @@ public:
   std::string video_mime_type;
   std::string audio_mime_type;
 
+  bool initializing = false;
+  bool first_initialization_done = false;
+  int init_buffer_count = 0;
+  std::vector<std::string> init_vector;
   std::vector<uint8_t> write_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
@@ -291,6 +295,36 @@ public:
   }
 
   void init_streams(bool skip = false) {
+    if (skip) {
+      int ret = avformat_find_stream_info(input_format_context, nullptr);
+      if (ret < 0) {
+        throw std::runtime_error(
+          "Could not find stream info: " + ffmpegErrStr(ret)
+        );
+      }
+      for (int i = 0; i < number_of_streams; i++) {
+        AVStream* in_stream = input_format_context->streams[i];
+        AVCodecParameters* in_codecpar = in_stream->codecpar;
+        if (!(
+          in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
+          in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
+        )) {
+          continue;
+        }
+        AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
+        if (!out_stream) {
+          throw std::runtime_error("Could not allocate an output stream");
+        }
+        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+        if (cpRet < 0) {
+          throw std::runtime_error(
+            "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
+          );
+        }
+      }
+      return;
+    }
+
     int ret = avformat_find_stream_info(input_format_context, nullptr);
     if (ret < 0) {
       throw std::runtime_error(
@@ -312,60 +346,53 @@ public:
 
       // We handle attachments separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+        // Extract the attachment info
+        Attachment attachment;
+        AVDictionaryEntry* filename = av_dict_get(in_stream->metadata, "filename", NULL, 0);
+        if (filename) attachment.filename = filename->value;
+        AVDictionaryEntry* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, 0);
+        if (mimetype) attachment.mimetype = mimetype->value;
 
-        if (!skip) {
-          // Extract the attachment info
-          Attachment attachment;
-          AVDictionaryEntry* filename = av_dict_get(in_stream->metadata, "filename", NULL, 0);
-          if (filename) attachment.filename = filename->value;
-          AVDictionaryEntry* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, 0);
-          if (mimetype) attachment.mimetype = mimetype->value;
+        std::string attachment_data;
+        attachment_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
 
-          std::string attachment_data;
-          attachment_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
-
-          // The actual attachment bytes are in extradata
-          attachment.data = emscripten::val(
-            emscripten::typed_memory_view(
-              attachment_data.size(),
-              attachment_data.data()
-            )
-          );
-          attachments.push_back(attachment);
-        }
-
+        // The actual attachment bytes are in extradata
+        attachment.data = emscripten::val(
+          emscripten::typed_memory_view(
+            attachment_data.size(),
+            attachment_data.data()
+          )
+        );
+        attachments.push_back(attachment);
         streams_list[i] = -1;
         continue;
       }
 
       // We handle subtitles separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        if (!skip) {
-          // It's a subtitle header
-          SubtitleFragment subtitle_fragment;
-          subtitle_fragment.streamIndex = i;
-          subtitle_fragment.isHeader = true;
-          subtitle_fragment.start = 0;
-          subtitle_fragment.end = 0;
-          // Try reading some metadata
-          AVDictionaryEntry* lang = av_dict_get(in_stream->metadata, "language", NULL, 0);
-          if (lang) subtitle_fragment.language = lang->value;
-          AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
-          if (title) subtitle_fragment.title = title->value;
-          // The extradata is the "header"
+        // It's a subtitle header
+        SubtitleFragment subtitle_fragment;
+        subtitle_fragment.streamIndex = i;
+        subtitle_fragment.isHeader = true;
+        subtitle_fragment.start = 0;
+        subtitle_fragment.end = 0;
+        // Try reading some metadata
+        AVDictionaryEntry* lang = av_dict_get(in_stream->metadata, "language", NULL, 0);
+        if (lang) subtitle_fragment.language = lang->value;
+        AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
+        if (title) subtitle_fragment.title = title->value;
+        // The extradata is the "header"
 
-          std::string subtitle_data;
-          subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+        std::string subtitle_data;
+        subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
 
-          subtitle_fragment.data = emscripten::val(
-            emscripten::typed_memory_view(
-              subtitle_data.size(),
-              subtitle_data.data()
-            )
-          );
-          subtitles.push_back(subtitle_fragment);
-        }
-
+        subtitle_fragment.data = emscripten::val(
+          emscripten::typed_memory_view(
+            subtitle_data.size(),
+            subtitle_data.data()
+          )
+        );
+        subtitles.push_back(subtitle_fragment);
         // Mark not to be remuxed in the output container (mp4)
         streams_list[i] = -1;
         continue;
@@ -434,6 +461,7 @@ public:
   }
 
   InitResult init(emscripten::val read_function) {
+    printf("remuxer.INIT \n");
     read_data_function = read_function;
 
     reset_fragment();
@@ -443,10 +471,14 @@ public:
     video_mime_type.clear();
     audio_mime_type.clear();
 
+
+    initializing = true;
     init_input();
     init_output();
     init_streams();
     write_header();
+    initializing = false;
+    first_initialization_done = true;
 
     // Build IOInfo
     IOInfo infoObj;
@@ -483,6 +515,7 @@ public:
   }
 
   ReadResult read(emscripten::val read_function) {
+    printf("remuxer.READ \n");
     resolved_promise.await();
 
     read_data_function = read_function;
@@ -500,7 +533,7 @@ public:
         printf("READ CANCELLED? read error | %s \n", av_err2str(ret));
         // read_data_function = val::undefined();
         if (ret == AVERROR_EXIT) {
-          destroy_streams();
+          // destroy_streams();
           destroy_input();
           destroy_output();
 
@@ -514,10 +547,12 @@ public:
           video_mime_type.clear();
           audio_mime_type.clear();
 
+          initializing = true;
           init_input();
           init_output();
           init_streams(true);
           write_header();
+          initializing = false;
           write_vector.clear();
           subtitles.clear();
           wrote = false;
@@ -637,7 +672,7 @@ public:
   }
 
   void seek(emscripten::val read_function, int timestamp) {
-    printf("SEEKING\n");
+    printf("remuxer.SEEK \n");
     resolved_promise.await();
 
     read_data_function = read_function;
@@ -754,6 +789,18 @@ public:
 private:
   static int avio_read(void* opaque, uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
+
+    if (self->initializing && self->first_initialization_done) {
+      printf("avio_read INITIALIZING READ INIT VECTOR %d \n", self->init_buffer_count);
+      std::string buffer = self->init_vector[self->init_buffer_count];
+      memcpy(buf, (uint8_t*)buffer.c_str(), buf_size);
+      self->init_buffer_count++;
+      if (self->init_buffer_count >= self->init_vector.size()) {
+        self->init_buffer_count = 0;
+      }
+      return buf_size;
+    }
+
     std::string buffer;
     emscripten::val result = self->read_data_function(to_string(self->input_format_context->pb->pos), buf_size).await();
 
@@ -767,6 +814,11 @@ private:
     int buffer_size = buffer.size();
     if (buffer_size == 0) {
       return AVERROR_EOF;
+    }
+
+    if (self->initializing && !self->first_initialization_done) {
+      self->init_vector.push_back(buffer);
+      printf("avio_read INITIALIZING SET INIT VECTOR %d \n", self->init_vector.size());
     }
 
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
