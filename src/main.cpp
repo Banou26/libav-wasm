@@ -230,7 +230,7 @@ public:
     return mime_type;
   }
 
-  void init_input() {
+  void init_input(bool skip = false) {
     input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     input_avio_context = avio_alloc_context(
       input_avio_buffer,
@@ -244,11 +244,24 @@ public:
     input_format_context = avformat_alloc_context();
     input_format_context->pb = input_avio_context;
 
-    int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
-    if (ret < 0) {
-      throw std::runtime_error(
-        "Could not open input: " + ffmpegErrStr(ret)
-      );
+    if (skip) {
+      // AVDictionary* opts = nullptr;
+      // av_dict_set(&opts, "analyzeduration", "0", 0);
+      // av_dict_set(&opts, "probesize", "2048", 0);
+      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
+      int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+      if (ret < 0) {
+        throw std::runtime_error(
+          "Could not open input: " + ffmpegErrStr(ret)
+        );
+      }
+    } else {
+      int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+      if (ret < 0) {
+        throw std::runtime_error(
+          "Could not open input: " + ffmpegErrStr(ret)
+        );
+      }
     }
   }
 
@@ -471,7 +484,6 @@ public:
     video_mime_type.clear();
     audio_mime_type.clear();
 
-
     initializing = true;
     init_input();
     init_output();
@@ -533,30 +545,6 @@ public:
         printf("READ CANCELLED? read error | %s \n", av_err2str(ret));
         // read_data_function = val::undefined();
         if (ret == AVERROR_EXIT) {
-          // destroy_streams();
-          destroy_input();
-          destroy_output();
-
-          av_packet_free(&packet);
-          read_data_function = read_function;
-
-          reset_fragment();
-          write_vector.clear();
-          attachments.clear();
-          subtitles.clear();
-          video_mime_type.clear();
-          audio_mime_type.clear();
-
-          initializing = true;
-          init_input();
-          init_output();
-          init_streams(true);
-          write_header();
-          initializing = false;
-          write_vector.clear();
-          subtitles.clear();
-          wrote = false;
-
           ReadResult cancelled_result;
           cancelled_result.cancelled = true;
           read_data_function = val::undefined();
@@ -677,31 +665,28 @@ public:
 
     read_data_function = read_function;
 
-    if (output_format_context) {
-      // av_write_trailer(output_format_context);
-      if (streams_list) {
-        av_freep(&streams_list);
-        streams_list = nullptr;
-      }
-      if (output_avio_context) {
-        av_free(output_avio_context->buffer);
-        avio_context_free(&output_avio_context);
-        output_avio_context = nullptr;
-      }
-      avformat_free_context(output_format_context);
-      output_format_context = nullptr;
-    }
+    // destroy_streams();
+    destroy_input();
+    destroy_output();
 
+    av_packet_free(&packet);
+
+    reset_fragment();
     write_vector.clear();
     attachments.clear();
     subtitles.clear();
+    // video_mime_type.clear();
+    // audio_mime_type.clear();
 
-    prev_duration = 0;
-    prev_pts = 0;
-    prev_pos = 0;
-    duration = 0;
-    pts = 0;
-    pos = 0;
+    initializing = true;
+    init_input(true);
+    init_output();
+    init_streams(true);
+    write_header();
+    initializing = false;
+    write_vector.clear();
+    subtitles.clear();
+    wrote = false;
 
     printf("SEEKING av_seek_frame\n");
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
@@ -711,68 +696,7 @@ public:
     }
     printf("SEEKING av_seek_frame DONE\n");
 
-    output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
-    output_avio_context = avio_alloc_context(
-      output_avio_buffer,
-      buffer_size,
-      1,
-      this,
-      nullptr,
-      &Remuxer::avio_write,
-      nullptr
-    );
-
-    printf("SEEKING 1\n");
-    avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
-    output_format_context->pb = output_avio_context;
-
-    number_of_streams = input_format_context->nb_streams;
-    streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
-    printf("SEEKING 2\n");
-
-    if (!streams_list) {
-      printf("ERROR: could not allocate stream_list\n");
-      return;
-    }
-    printf("SEEKING 3\n");
-
-    int out_index = 0;
-    for (int i = 0; i < number_of_streams; i++) {
-      AVStream* in_stream = input_format_context->streams[i];
-      AVCodecParameters* in_codecpar = in_stream->codecpar;
-      if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
-          in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        AVStream* out_stream = avformat_new_stream(output_format_context, NULL);
-        if (!out_stream) {
-          printf("ERROR: could not allocate out stream\n");
-          return;
-        }
-        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
-        if (cpRet < 0) {
-          printf("ERROR: copy codec params %s\n", ffmpegErrStr(cpRet).c_str());
-          return;
-        }
-        streams_list[i] = out_index++;
-      } else {
-        streams_list[i] = -1;
-      }
-    }
-    printf("SEEKING 4\n");
-
-    AVDictionary* opts = nullptr;
-    av_dict_set(&opts, "c", "copy", 0);
-    av_dict_set(&opts, "strict", "experimental", 0);
-    av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
-    ret = avformat_write_header(output_format_context, &opts);
-    printf("SEEKING 5\n");
-    if (ret < 0) {
-      printf("ERROR: writing header after seek: %s\n", ffmpegErrStr(ret).c_str());
-      return;
-    }
-    printf("SEEKING 6\n");
-
     read_data_function = val::undefined();
-    wrote = false;
     printf("SEEKING 7\n");
     return;
   }
