@@ -245,11 +245,11 @@ public:
     input_format_context->pb = input_avio_context;
 
     if (skip) {
-      // AVDictionary* opts = nullptr;
-      // av_dict_set(&opts, "analyzeduration", "0", 0);
-      // av_dict_set(&opts, "probesize", "2048", 0);
-      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
-      int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+      AVDictionary* opts = nullptr;
+      av_dict_set(&opts, "analyzeduration", "50000", 0);
+      // av_dict_set(&opts, "probesize", "1310720", 0);
+      int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
+      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
       if (ret < 0) {
         throw std::runtime_error(
           "Could not open input: " + ffmpegErrStr(ret)
@@ -309,7 +309,9 @@ public:
 
   void init_streams(bool skip = false) {
     if (skip) {
+      printf("remuxer.init_streams 1 \n");
       int ret = avformat_find_stream_info(input_format_context, nullptr);
+      printf("remuxer.init_streams 2 \n");
       if (ret < 0) {
         throw std::runtime_error(
           "Could not find stream info: " + ffmpegErrStr(ret)
@@ -664,10 +666,12 @@ public:
     resolved_promise.await();
 
     read_data_function = read_function;
+    printf("remuxer.SEEK 1 \n");
 
     // destroy_streams();
     destroy_input();
     destroy_output();
+    printf("remuxer.SEEK 2 \n");
 
     av_packet_free(&packet);
 
@@ -677,11 +681,15 @@ public:
     subtitles.clear();
     // video_mime_type.clear();
     // audio_mime_type.clear();
+    printf("remuxer.SEEK 3 \n");
 
     initializing = true;
     init_input(true);
+    printf("remuxer.SEEK 4 \n");
     init_output();
+    printf("remuxer.SEEK 5 \n");
     init_streams(true);
+    printf("remuxer.SEEK 6 \n");
     write_header();
     initializing = false;
     write_vector.clear();

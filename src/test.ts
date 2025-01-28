@@ -110,7 +110,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    return
+    // return
     
     console.log('initializing remuxer')
     const header = await remuxer.init()
