@@ -68,6 +68,17 @@ typedef struct ReadResult {
   bool finished;
 } ReadResult;
 
+typedef struct StoredStreamInfo {
+  int codec_type;
+  int codec_id;
+  int width, height;
+  int sample_rate;
+  // int sample_rate, channels;
+  // int64_t channel_layout;
+  AVRational time_base;
+  std::vector<uint8_t> extradata;
+} StoredStreamInfo;
+
 // typedef struct SeekResult {
 //   emscripten::val data;
 //   std::vector<SubtitleFragment> subtitles;
@@ -112,6 +123,7 @@ public:
   std::vector<uint8_t> write_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
+  std::vector<StoredStreamInfo> streams;
 
   emscripten::val resolved_promise = val::undefined();
   emscripten::val read_data_function = val::undefined();
@@ -230,7 +242,102 @@ public:
     return mime_type;
   }
 
-  void init_input(bool skip = false) {
+
+  int save_info()
+  {
+      int nb_streams_out = input_format_context->nb_streams;
+      std::vector<StoredStreamInfo> streams_out(nb_streams_out);
+
+      for (int i = 0; i < input_format_context->nb_streams; i++) {
+        AVStream *st = input_format_context->streams[i];
+        AVCodecParameters *par = st->codecpar;
+        StoredStreamInfo ssi = streams_out[i];
+
+        ssi.codec_type = par->codec_type;
+        ssi.codec_id   = par->codec_id;
+        ssi.width      = par->width;
+        ssi.height     = par->height;
+        ssi.sample_rate  = par->sample_rate;
+        // ssi.channels     = par->channels;
+        // ssi.channel_layout = par->channel_layout;
+        ssi.time_base   = st->time_base;
+
+        if (par->extradata && par->extradata_size > 0) {
+          std::vector<uint8_t> extradata(par->extradata, par->extradata + par->extradata_size);
+          memcpy(extradata.data(), par->extradata, par->extradata_size);
+          ssi.extradata = extradata;
+        }
+      }
+
+      streams = streams_out;
+
+      // avformat_close_input(&input_format_context);
+      return 0; // success
+  }
+
+  int use_stored_info()
+  {
+      int ret = 0;
+
+      // Open input without calling find_stream_info
+      // ret = avformat_open_input(&input_format_context, NULL, NULL, NULL);
+      // if (ret < 0) {
+      //     av_log(NULL, AV_LOG_ERROR, "Could not open input\n");
+      //     return ret;
+      // }
+
+      
+      int nb_streams = streams.size();
+
+      // If the demuxer hasn't created any streams automatically (depends on format),
+      // we might need to create them ourselves. Typically, avformat_open_input()
+      // sets up streams but not fully. Let's ensure the correct number:
+      if (input_format_context->nb_streams < nb_streams) {
+          // In some formats, the container might not create them all up front.
+          // You may need to call something like avformat_new_stream() explicitly.
+          // Alternatively, just assume the container does create them, one per track.
+      }
+
+      // Manually copy in the known parameters
+      for (int i = 0; i < nb_streams; i++) {
+          // if (i >= input_format_context->nb_streams) break;
+
+          AVStream *st = input_format_context->streams[i];
+          AVCodecParameters *par = st->codecpar;
+          StoredStreamInfo ssi = streams[i];
+
+          par->codec_type = (AVMediaType)ssi.codec_type;
+          par->codec_id   = (AVCodecID)ssi.codec_id;
+          par->width      = ssi.width;
+          par->height     = ssi.height;
+          par->sample_rate = ssi.sample_rate;
+          // par->channels    = ssi.channels;
+          // par->channel_layout = ssi.channel_layout;
+
+          int extradata_size = ssi.extradata.size();
+          if (extradata_size > 0) {
+              par->extradata = (uint8_t*)av_malloc(extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+              memcpy(par->extradata, &ssi.extradata, extradata_size);
+              memset(par->extradata + extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+
+              par->extradata_size = extradata_size;
+          }
+
+          st->time_base = ssi.time_base;
+      }
+
+      // Now we *theoretically* have enough info to remux without calling
+      // avformat_find_stream_info(). For example:
+      //   - set up an output context
+      //   - copy packets from input to output
+      //   - etc.
+
+      // Cleanup
+      // avformat_close_input(&input_format_context);
+      return 0;
+  }
+
+  void init_input() {
     input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     input_avio_context = avio_alloc_context(
       input_avio_buffer,
@@ -244,24 +351,11 @@ public:
     input_format_context = avformat_alloc_context();
     input_format_context->pb = input_avio_context;
 
-    if (skip) {
-      AVDictionary* opts = nullptr;
-      av_dict_set(&opts, "analyzeduration", "50000", 0);
-      // av_dict_set(&opts, "probesize", "1310720", 0);
-      int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
-      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
-      if (ret < 0) {
-        throw std::runtime_error(
-          "Could not open input: " + ffmpegErrStr(ret)
-        );
-      }
-    } else {
-      int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
-      if (ret < 0) {
-        throw std::runtime_error(
-          "Could not open input: " + ffmpegErrStr(ret)
-        );
-      }
+    int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+    if (ret < 0) {
+      throw std::runtime_error(
+        "Could not open input: " + ffmpegErrStr(ret)
+      );
     }
   }
 
@@ -309,9 +403,11 @@ public:
 
   void init_streams(bool skip = false) {
     if (skip) {
-      printf("remuxer.init_streams 1 \n");
-      int ret = avformat_find_stream_info(input_format_context, nullptr);
-      printf("remuxer.init_streams 2 \n");
+      int ret;
+      // printf("remuxer.init_streams 1 \n");
+      // int ret = avformat_find_stream_info(input_format_context, nullptr);
+      // printf("remuxer.init_streams 2 \n");
+      use_stored_info();
       if (ret < 0) {
         throw std::runtime_error(
           "Could not find stream info: " + ffmpegErrStr(ret)
@@ -341,6 +437,7 @@ public:
     }
 
     int ret = avformat_find_stream_info(input_format_context, nullptr);
+    save_info();
     if (ret < 0) {
       throw std::runtime_error(
         "Could not find stream info: " + ffmpegErrStr(ret)
@@ -684,7 +781,7 @@ public:
     printf("remuxer.SEEK 3 \n");
 
     initializing = true;
-    init_input(true);
+    init_input();
     printf("remuxer.SEEK 4 \n");
     init_output();
     printf("remuxer.SEEK 5 \n");
