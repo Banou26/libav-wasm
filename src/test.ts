@@ -1,7 +1,6 @@
 // @ts-ignore
 import PQueue from 'p-queue'
-
-import { debounceImmediateAndLatest, queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
+import { throttle, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeRemuxer } from '.'
 
 type Chunk = {
@@ -111,7 +110,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     // return
-    
+
     console.log('initializing remuxer')
     const header = await remuxer.init()
     console.log('initialized remuxer', header)
@@ -259,24 +258,57 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     //   }
     // })
 
-    setInterval(async () => {
-      const state =
-        video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
-        : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
-        : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
-        : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
-        : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
-        : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
-        : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
-        : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
-        : undefined as never
-      seconds.textContent = `${video.currentTime.toString()} ${state}`
-      // if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
-      //   const res = await remuxer.read()
-      //   console.log('res', res)
-      //   await appendBuffer(res.data)
-      // }
-      // await updateBuffers()
+    // setInterval(async () => {
+    //   const state =
+    //     video.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? 'HAVE_ENOUGH_DATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_FUTURE_DATA ? 'HAVE_FUTURE_DATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_METADATA ? 'HAVE_METADATA'
+    //     : video.readyState === HTMLMediaElement.HAVE_NOTHING ? 'HAVE_NOTHING'
+    //     : video.readyState === HTMLMediaElement.NETWORK_EMPTY ? 'NETWORK_EMPTY'
+    //     : video.readyState === HTMLMediaElement.NETWORK_IDLE ? 'NETWORK_IDLE'
+    //     : video.readyState === HTMLMediaElement.NETWORK_LOADING ? 'NETWORK_LOADING'
+    //     : video.readyState === HTMLMediaElement.NETWORK_NO_SOURCE ? 'NETWORK_NO_SOURCE'
+    //     : undefined as never
+    //   seconds.textContent = `${video.currentTime.toString()} ${state}`
+    //   // if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+    //   //   const res = await remuxer.read()
+    //   //   console.log('res', res)
+    //   //   await appendBuffer(res.data)
+    //   // }
+    //   // await updateBuffers()
+    //   const minTime = video.currentTime - 10
+    //   const maxTime = video.currentTime + 60
+    //   const bufferedRanges = getTimeRanges()
+    //   for (const { start, end } of bufferedRanges) {
+    //     if (start < minTime) {
+    //       await unbufferRange(
+    //         start,
+    //         minTime
+    //       )
+    //     }
+    //     if (end > maxTime) {
+    //       await unbufferRange(
+    //         maxTime,
+    //         end
+    //       )
+    //     }
+    //   }
+    //   try {
+    //     console.log('ranges', getTimeRanges())
+    //     const res = await remuxer.read()
+    //     console.log('res', res)
+    //     await appendBuffer(res.data)
+    //   } catch (err: any) {
+    //     if (err.message.includes('aborted')) return
+    //     console.error(err)
+    //   }
+    // }, 1000)
+
+    const seek = throttle(250, async (timestamp: number) => {
+      console.warn('THROTTLED SEEK', timestamp)
+      const res = await remuxer.seek(timestamp)
+      sourceBuffer.timestampOffset = res.pts
+      await appendBuffer(res.data)
       const minTime = video.currentTime - 10
       const maxTime = video.currentTime + 60
       const bufferedRanges = getTimeRanges()
@@ -294,28 +326,19 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           )
         }
       }
-      try {
-        console.log('ranges', getTimeRanges())
-        const res = await remuxer.read()
-        console.log('res', res)
-        await appendBuffer(res.data)
-      } catch (err: any) {
-        if (err.message.includes('aborted')) return
-        console.error(err)
-      }
-    }, 1000)
+    })
 
     video.addEventListener('seeking', async (ev) => {
-      try {
-        await remuxer.seek(video.currentTime)
-        const res = await remuxer.read()
-        // console.log('seek res', res)
-        sourceBuffer.timestampOffset = res.pts
-        await appendBuffer(res.data)
-      } catch (err: any) {
-        if (err.message.includes('aborted')) return
-        console.error(err)
-      }
+      seek(video.currentTime)
+      // try {
+      //   const res = await remuxer.seek(video.currentTime)
+      //   // console.log('seek res', res)
+      //   sourceBuffer.timestampOffset = res.pts
+      //   await appendBuffer(res.data)
+      // } catch (err: any) {
+      //   if (err.message.includes('aborted')) return
+      //   console.error(err)
+      // }
     })
 
     const res = await remuxer.read()

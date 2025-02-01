@@ -85,7 +85,15 @@ export interface RemuxerInstance {
     }
   }>
   destroy: () => void
-  seek: (read: WASMReadFunction, timestamp: number) => Promise<void>
+  seek: (read: WASMReadFunction, timestamp: number) => Promise<{
+    data: Uint8Array
+    subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
+    offset: number
+    pts: number
+    duration: number
+    cancelled: boolean
+    finished: boolean
+  }>
   read: (read: WASMReadFunction) => Promise<{
     data: Uint8Array
     subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
@@ -149,12 +157,18 @@ const convertTimestamp = (ms: number) =>
     .slice(11, 22)
     .replace(/^00/, '0')
 
-const abortSignalToPromise = (abortSignal: AbortSignal) => new Promise<void>((resolve, reject) => {
-  if (abortSignal.aborted) return reject()
-  abortSignal.addEventListener('abort', () => {
-    reject()
+const abortSignalToPromise = (abortSignal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    // console.log('abortSignal', abortSignal)
+    if (abortSignal.aborted) {
+      console.log('property aborted')
+      return reject()
+    }
+    abortSignal.addEventListener('abort', () => {
+      console.log('event aborted')
+      reject()
+    })
   })
-})
 
 type WASMVector<T> = {
   size: () => number
@@ -218,7 +232,28 @@ const resolvers = {
         }
       }),
       destroy: () => _remuxer.destroy(),
-      seek: (read, timestamp) => console.log('ACTUAL SEEK', timestamp) || _remuxer.seek(read, timestamp * 1000),
+      seek: (read, timestamp) => console.log('ACTUAL SEEK', timestamp) || _remuxer.seek(read, timestamp * 1000).then(result => {
+        if (result.cancelled) throw new Error('Cancelled')
+        const typedArray = new Uint8Array(result.data.byteLength)
+        typedArray.set(new Uint8Array(result.data))
+        return {
+          data: typedArray.buffer,
+          subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
+            if (_subtitle.isHeader) throw new Error('Subtitle type is header')
+            const { isHeader, data, ...subtitle } = _subtitle
+            return {
+              ...subtitle,
+              type: 'dialogue',
+              content: new TextDecoder().decode(data)
+            }
+          }),
+          offset: result.offset,
+          pts: result.pts,
+          duration: result.duration,
+          cancelled: result.cancelled,
+          finished: result.finished
+        }
+      }),
       read: (read) => _remuxer.read(read).then(result => {
         if (result.cancelled) throw new Error('Cancelled')
         const typedArray = new Uint8Array(result.data.byteLength)
@@ -243,21 +278,7 @@ const resolvers = {
       })
     } as Remuxer
 
-    const stateMachine =
-      createStateMachine({
-        initialState: 'IDLE',
-        transitions: {
-          IDLE: ['PROCESSING'],
-          PROCESSING: ['CANCELLING', 'IDLE'],
-          CANCELLING: ['IDLE'],
-        },
-        context: {
-          seekTo: undefined as number | undefined,
-          abortController: undefined as AbortController | undefined
-        },
-        onExit: (state) => console.log(`Exiting ${state}`),
-        onEnter: (state) => console.log(`Entering ${state}`)
-      })
+    const queue = new PQueue({ concurrency: 1, timeout: 10_000, throwOnTimeout: true })
 
     const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
       if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0), rejected: true })
@@ -274,6 +295,41 @@ const resolvers = {
           )
       ])
     }
+
+    let abortControllers: AbortController[] = []
+
+    const addTask = <T extends (abortController: AbortController) => Promise<any>>(func: T) => {
+      const currentAbortControllers = [...abortControllers]
+      abortControllers = []
+      queue.clear()
+      currentAbortControllers.forEach(abortController => abortController.abort())
+      const abortController = new AbortController()
+      abortControllers = [...abortControllers, abortController]
+      return queue.add(
+        async () => func(abortController),
+        { signal: abortController.signal }
+      )
+    }
+
+    // const task1 = addTask(async (abortController) => {
+    //   console.log('task 1')
+    //   const res = await Promise.race([
+    //     new Promise(resolve => setTimeout(resolve, 5000)),
+    //     abortSignalToPromise(abortController.signal)
+    //   ])
+    //   console.log('res', res)
+    //   console.log('task 1 done')
+    // })
+
+    // console.log('task 1 ref', task1)
+
+    // setTimeout(async () => {
+    //   const task2 = addTask(async () => {
+    //     console.log('task 2')
+    //     console.log('task 2 done')
+    //   })
+    //   console.log('task 2 ref', task2)
+    // }, 1000)
 
     // (async () => {
     //   const _read = (cancel: boolean = false) => async (offset: number, size: number) =>
@@ -309,59 +365,10 @@ const resolvers = {
     // })();
 
     return {
-      destroy: async () => remuxer.destroy(),
-      init: () => {
-        console.log('initing')
-        const abortController = new AbortController()
-        stateMachine.transitionTo('PROCESSING', context => ({ ...context, abortController }))
-        return (
-          remuxer
-            .init(wasmRead(abortController))
-            .finally(() => {
-              stateMachine.transitionTo('IDLE', context => ({ ...context, abortController: undefined }))
-            })
-        )
-      },
-      seek: async (timestamp: number) => {
-        console.log('seeking', timestamp)
-        const state = stateMachine.getState()
-        if (state === 'CANCELLING') {
-          stateMachine.setContext({ ...stateMachine.getContext(), seekTo: timestamp })
-          return
-        }
-        if (state === 'PROCESSING') {
-          const abortController = stateMachine.getContext().abortController
-          if (!abortController) throw new Error('No abortController found when processing')
-          stateMachine.transitionTo('CANCELLING', context => ({ ...context, seekTo: timestamp }))
-          abortController.abort()
-          return
-        }
-        const abortController = new AbortController()
-        stateMachine.transitionTo('PROCESSING', context => ({ ...context, abortController }))
-        return (
-          remuxer
-            .seek(wasmRead(abortController), timestamp)
-            .finally(() => {
-              stateMachine.transitionTo('IDLE', context => ({ ...context, abortController: undefined }))
-            })
-        )
-      },
-      read: () => {
-        console.log('reading')
-        const state = stateMachine.getState()
-        if (state === 'PROCESSING' || state === 'CANCELLING') {
-          throw new Error('Cannot read while processing or cancelling')
-        }
-        const abortController = new AbortController()
-        stateMachine.transitionTo('PROCESSING', context => ({ ...context, abortController }))
-        return (
-          remuxer
-            .read(wasmRead(abortController))
-            .finally(() => {
-              stateMachine.transitionTo('IDLE', context => ({ ...context, abortController: undefined }))
-            })
-        )
-      }
+      destroy: () => remuxer.destroy(),
+      init: () => addTask((abortController) => remuxer.init(wasmRead(abortController))),
+      seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
+      read: () => addTask((abortController) => remuxer.read(wasmRead(abortController)))
     }
   }
 }

@@ -246,7 +246,7 @@ public:
 
     if (skip) {
       AVDictionary* opts = nullptr;
-      av_dict_set(&opts, "analyzeduration", "50000", 0);
+      av_dict_set(&opts, "analyzeduration", "1", 0);
       // av_dict_set(&opts, "probesize", "1310720", 0);
       int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
       // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
@@ -661,7 +661,7 @@ public:
     return result;
   }
 
-  void seek(emscripten::val read_function, int timestamp) {
+  ReadResult seek(emscripten::val read_function, int timestamp) {
     printf("remuxer.SEEK \n");
     resolved_promise.await();
 
@@ -700,13 +700,18 @@ public:
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
       printf("ERROR: av_seek_frame: %s\n", ffmpegErrStr(ret).c_str());
-      return;
+      ReadResult cancelled_result;
+      cancelled_result.cancelled = true;
+      read_data_function = val::undefined();
+      return cancelled_result;
     }
     printf("SEEKING av_seek_frame DONE\n");
 
     read_data_function = val::undefined();
     printf("SEEKING 7\n");
-    return;
+    ReadResult read_result = read(read_function);
+    printf("SEEKING 8\n");
+    return read_result;
   }
 
   //-----------------------------------------
