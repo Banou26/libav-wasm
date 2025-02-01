@@ -56,6 +56,11 @@ export type RemuxerInstanceOptions = {
   bufferSize: number
 }
 
+type ReadFunction = (offset: number, size: number) => Promise<{
+  resolved: ArrayBuffer
+  rejected: boolean
+}>
+
 type WASMReadFunction = (offset: number, size: number) => Promise<{
   resolved: Uint8Array
   rejected: boolean
@@ -144,8 +149,10 @@ export type Remuxer = {
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
-    print: (text: string) => console.log(text),
-    printErr: (text: string) => console.error(text),
+    print: (text: string) => {},
+    printErr: (text: string) => {},
+    // print: (text: string) => console.log(text),
+    // printErr: (text: string) => console.error(text),
     // print: (text: string) => log(false, text),
     // printErr: (text: string) => log(true, text),
   }) as Promise<{ Remuxer: RemuxerInstance }>
@@ -156,19 +163,6 @@ const convertTimestamp = (ms: number) =>
     .toISOString()
     .slice(11, 22)
     .replace(/^00/, '0')
-
-const abortSignalToPromise = (abortSignal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    // console.log('abortSignal', abortSignal)
-    if (abortSignal.aborted) {
-      console.log('property aborted')
-      return reject()
-    }
-    abortSignal.addEventListener('abort', () => {
-      console.log('event aborted')
-      reject()
-    })
-  })
 
 type WASMVector<T> = {
   size: () => number
@@ -182,13 +176,12 @@ const vectorToArray = <T>(vector: WASMVector<T>) =>
 
 const resolvers = {
   makeRemuxer: async (
-    { publicPath, length, bufferSize, log, read }:
+    { publicPath, length, bufferSize, log }:
     {
       publicPath: string
       length: number
       bufferSize: number
       log: (isError: boolean, text: string) => Promise<void>
-      read: (offset: number, size: number) => Promise<ArrayBuffer>
     }
   ) => {
     const { Remuxer } = await makeModule(publicPath, log)
@@ -232,7 +225,7 @@ const resolvers = {
         }
       }),
       destroy: () => _remuxer.destroy(),
-      seek: (read, timestamp) => console.log('ACTUAL SEEK', timestamp) || _remuxer.seek(read, timestamp * 1000).then(result => {
+      seek: (read, timestamp) => _remuxer.seek(read, timestamp * 1000).then(result => {
         if (result.cancelled) throw new Error('Cancelled')
         const typedArray = new Uint8Array(result.data.byteLength)
         typedArray.set(new Uint8Array(result.data))
@@ -278,97 +271,18 @@ const resolvers = {
       })
     } as Remuxer
 
-    const queue = new PQueue({ concurrency: 1, timeout: 10_000, throwOnTimeout: true })
-
-    const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
-      if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0), rejected: true })
-      return Promise.race([
-        read(offset, size)
-          .then(
-            buffer => ({ resolved: new Uint8Array(buffer), rejected: false }),
-            () => ({ resolved: new Uint8Array(0), rejected: true })
-          ),
-        abortSignalToPromise(abortController.signal)
-          .then(
-            () => ({ resolved: new Uint8Array(0), rejected: true }),
-            () => ({ resolved: new Uint8Array(0), rejected: true })
-          )
-      ])
-    }
-
-    let abortControllers: AbortController[] = []
-
-    const addTask = <T extends (abortController: AbortController) => Promise<any>>(func: T) => {
-      const currentAbortControllers = [...abortControllers]
-      abortControllers = []
-      queue.clear()
-      currentAbortControllers.forEach(abortController => abortController.abort())
-      const abortController = new AbortController()
-      abortControllers = [...abortControllers, abortController]
-      return queue.add(
-        async () => func(abortController),
-        { signal: abortController.signal }
-      )
-    }
-
-    // const task1 = addTask(async (abortController) => {
-    //   console.log('task 1')
-    //   const res = await Promise.race([
-    //     new Promise(resolve => setTimeout(resolve, 5000)),
-    //     abortSignalToPromise(abortController.signal)
-    //   ])
-    //   console.log('res', res)
-    //   console.log('task 1 done')
-    // })
-
-    // console.log('task 1 ref', task1)
-
-    // setTimeout(async () => {
-    //   const task2 = addTask(async () => {
-    //     console.log('task 2')
-    //     console.log('task 2 done')
-    //   })
-    //   console.log('task 2 ref', task2)
-    // }, 1000)
-
-    // (async () => {
-    //   const _read = (cancel: boolean = false) => async (offset: number, size: number) =>
-    //     cancel
-    //       ? ({ resolved: new Uint8Array(0), rejected: true })
-    //       : ({ resolved: new Uint8Array(await read(offset, size)), rejected: false })
-    //   const header = await remuxer.init(_read())
-    //   console.log('header', header)
-    //   const firstChunk = await remuxer.read(_read())
-    //   console.log('first chunk', firstChunk)
-    //   let readCount = 0
-    //   const cancelledChunk = await remuxer.read(async (offset, size) => {
-    //     console.log('READ ON CANCEL')
-    //     const cancelOnReads = [0, 1, 2]
-    //     const result = await _read(cancelOnReads.includes(readCount))(offset, size)
-    //     readCount++
-    //     return result
-    //   }).catch((err) => { console.error(err) })
-    //   console.log('cancelledChunk', cancelledChunk)
-    //   // await remuxer.destroy()
-    //   // await remuxer.init(_read())
-    //   console.log('SEEKING')
-    //   // await remuxer.seek(_read(), 30)
-    //   // console.log('seeked')
-
-    //   await remuxer.seek(async (offset, size) => {
-    //     console.log('SEEK ON CANCEL')
-    //     return _read(false)(offset, size)
-    //   }, 30).catch((err) => { console.error(err) })
-
-    //   const chunkAfterSeek = await remuxer.read(_read())
-    //   console.log('chunkAfterSeek', chunkAfterSeek)
-    // })();
+    const readToWasmRead = (read: ReadFunction) => (offset: number, size: number) =>
+      read(offset, size)
+        .then(
+          ({ resolved, rejected }) => ({ resolved: new Uint8Array(resolved), rejected }),
+          () => ({ resolved: new Uint8Array(0), rejected: true })
+        )
 
     return {
       destroy: () => remuxer.destroy(),
-      init: () => addTask((abortController) => remuxer.init(wasmRead(abortController))),
-      seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
-      read: () => addTask((abortController) => remuxer.read(wasmRead(abortController)))
+      init: (read: ReadFunction) => remuxer.init(readToWasmRead(read)),
+      seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
+      read: (read: ReadFunction) => remuxer.read(readToWasmRead(read))
     }
   }
 }

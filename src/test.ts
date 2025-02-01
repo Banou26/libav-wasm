@@ -329,16 +329,16 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     video.addEventListener('seeking', async (ev) => {
-      seek(video.currentTime)
-      // try {
-      //   const res = await remuxer.seek(video.currentTime)
-      //   // console.log('seek res', res)
-      //   sourceBuffer.timestampOffset = res.pts
-      //   await appendBuffer(res.data)
-      // } catch (err: any) {
-      //   if (err.message.includes('aborted')) return
-      //   console.error(err)
-      // }
+      // seek(video.currentTime)
+      try {
+        const res = await remuxer.seek(video.currentTime)
+        // console.log('seek res', res)
+        sourceBuffer.timestampOffset = res.pts
+        await appendBuffer(res.data)
+      } catch (err: any) {
+        if (err.message.includes('aborted')) return
+        // console.error(err)
+      }
     })
 
     const res = await remuxer.read()
