@@ -96,7 +96,7 @@ export const makeRemuxer = async ({
     currentAbortControllers.forEach(abortController => abortController.abort())
     const abortController = new AbortController()
     abortControllers = [...abortControllers, abortController]
-    return queue.add(
+    return queue.add<ReturnType<T>>(
       async () => func(abortController),
       { signal: abortController.signal }
     )

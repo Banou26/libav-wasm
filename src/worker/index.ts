@@ -134,7 +134,15 @@ export type Remuxer = {
     }
   }>
   destroy: () => void
-  seek: (read: WASMReadFunction, timestamp: number) => Promise<void>
+  seek: (read: WASMReadFunction, timestamp: number) => Promise<{
+    data: ArrayBuffer
+    subtitles: SubtitleFragment[]
+    offset: number
+    pts: number
+    duration: number
+    cancelled: boolean
+    finished: boolean
+  }>
   read: (read: WASMReadFunction) => Promise<{
     data: ArrayBuffer
     subtitles: SubtitleFragment[]
@@ -149,10 +157,10 @@ export type Remuxer = {
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
-    print: (text: string) => {},
-    printErr: (text: string) => {},
-    // print: (text: string) => console.log(text),
-    // printErr: (text: string) => console.error(text),
+    // print: (text: string) => {},
+    // printErr: (text: string) => {},
+    print: (text: string) => console.log(text),
+    printErr: (text: string) => console.error(text),
     // print: (text: string) => log(false, text),
     // printErr: (text: string) => log(true, text),
   }) as Promise<{ Remuxer: RemuxerInstance }>

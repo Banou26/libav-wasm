@@ -309,9 +309,7 @@ public:
 
   void init_streams(bool skip = false) {
     if (skip) {
-      printf("remuxer.init_streams 1 \n");
       int ret = avformat_find_stream_info(input_format_context, nullptr);
-      printf("remuxer.init_streams 2 \n");
       if (ret < 0) {
         throw std::runtime_error(
           "Could not find stream info: " + ffmpegErrStr(ret)
@@ -476,7 +474,6 @@ public:
   }
 
   InitResult init(emscripten::val read_function) {
-    printf("remuxer.INIT \n");
     read_data_function = read_function;
 
     reset_fragment();
@@ -529,7 +526,6 @@ public:
   }
 
   ReadResult read(emscripten::val read_function) {
-    printf("remuxer.READ \n");
     resolved_promise.await();
 
     read_data_function = read_function;
@@ -544,7 +540,6 @@ public:
       int ret = av_read_frame(input_format_context, packet);
       // printf("READ FRAME read error | %s \n", av_err2str(ret));
       if (ret < 0) {
-        printf("READ CANCELLED? read error | %s \n", av_err2str(ret));
         // read_data_function = val::undefined();
         if (ret == AVERROR_EXIT) {
           ReadResult cancelled_result;
@@ -662,16 +657,13 @@ public:
   }
 
   ReadResult seek(emscripten::val read_function, int timestamp) {
-    printf("remuxer.SEEK \n");
     resolved_promise.await();
 
     read_data_function = read_function;
-    printf("remuxer.SEEK 1 \n");
 
     // destroy_streams();
     destroy_input();
     destroy_output();
-    printf("remuxer.SEEK 2 \n");
 
     av_packet_free(&packet);
 
@@ -681,22 +673,17 @@ public:
     subtitles.clear();
     // video_mime_type.clear();
     // audio_mime_type.clear();
-    printf("remuxer.SEEK 3 \n");
 
     initializing = true;
     init_input(true);
-    printf("remuxer.SEEK 4 \n");
     init_output();
-    printf("remuxer.SEEK 5 \n");
     init_streams(true);
-    printf("remuxer.SEEK 6 \n");
     write_header();
     initializing = false;
     write_vector.clear();
     subtitles.clear();
     wrote = false;
 
-    printf("SEEKING av_seek_frame\n");
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
       printf("ERROR: av_seek_frame: %s\n", ffmpegErrStr(ret).c_str());
@@ -705,12 +692,9 @@ public:
       read_data_function = val::undefined();
       return cancelled_result;
     }
-    printf("SEEKING av_seek_frame DONE\n");
 
     read_data_function = val::undefined();
-    printf("SEEKING 7\n");
     ReadResult read_result = read(read_function);
-    printf("SEEKING 8\n");
     return read_result;
   }
 
@@ -728,7 +712,6 @@ private:
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
     if (self->initializing && self->first_initialization_done) {
-      printf("avio_read INITIALIZING READ INIT VECTOR %d \n", self->init_buffer_count);
       std::string buffer = self->init_vector[self->init_buffer_count];
       memcpy(buf, (uint8_t*)buffer.c_str(), buf_size);
       self->init_buffer_count++;
@@ -742,7 +725,6 @@ private:
     emscripten::val result = self->read_data_function(to_string(self->input_format_context->pb->pos), buf_size).await();
 
     bool is_rejected = result["rejected"].as<bool>();
-    printf("AVIO_READ CANCELLED? read | %s \n", is_rejected ? "true" : "false");
     if (is_rejected) {
       return AVERROR_EXIT;
     }
@@ -755,7 +737,6 @@ private:
 
     if (self->initializing && !self->first_initialization_done) {
       self->init_vector.push_back(buffer);
-      printf("avio_read INITIALIZING SET INIT VECTOR %d \n", self->init_vector.size());
     }
 
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);

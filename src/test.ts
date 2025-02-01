@@ -328,18 +328,68 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
     })
 
-    video.addEventListener('seeking', async (ev) => {
-      // seek(video.currentTime)
+    const unbuffer = async () => {
+      const minTime = video.currentTime - 20
+      const maxTime = video.currentTime + 60
+      const bufferedRanges = getTimeRanges()
+      for (const { start, end } of bufferedRanges) {
+        if (start < minTime) {
+          await unbufferRange(
+            start,
+            minTime
+          )
+        }
+        if (end > maxTime) {
+          await unbufferRange(
+            maxTime,
+            end
+          )
+        }
+      }
+    }
+
+    let seeking = false
+    let lastSeekedPosition = 0
+
+    const loadMore = async () => {
+      if (seeking) return
+      const { currentTime } = video
+      const bufferedRanges = getTimeRanges()
+      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      // console.log('load more', currentTime, timeRange, bufferedRanges)
+      if (!timeRange) throw new Error('No time range found')
+      const end = timeRange.end
+      const maxTime = video.currentTime + 60
+      if (end > maxTime) {
+        return
+      }
+      const res = await remuxer.read()
+      await appendBuffer(res.data)
+    }
+
+    video.addEventListener('seeking', async () => {
+      const { currentTime } = video
+      const bufferedRanges = getTimeRanges()
+      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      if (timeRange && currentTime >= lastSeekedPosition) {
+        // seeking forward in a buffered range, can just continue reading
+        return
+      }
+      seeking = true
+      lastSeekedPosition = currentTime
       try {
-        const res = await remuxer.seek(video.currentTime)
-        // console.log('seek res', res)
+        const res = await remuxer.seek(currentTime)
         sourceBuffer.timestampOffset = res.pts
         await appendBuffer(res.data)
       } catch (err: any) {
-        if (err.message.includes('aborted')) return
-        // console.error(err)
+        if (err.message === 'Cancelled') return
+        console.error(err)
       }
+      await unbuffer()
+      seeking = false
     })
+
+    setInterval(loadMore, 100)
 
     const res = await remuxer.read()
     // console.log('initial read', res)
