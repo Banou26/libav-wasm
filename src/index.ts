@@ -96,10 +96,17 @@ export const makeRemuxer = async ({
     currentAbortControllers.forEach(abortController => abortController.abort())
     const abortController = new AbortController()
     abortControllers = [...abortControllers, abortController]
-    return queue.add<ReturnType<T>>(
-      async () => func(abortController),
-      { signal: abortController.signal }
-    )
+    return Promise.race([
+      queue.add<Awaited<ReturnType<T>>>(
+        async () => func(abortController),
+        { signal: abortController.signal }
+      ),
+      abortSignalToPromise(abortController.signal)
+        .then(
+          () => Promise.reject(new Error('Cancelled')),
+          () => Promise.reject(new Error('Cancelled'))
+        )
+    ])
   }
 
   return {

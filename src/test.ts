@@ -1,6 +1,6 @@
 // @ts-ignore
 import PQueue from 'p-queue'
-import { throttle, toBufferedStream, toStreamChunkSize } from './utils'
+import { queuedThrottleWithLastCall, throttle, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeRemuxer } from '.'
 
 type Chunk = {
@@ -304,6 +304,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     //   }
     // }, 1000)
 
+    const MIN_TIME = -30
+    const MAX_TIME = 75
+    const BUFFER_TO = 60
+
     const seek = throttle(250, async (timestamp: number) => {
       console.warn('THROTTLED SEEK', timestamp)
       const res = await remuxer.seek(timestamp)
@@ -329,8 +333,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const unbuffer = async () => {
-      const minTime = video.currentTime - 20
-      const maxTime = video.currentTime + 60
+      // console.log('clearing buffer')
+      const minTime = video.currentTime + MIN_TIME
+      const maxTime = video.currentTime + MAX_TIME
       const bufferedRanges = getTimeRanges()
       for (const { start, end } of bufferedRanges) {
         if (start < minTime) {
@@ -346,26 +351,41 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           )
         }
       }
+      // console.log('buffer cleared')
     }
 
-    let seeking = false
+    let currentSeeks: { currentTime: number }[] = []
     let lastSeekedPosition = 0
 
-    const loadMore = async () => {
-      if (seeking) return
+    const loadMore = queuedThrottleWithLastCall(100, async () => {
+      if (currentSeeks.length) return
       const { currentTime } = video
       const bufferedRanges = getTimeRanges()
       const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
       // console.log('load more', currentTime, timeRange, bufferedRanges)
-      if (!timeRange) throw new Error('No time range found')
+      if (!timeRange) {
+        console.log('no time range found', currentTime, bufferedRanges)
+        console.error('no time range found', currentTime, bufferedRanges)
+        return
+        // const res = await remuxer.read()
+        // console.log('no time range found', currentTime, bufferedRanges, res)
+        // throw new Error('No time range found')
+      }
       const end = timeRange.end
-      const maxTime = video.currentTime + 60
-      if (end > maxTime) {
+      const maxTime = video.currentTime + BUFFER_TO
+      if (end >= maxTime) {
         return
       }
-      const res = await remuxer.read()
-      await appendBuffer(res.data)
-    }
+      // console.log('loading more', currentTime, timeRange, bufferedRanges)
+      try {
+        const res = await remuxer.read()
+        await appendBuffer(res.data)
+        await unbuffer()
+      } catch (err: any) {
+        if (err.message === 'Cancelled') return
+        console.error(err)
+      }
+    })
 
     video.addEventListener('seeking', async () => {
       const { currentTime } = video
@@ -375,18 +395,26 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         // seeking forward in a buffered range, can just continue reading
         return
       }
-      seeking = true
+      const seekObject = { currentTime }
+      currentSeeks = [...currentSeeks, seekObject]
       lastSeekedPosition = currentTime
       try {
-        const res = await remuxer.seek(currentTime)
+        console.log('seeking', currentTime)
+        const res =
+          await remuxer
+            .seek(currentTime)
+            .finally(() => {
+              currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
+            })
         sourceBuffer.timestampOffset = res.pts
         await appendBuffer(res.data)
+        console.log('seeked', currentTime)
       } catch (err: any) {
+        console.log('seek cancelled', currentTime)
         if (err.message === 'Cancelled') return
         console.error(err)
       }
       await unbuffer()
-      seeking = false
     })
 
     setInterval(loadMore, 100)

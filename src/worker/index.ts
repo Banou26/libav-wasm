@@ -160,7 +160,7 @@ const makeModule = (publicPath: string, log: (isError: boolean, text: string) =>
     // print: (text: string) => {},
     // printErr: (text: string) => {},
     print: (text: string) => console.log(text),
-    printErr: (text: string) => console.error(text),
+    printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
     // print: (text: string) => log(false, text),
     // printErr: (text: string) => log(true, text),
   }) as Promise<{ Remuxer: RemuxerInstance }>
