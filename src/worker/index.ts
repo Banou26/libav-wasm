@@ -2,9 +2,6 @@ import { expose } from 'osra'
 
 // @ts-ignore
 import WASMModule from 'libav'
-import PQueue from 'p-queue'
-import Mutex from 'p-mutex'
-import { createStateMachine } from './state-machine'
 
 export type RemuxerInstanceSubtitleFragment =
   | {
@@ -157,8 +154,6 @@ export type Remuxer = {
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
-    // print: (text: string) => {},
-    // printErr: (text: string) => {},
     print: (text: string) => console.log(text),
     printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
     // print: (text: string) => log(false, text),
@@ -287,7 +282,7 @@ const resolvers = {
         )
 
     return {
-      destroy: () => remuxer.destroy(),
+      destroy: async () => remuxer.destroy(),
       init: (read: ReadFunction) => remuxer.init(readToWasmRead(read)),
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read))
@@ -297,4 +292,5 @@ const resolvers = {
 
 export type Resolvers = typeof resolvers
 
+// @ts-expect-error
 expose(resolvers, { remote: globalThis, local: globalThis })

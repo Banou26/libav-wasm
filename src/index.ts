@@ -3,6 +3,7 @@ import type { Resolvers } from './worker'
 import type { SubtitleFragment } from './worker'
 
 import { expose } from 'osra'
+export * from './utils'
 
 export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
