@@ -1,20 +1,10 @@
-// @ts-ignore
 import PQueue from 'p-queue'
-
-import { debounceImmediateAndLatest, queuedDebounceWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
+import { queuedThrottleWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeRemuxer } from '.'
-
-type Chunk = {
-  offset: number
-  buffer: Uint8Array
-  pts: number
-  duration: number
-  pos: number
-}
 
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video12.mkv'
+const VIDEO_URL = '../video.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
@@ -72,14 +62,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
 
-    // let headerChunk: Chunk
-    let ended = false
-
     const workerUrl2 = new URL('../build/worker.js', import.meta.url).toString()
     const blob = new Blob([`importScripts(${JSON.stringify(workerUrl2)})`], { type: 'application/javascript' })
     const workerUrl = URL.createObjectURL(blob)
-
-    let slow = false
 
     const remuxer = await makeRemuxer({
       publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
@@ -87,10 +72,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       getStream: async (offset, size) => {
-        // if (slow && size !== BUFFER_SIZE) {
-        //   await new Promise(resolve => setTimeout(resolve, 5000))
-        // }
-
         return fetch(
           VIDEO_URL,
           {
@@ -109,21 +90,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
               )
             )
         )
-      },
-      subtitle: (title, language, subtitle) => {
-        // console.log('SUBTITLE HEADER', title, language, subtitle)
-      },
-      attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
-        // console.log('attachment', filename, mimetype, buffer)
       }
     })
 
-    const headerChunk = await remuxer.init()
-
-    if (!headerChunk) throw new Error('No header chunk found after remuxer init')
-
-    const mediaInfo = await remuxer.getInfo()
-    const duration = mediaInfo.input.duration / 1_000_000
+    const header = await remuxer.init()
 
     const video = document.createElement('video')
     video.width = 1440
@@ -146,16 +116,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         mediaSource.addEventListener(
           'sourceopen',
           () => {
-            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${mediaInfo.input.video_mime_type},${mediaInfo.input.audio_mime_type}"`)
-            mediaSource.duration = duration
+            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${header.info.input.videoMimeType},${header.info.input.audioMimeType}"`)
+            mediaSource.duration = header.info.input.duration
             sourceBuffer.mode = 'segments'
             resolve(sourceBuffer)
           },
           { once: true }
         )
       )
-
-    const queue = new PQueue({ concurrency: 1 })
 
     const setupListeners = (resolve: (value: Event) => void, reject: (reason: Event) => void) => {
       const updateEndListener = (ev: Event) => {
@@ -181,6 +149,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       sourceBuffer.addEventListener('error', errorListener, { once: true })
     }
 
+    const queue = new PQueue({ concurrency: 1 })
+
     const appendBuffer = (buffer: ArrayBuffer) =>
       queue.add(() =>
         new Promise<Event>((resolve, reject) => {
@@ -197,6 +167,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         })
       )
 
+    await appendBuffer(header.data)
+    
     const getTimeRanges = () =>
       Array(sourceBuffer.buffered.length)
         .fill(undefined)
@@ -206,128 +178,85 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           end: sourceBuffer.buffered.end(index)
         }))
 
-    video.addEventListener('canplaythrough', () => {
-      video.playbackRate = 1
-      video.play()
-    }, { once: true })
+    const MIN_TIME = -30
+    const MAX_TIME = 75
+    const BUFFER_TO = 60
 
-    let chunks: Chunk[] = []
-
-    const PREVIOUS_BUFFER_COUNT = 1
-    const NEEDED_TIME_IN_SECONDS = 15
-
-    await appendBuffer(headerChunk.buffer)
-
-    let reachedEnd = false
-
-    const pull = async () => {
-      if (reachedEnd) throw new Error('end')
-      const chunk = await remuxer.read()
-      if (chunk.isTrailer) reachedEnd = true
-      chunks = [...chunks, chunk]
-      return chunk
+    const unbuffer = async () => {
+      const minTime = video.currentTime + MIN_TIME
+      const maxTime = video.currentTime + MAX_TIME
+      const bufferedRanges = getTimeRanges()
+      for (const { start, end } of bufferedRanges) {
+        if (start < minTime) {
+          await unbufferRange(
+            start,
+            minTime
+          )
+        }
+        if (end > maxTime) {
+          await unbufferRange(
+            maxTime,
+            end
+          )
+        }
+      }
     }
 
-    let seeking = false
+    let currentSeeks: { currentTime: number }[] = []
+    let lastSeekedPosition = 0
 
-    const updateBuffers = queuedDebounceWithLastCall(250, async () => {
-      if (seeking) return
+    const loadMore = queuedThrottleWithLastCall(100, async () => {
+      if (currentSeeks.length) return
       const { currentTime } = video
-      const currentChunkIndex = chunks.findIndex(({ pts, duration }) => pts <= currentTime && pts + duration >= currentTime)
-      const sliceIndex = Math.max(0, currentChunkIndex - PREVIOUS_BUFFER_COUNT)
-
-      const getLastChunkEndTime = () => {
-        const lastChunk = chunks.at(-1)
-        if (!lastChunk) return 0
-        return lastChunk.pts + lastChunk.duration
-      }
-
-      // pull and append buffers up until the needed time
-      while (getLastChunkEndTime() < currentTime + NEEDED_TIME_IN_SECONDS){
-        const chunk = await pull()
-        await appendBuffer(chunk.buffer)
-      }
-
-      if (sliceIndex) chunks = chunks.slice(sliceIndex)
-
       const bufferedRanges = getTimeRanges()
-
-      const firstChunk = chunks.at(0)
-      const lastChunk = chunks.at(-1)
-      if (!firstChunk || !lastChunk || firstChunk === lastChunk) return
-      const minTime = firstChunk.pts
-
-      for (const { start, end } of bufferedRanges) {
-        const chunkIndex = chunks.findIndex(({ pts, duration }) => start <= (pts + (duration / 2)) && (pts + (duration / 2)) <= end)
-        if (chunkIndex === -1) {
-          await unbufferRange(start, end)
-        } else {
-          if (start < minTime) {
-            await unbufferRange(
-              start,
-              minTime
-            )
-          }
-        }
+      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      if (!timeRange) {
+        return
       }
-    })
-
-    let firstSeekPaused: boolean | undefined
-
-    const seek = debounceImmediateAndLatest(250, async (seekTime: number) => {
+      const end = timeRange.end
+      const maxTime = video.currentTime + BUFFER_TO
+      if (end >= maxTime) {
+        return
+      }
       try {
-        reachedEnd = false
-        if (firstSeekPaused === undefined) firstSeekPaused = video.paused
-        seeking = true
-        chunks = []
-        await remuxer.seek(seekTime)
-        const chunk1 = await pull()
-        // todo: FIX firefox sometimes throws "Uncaught (in promise) DOMException: An attempt was made to use an object that is not, or is no longer, usable"
-        sourceBuffer.timestampOffset = chunk1.pts
-        await appendBuffer(chunk1.buffer)
-        if (firstSeekPaused === false) {
-          await video.play()
-        }
-        seeking = false
-        await updateBuffers()
-        if (firstSeekPaused === false) {
-          await video.play()
-        }
-        firstSeekPaused = undefined
+        const res = await remuxer.read()
+        await appendBuffer(res.data)
+        await unbuffer()
       } catch (err: any) {
-        if (err.message !== 'exit') throw err
+        if (err.message === 'Cancelled') return
+        console.error(err)
       }
     })
+    setInterval(loadMore, 100)
 
-    const firstChunk = await pull()
-    appendBuffer(firstChunk.buffer)
-
-    video.addEventListener('timeupdate', () => {
-      updateBuffers()
+    video.addEventListener('seeking', async () => {
+      const { currentTime } = video
+      const bufferedRanges = getTimeRanges()
+      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      // seeking forward in a buffered range, can just continue by reading
+      if (timeRange && currentTime >= lastSeekedPosition) {
+        return
+      }
+      const seekObject = { currentTime }
+      currentSeeks = [...currentSeeks, seekObject]
+      lastSeekedPosition = currentTime
+      try {
+        const res =
+          await remuxer
+            .seek(currentTime)
+            .finally(() => {
+              currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
+            })
+        sourceBuffer.timestampOffset = res.pts
+        await appendBuffer(res.data)
+      } catch (err: any) {
+        if (err.message === 'Cancelled') return
+        console.error(err)
+      }
+      await unbuffer()
     })
 
-    video.addEventListener('waiting', () => {
-      updateBuffers()
-    })
-
-    video.addEventListener('seeking', (ev) => {
-      seek(video.currentTime)
-    })
-
-    updateBuffers()
-
-    setInterval(() => {
-      seconds.textContent = video.currentTime.toString()
-    }, 100)
-
-    setTimeout(async () => {
-      video.playbackRate = 1
-      video.currentTime = 290
-
-      // slow = true
-      // video.currentTime = 400
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      // slow = false
-      // video.currentTime = 300
-    }, 2_000)
+    await appendBuffer(
+      (await remuxer.read()).data
+    )
   })

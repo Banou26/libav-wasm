@@ -72,7 +72,7 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-avdevice \
   --enable-swresample \
   --enable-swscale \
-  --enable-decoder=hevc,h264,h264,aac,pcm_s16le \
+  --enable-decoder=hevc,h264,h264,aac,pcm_s16le,eac3,ac3 \
   --disable-stripping \
   --disable-inline-asm \
   --enable-cross-compile \
