@@ -32,34 +32,6 @@ export function debounceImmediateAndLatest<T extends (...args: any[]) => any>(
   return debouncedFunction as T;
 }
 
-// https://github.com/sindresorhus/throttleit/blob/main/index.js
-export const throttle = (wait: number, fn: Function) => {
-	if (typeof fn !== 'function') {
-		throw new TypeError(`Expected the first argument to be a \`function\`, got \`${typeof fn}\`.`)
-	}
-
-	let timeoutId: number
-	let lastCallTime = 0
-
-	return function throttled(...args: any[]) {
-		clearTimeout(timeoutId)
-
-		const now = Date.now()
-		const timeSinceLastCall = now - lastCallTime
-		const delayForNextCall = wait - timeSinceLastCall
-
-		if (delayForNextCall <= 0) {
-			lastCallTime = now
-			fn(args)
-		} else {
-			timeoutId = setTimeout(() => {
-				lastCallTime = Date.now()
-				fn(args)
-			}, delayForNextCall)
-		}
-	}
-}
-
 export const queuedThrottleWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
   let runningFunction: Promise<ReturnType<T>> | undefined
   let lastCall: Promise<ReturnType<T>> | undefined

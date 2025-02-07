@@ -206,7 +206,7 @@ const resolvers = {
             return {
               ...subtitle,
               type: 'header',
-              content: new TextDecoder().decode(data)
+              content: data
             }
           }),
           info: {
@@ -240,7 +240,7 @@ const resolvers = {
             return {
               ...subtitle,
               type: 'dialogue',
-              content: new TextDecoder().decode(data)
+              content: data
             }
           }),
           offset: result.offset,
@@ -262,7 +262,7 @@ const resolvers = {
             return {
               ...subtitle,
               type: 'dialogue',
-              content: new TextDecoder().decode(data)
+              content: data
             }
           }),
           offset: result.offset,

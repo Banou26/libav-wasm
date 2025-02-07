@@ -44,7 +44,7 @@ typedef struct Attachment {
 typedef struct SubtitleFragment {
   int streamIndex;
   bool isHeader;
-  emscripten::val data;
+  std::string data;
   std::string language;
   std::string title;
   long start;
@@ -384,7 +384,7 @@ public:
       // We handle subtitles separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
         // It's a subtitle header
-        SubtitleFragment subtitle_fragment;
+        SubtitleFragment subtitle_fragment = SubtitleFragment();
         subtitle_fragment.streamIndex = i;
         subtitle_fragment.isHeader = true;
         subtitle_fragment.start = 0;
@@ -395,16 +395,10 @@ public:
         AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
         if (title) subtitle_fragment.title = title->value;
         // The extradata is the "header"
-
         std::string subtitle_data;
         subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+        subtitle_fragment.data = subtitle_data;
 
-        subtitle_fragment.data = emscripten::val(
-          emscripten::typed_memory_view(
-            subtitle_data.size(),
-            subtitle_data.data()
-          )
-        );
         subtitles.push_back(subtitle_fragment);
         // Mark not to be remuxed in the output container (mp4)
         streams_list[i] = -1;
@@ -560,19 +554,7 @@ public:
         break;
       }
 
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
-        av_packet_free(&packet);
-        continue;
-      }
-
       AVStream* in_stream  = input_format_context->streams[packet->stream_index];
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
-        continue;
-      }
 
       // If it's a subtitle packet
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
@@ -582,13 +564,24 @@ public:
         subtitle_fragment.start = packet->pts;
         subtitle_fragment.end   = subtitle_fragment.start + packet->duration;
         // The actual subtitle data
-        subtitle_fragment.data = emscripten::val(
-          emscripten::typed_memory_view(
-            packet->size,
-            packet->data
-          )
-        );
-        subtitles.push_back(std::move(subtitle_fragment));
+        std::string subtitle_data;
+        subtitle_data.assign((char*)packet->data, packet->size);
+        subtitle_fragment.data = subtitle_data;
+
+        subtitles.push_back(subtitle_fragment);
+        continue;
+      }
+
+      if (packet->stream_index >= number_of_streams
+          || streams_list[packet->stream_index] < 0) {
+        // not an included stream, drop
+        av_packet_free(&packet);
+        continue;
+      }
+
+      if (packet->stream_index >= number_of_streams
+          || streams_list[packet->stream_index] < 0) {
+        // not an included stream, drop
         continue;
       }
 
