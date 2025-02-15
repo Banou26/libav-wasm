@@ -8,8 +8,9 @@
   "types": "build/index.d.ts",
   "type": "module",
   "scripts": {
-    "dev": "npm i ./dist && concurrently \"npm run dev-wasm\" \"npm run dev-web\" \"npm run worker-build-dev\"",
-    "dev-wasm": "nodemon -e cpp --exec \"npm run make-docker\"",
+    "dev": "npm i ./dist && concurrently \"npm run dev-wasm-cmd\" \"npm run dev-web\" \"npm run worker-build-dev\"",
+    "dev-wasm-cmd": "nodemon -e cpp --exec \"npm run make-docker\"",
+    "dev-wasm": "concurrently \"nodemon -e cpp --exec \\\"npm run make-docker\\\"\"",
     "build-worker": "vite build --config vite-worker.config.ts",
     "make-docker": "docker-compose run libav-wasm make",
     "docker-clean": "docker compose up --remove-orphans",
@@ -29,7 +30,7 @@
     "nodemon": "^2.0.22",
     "shx": "^0.3.4",
     "typescript": "^5.7.3",
-    "vite": "^6.0.11"
+    "vite": "^6.1.0"
   },
   "dependencies": {
     "osra": "^0.1.2",

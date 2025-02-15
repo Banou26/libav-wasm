@@ -1,4 +1,4 @@
-FROM emscripten/emsdk:3.1.42 as build
+FROM emscripten/emsdk:4.0.3 as build
 
 # ARG LASS_VERSION=0.16.0
 ARG X264_VERSION=20191217-2245-stable
@@ -9,6 +9,13 @@ ARG MAKEFLAGS="-j4"
 
 RUN apt-get update && apt-get install -y autoconf libtool build-essential
 # libass-dev libfreetype6-dev libfontconfig1-dev xclip
+
+# Make sure Emscripten’s tools are used instead of 'llvm-*'.
+ENV CC=emcc \
+    CXX=em++ \
+    AR=emar \
+    NM=emnm \
+    RANLIB=emranlib
 
 # # libass
 # RUN cd /tmp && \
@@ -85,9 +92,10 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --nm="llvm-nm -g" \
   --ar=emar \
   --as=llvm-as \
-  --ranlib=llvm-ranlib \
-  --cc=emcc \
-  --cxx=em++ \
+  --cc="${CC}" \
+  --cxx="${CXX}" \
+  --ar="${AR}" \
+  --ranlib="${RANLIB}" \
   --objcc=emcc \
   --dep-cc=emcc
 

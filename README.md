@@ -67,6 +67,59 @@ To have C++ autocompletion, put a ffmpeg repo clone folder in the root
 - Decoding + canvas rendering
 - Thumbnail extraction
 
+Apparently creating contexts and sending transferable streams breaks chrome.
+```ts
+const dothething = async (i: number) => {
+  const workerUrl = new URL('/build/libav.js', new URL(window.location.toString()).origin).toString()
+  const blob = new Blob([`importScripts(${JSON.stringify(workerUrl)})`], { type: 'application/javascript' })
+  const libavWorkerUrl = URL.createObjectURL(blob)
+  console.log('creating', i)
+  const remuxer = await makeRemuxer({
+    publicPath: new URL('/build/', new URL(import.meta.url).origin).toString(),
+    workerUrl: libavWorkerUrl,
+    bufferSize: BASE_BUFFER_SIZE,
+    length,
+    getStream: (offset, size) =>
+      fetch(
+        '/video.mkv',
+        {
+          headers: {
+            Range: `bytes=${offset}-${size ?? (!BACKPRESSURE_STREAM_ENABLED ? Math.min(offset + BASE_BUFFER_SIZE, size!) : '')}`
+          }
+        }
+      )
+        .then(response => toStreamChunkSize(BASE_BUFFER_SIZE)(response.body!))
+  })
+  console.log('created', i)
+  console.log('initing', i)
+  await remuxer.init()
+  console.log('inited', i)
+  console.log('destroying', i)
+  await remuxer.destroy()
+  console.log('destroyed', i)
+  console.log('terminating', i)
+  remuxer.worker.terminate()
+  console.log('terminated', i)
+  URL.revokeObjectURL(libavWorkerUrl)
+}
+
+for (let i = 0; i < 8; i++) {
+  setTimeout(() => dothething(i), i * 1000)
+}
+
+setTimeout(() => {
+  console.log('aaaa')
+  fetch(
+    '/video.mkv',
+    {
+      headers: {
+        Range: `bytes=${0}-${5000}`
+      }
+    }
+  ).then(response => response.arrayBuffer())
+}, 10_000)
+```
+
 
 <!-- https://www.ffmpeg.org/doxygen/trunk/remuxing_8c-example.html -->
 <!-- https://github.com/leandromoreira/ffmpeg-libav-tutorial -->
