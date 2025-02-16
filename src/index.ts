@@ -111,8 +111,22 @@ export const makeRemuxer = async ({
   }
 
   return {
+    worker,
     init: () => addTask((abortController) => remuxer.init(wasmRead(abortController))),
-    destroy: () => remuxer.destroy(),
+    destroy: async () => {
+      try {
+        await reader?.cancel()
+      } catch (err) {}
+      reader = undefined
+      currentStream = undefined
+      currentStreamOffset = undefined
+      const currentAbortControllers = [...abortControllers]
+      abortControllers = []
+      queue.clear()
+      currentAbortControllers.forEach(abortController => abortController.abort())
+      await remuxer.destroy()
+      worker.terminate()
+    },
     seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
     read: () => addTask((abortController) => remuxer.read(wasmRead(abortController)))
   }
