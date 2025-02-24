@@ -27,8 +27,8 @@ export type SubtitleFragment =
   | {
     type: 'dialogue'
     streamIndex: any
-    startTime: number
-    endTime: number
+    start: number
+    end: number
     dialogueIndex: number
     layer: number
     content: string
@@ -39,6 +39,8 @@ export type RemuxerInstanceAttachment = {
   filename: string
   mimetype: string
   data: Uint8Array
+  size: number
+  ptr: number
 }
 
 export type Attachment = {
@@ -158,14 +160,7 @@ const makeModule = (publicPath: string, log: (isError: boolean, text: string) =>
     printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
     // print: (text: string) => log(false, text),
     // printErr: (text: string) => log(true, text),
-  }) as Promise<{ Remuxer: RemuxerInstance }>
-
-// converts ms to 'h:mm:ss.cc' format
-const convertTimestamp = (ms: number) =>
-  new Date(ms)
-    .toISOString()
-    .slice(11, 22)
-    .replace(/^00/, '0')
+  }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
 
 type WASMVector<T> = {
   size: () => number
@@ -187,19 +182,23 @@ const resolvers = {
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
-    const { Remuxer } = await makeModule(publicPath, log)
+    const { Remuxer, HEAPU8 } = await makeModule(publicPath, log)
     const _remuxer = new Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)
-        typedArray.set(new Uint8Array(result.data))
+        typedArray.set(result.data)
         return {
           data: typedArray.buffer,
-          attachments: vectorToArray(result.attachments).map(attachment => ({
-            filename: attachment.filename,
-            mimetype: attachment.mimetype,
-            data: new Uint8Array(attachment.data).buffer
-          })),
+          attachments: vectorToArray(result.attachments).map(attachment => {
+            const data = new Uint8Array(HEAPU8.buffer, attachment.ptr, attachment.size)
+            const dataCopy = new Uint8Array(data)
+            return {
+              filename: attachment.filename,
+              mimetype: attachment.mimetype,
+              data: dataCopy.buffer
+            }
+          }),
           subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
             if (!_subtitle.isHeader) throw new Error('Subtitle type is not header')
             const { isHeader, data, ...subtitle } = _subtitle
@@ -275,7 +274,7 @@ const resolvers = {
     } as Remuxer
 
     const readToWasmRead = (read: ReadFunction) => (offset: number, size: number) =>
-      read(offset, size)
+      read(Number(offset), Number(size))
         .then(
           ({ resolved, rejected }) => ({ resolved: new Uint8Array(resolved), rejected }),
           () => ({ resolved: new Uint8Array(0), rejected: true })

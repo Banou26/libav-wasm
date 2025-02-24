@@ -75,7 +75,7 @@ export const makeRemuxer = async ({
   const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
     if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0).buffer, rejected: true })
     return Promise.race([
-      read(offset, size)
+      read(Number(offset), Number(size))
         .then(
           buffer => ({ resolved: new Uint8Array(buffer).buffer, rejected: false }),
           () => ({ resolved: new Uint8Array(0).buffer, rejected: true })

@@ -38,7 +38,8 @@ typedef struct IOInfo {
 typedef struct Attachment {
   std::string filename;
   std::string mimetype;
-  emscripten::val data;
+  size_t size;
+  size_t ptr;
 } Attachment;
 
 typedef struct SubtitleFragment {
@@ -56,6 +57,7 @@ typedef struct InitResult {
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
   IOInfo info;
+  std::vector<uint8_t> attachments_data;
 } InitResult;
 
 typedef struct ReadResult {
@@ -359,23 +361,20 @@ public:
 
       // We handle attachments separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
-        // Extract the attachment info
         Attachment attachment;
-        AVDictionaryEntry* filename = av_dict_get(in_stream->metadata, "filename", NULL, 0);
-        if (filename) attachment.filename = filename->value;
-        AVDictionaryEntry* mimetype = av_dict_get(in_stream->metadata, "mimetype", NULL, 0);
-        if (mimetype) attachment.mimetype = mimetype->value;
+    
+        // Copy metadata
+        if (auto fn = av_dict_get(in_stream->metadata, "filename", NULL, 0)) {
+          attachment.filename = fn->value;
+        }
+        if (auto mt = av_dict_get(in_stream->metadata, "mimetype", NULL, 0)) {
+          attachment.mimetype = mt->value;
+        }
 
-        std::string attachment_data;
-        attachment_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
+        attachment.size = in_codecpar->extradata_size;
+        attachment.ptr = (size_t)malloc(attachment.size);
+        std::memcpy((void*)attachment.ptr, in_codecpar->extradata, attachment.size);
 
-        // The actual attachment bytes are in extradata
-        attachment.data = emscripten::val(
-          emscripten::typed_memory_view(
-            attachment_data.size(),
-            attachment_data.data()
-          )
-        );
         attachments.push_back(attachment);
         streams_list[i] = -1;
         continue;
@@ -467,12 +466,22 @@ public:
     pos = 0;
   }
 
+  void clear_attachments() {
+    for (auto& attachment : attachments) {
+      if (attachment.ptr) {
+        free((void*)attachment.ptr);
+        attachment.ptr = 0;
+      }
+    }
+    attachments.clear();
+  }
+
   InitResult init(emscripten::val read_function) {
     read_data_function = read_function;
 
     reset_fragment();
     write_vector.clear();
-    attachments.clear();
+    clear_attachments();
     subtitles.clear();
     video_mime_type.clear();
     audio_mime_type.clear();
@@ -662,7 +671,7 @@ public:
 
     reset_fragment();
     write_vector.clear();
-    attachments.clear();
+    clear_attachments();
     subtitles.clear();
     // video_mime_type.clear();
     // audio_mime_type.clear();
@@ -778,7 +787,8 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
   emscripten::value_object<Attachment>("Attachment")
     .field("filename", &Attachment::filename)
     .field("mimetype", &Attachment::mimetype)
-    .field("data",     &Attachment::data);
+    .field("ptr",      &Attachment::ptr)
+    .field("size",     &Attachment::size);
 
   emscripten::value_object<SubtitleFragment>("SubtitleFragment")
     .field("streamIndex", &SubtitleFragment::streamIndex)
