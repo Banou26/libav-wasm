@@ -35,6 +35,19 @@ export type SubtitleFragment =
     fields: Record<string, string>
   }
 
+export type Index = {
+  index: number
+  timestamp: number
+  pos: number
+}
+
+export type Chapter = {
+  index: number
+  start: number
+  end: number
+  title: string
+}
+
 export type RemuxerInstanceAttachment = {
   filename: string
   mimetype: string
@@ -71,6 +84,8 @@ export interface RemuxerInstance {
     data: Uint8Array
     attachments: WASMVector<RemuxerInstanceAttachment>
     subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
+    indexes: WASMVector<Index>
+    chapters: WASMVector<Chapter>
     info: {
       input: {
         audioMimeType: string
@@ -107,6 +122,7 @@ export interface RemuxerInstance {
     cancelled: boolean
     finished: boolean
   }>
+  seekInputConvert: (read: WASMReadFunction, byteOffsetOrTimestamp: number, isTimestamp: boolean) => Promise<number>
 }
 
 export type Remuxer = {
@@ -151,6 +167,7 @@ export type Remuxer = {
     cancelled: boolean
     finished: boolean
   }>
+  seekInputConvert: (read: WASMReadFunction, byteOffsetOrTimestamp: number, isTimestamp: boolean) => Promise<number>
 }
 
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
@@ -208,6 +225,17 @@ const resolvers = {
               content: data
             }
           }),
+          indexes: vectorToArray(result.indexes).map(({ index, timestamp, pos }) => ({
+            index,
+            timestamp,
+            pos
+          })),
+          chapters: vectorToArray(result.chapters).map(({ index, start, end, title }) => ({
+            index,
+            start,
+            end,
+            title
+          })),
           info: {
             input: {
               audioMimeType: result.info.input.audioMimeType,

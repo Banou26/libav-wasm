@@ -52,12 +52,27 @@ typedef struct SubtitleFragment {
   long end;
 } SubtitleFragment;
 
+typedef struct Index {
+  int index;
+  float timestamp;
+  size_t pos;
+} Index;
+
+typedef struct Chapter {
+  int index;
+  float start;
+  float end;
+  std::string title;
+} Chapter;
+
 typedef struct InitResult {
   emscripten::val data;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
   IOInfo info;
   std::vector<uint8_t> attachments_data;
+  std::vector<Index> indexes;
+  std::vector<Chapter> chapters;
 } InitResult;
 
 typedef struct ReadResult {
@@ -522,6 +537,39 @@ public:
     result.subtitles = subtitles;
     result.info = infoObj;
 
+    // loop through the chapters
+    for (int i = 0; i < input_format_context->nb_chapters; i++) {
+      AVChapter *av_chapter = input_format_context->chapters[i];
+      int64_t start_time = av_chapter->start * av_chapter->time_base.num / av_chapter->time_base.den;
+      int64_t end_time = av_chapter->end * av_chapter->time_base.num / av_chapter->time_base.den;
+      Chapter chapter;
+      chapter.index = i;
+      chapter.start = start_time;
+      chapter.end = end_time;
+      AVDictionaryEntry *capter_entry = NULL;
+      capter_entry = av_dict_get(av_chapter->metadata, "title", NULL, 0);
+      if (capter_entry) {
+        chapter.title = capter_entry->value;
+      }
+      result.chapters.push_back(chapter);
+    }
+
+    // this is needed to load the seeking cues / indexes
+    int ret = av_seek_frame(input_format_context, video_stream_index, 0, AVSEEK_FLAG_BACKWARD);
+
+    AVStream* in_stream = input_format_context->streams[video_stream_index];
+    int nb_entries = avformat_index_get_entries_count(in_stream);
+    for (int i = 0; i < nb_entries; i++) {
+      const AVIndexEntry* entry = avformat_index_get_entry(in_stream, i);
+      if (entry->flags & AVINDEX_KEYFRAME) {
+        Index index;
+        index.index = i;
+        index.pos = entry->pos;
+        index.timestamp = entry->timestamp * av_q2d(in_stream->time_base);
+        result.indexes.push_back(index);
+      }
+    }
+
     read_data_function = val::undefined();
     wrote = false;
 
@@ -781,6 +829,8 @@ private:
 EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
   emscripten::register_vector<Attachment>("VectorAttachment");
   emscripten::register_vector<SubtitleFragment>("VectorSubtitleFragment");
+  emscripten::register_vector<Index>("VectorIndex");
+  emscripten::register_vector<Chapter>("VectorChapter");
   emscripten::register_vector<uint8_t>("VectorUInt8");
   emscripten::register_vector<emscripten::val>("VectorVal");
 
@@ -799,6 +849,17 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("start",       &SubtitleFragment::start)
     .field("end",         &SubtitleFragment::end);
 
+  emscripten::value_object<Chapter>("Chapter")
+    .field("index",  &Chapter::index)
+    .field("start",  &Chapter::start)
+    .field("end",    &Chapter::end)
+    .field("title",  &Chapter::title);
+
+  emscripten::value_object<Index>("Index")
+    .field("index",  &Index::index)
+    .field("timestamp",  &Index::timestamp)
+    .field("pos",    &Index::pos);
+
   emscripten::value_object<MediaInfo>("MediaInfo")
     .field("formatName",      &MediaInfo::formatName)
     .field("mimeType",        &MediaInfo::mimeType)
@@ -814,6 +875,8 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("data",        &InitResult::data)
     .field("attachments", &InitResult::attachments)
     .field("subtitles",   &InitResult::subtitles)
+    .field("chapters",    &InitResult::chapters)
+    .field("indexes",     &InitResult::indexes)
     .field("info",        &InitResult::info);
 
   emscripten::value_object<ReadResult>("ReadResult")
