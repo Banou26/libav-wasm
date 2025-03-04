@@ -565,7 +565,6 @@ public:
     
     bool frameFound = false;
     int64_t bestDiff = INT64_MAX;
-    AVFrame* bestFrame = av_frame_alloc();
     
     // Read frames until we find one close to the requested timestamp
     while (av_read_frame(input_format_context, packet) >= 0) {
@@ -576,42 +575,9 @@ public:
         if (ret < 0) {
           break;
         }
-        
-        while (ret >= 0) {
-          printf("init receive frame\n");
-          ret = avcodec_receive_frame(decoder_ctx, frame);
-          printf("init received frame\n");
-          if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-            break;
-          } else if (ret < 0) {
-            frameFound = false;
-            goto cleanup;
-          }
-          
-          // Calculate frame timestamp
-          int64_t pts = frame->pts;
-          int64_t ptsDiff = llabs(pts - seek_target);
-          
-          // Check if this frame is closer to target than previous best
-          if (ptsDiff < bestDiff) {
-            bestDiff = ptsDiff;
-            av_frame_unref(bestFrame);
-            av_frame_ref(bestFrame, frame);
-            frameFound = true;
-            
-            // If this frame is very close to target, we can stop
-            if (ptsDiff < video_stream->time_base.den / (20 * video_stream->time_base.num)) {
-              break;
-            }
-          }
-          
-          av_frame_unref(frame);
-        }
-        
-        // If we found a frame very close to target, break
-        if (frameFound && bestDiff < video_stream->time_base.den / (5 * video_stream->time_base.num)) {
-          break;
-        }
+        ret = avcodec_receive_frame(decoder_ctx, frame);
+        frameFound = true;
+        break;
       }
       av_packet_unref(packet);
     }
@@ -622,7 +588,6 @@ public:
       avcodec_send_packet(decoder_ctx, NULL);
       if (avcodec_receive_frame(decoder_ctx, frame) >= 0) {
         frameFound = true;
-        av_frame_ref(bestFrame, frame);
       }
     }
     
@@ -630,7 +595,6 @@ public:
     if (!frameFound) {
       cleanup:
       av_frame_free(&frame);
-      av_frame_free(&bestFrame);
       av_packet_free(&packet);
       avcodec_free_context(&decoder_ctx);
       ThumbnailResult result;
@@ -642,11 +606,11 @@ public:
     AVFrame* rgb_frame = av_frame_alloc();
     
     // Calculate output dimensions while maintaining aspect ratio
-    int output_width = bestFrame->width;
-    int output_height = bestFrame->height;
+    int output_width = frame->width;
+    int output_height = frame->height;
     
     if (maxWidth > 0 && maxHeight > 0) {
-      double aspectRatio = (double)bestFrame->width / bestFrame->height;
+      double aspectRatio = (double)frame->width / frame->height;
       if (output_width > maxWidth) {
         output_width = maxWidth;
         output_height = output_width / aspectRatio;
@@ -671,7 +635,7 @@ public:
     
     // Initialize SwsContext for scaling
     struct SwsContext* sws_ctx = sws_getContext(
-      bestFrame->width, bestFrame->height, (AVPixelFormat)bestFrame->format,
+      frame->width, frame->height, (AVPixelFormat)frame->format,
       output_width, output_height, AV_PIX_FMT_RGB24,
       SWS_BILINEAR, NULL, NULL, NULL
     );
@@ -679,7 +643,6 @@ public:
     if (!sws_ctx) {
       av_frame_free(&rgb_frame);
       av_frame_free(&frame);
-      av_frame_free(&bestFrame);
       av_packet_free(&packet);
       avcodec_free_context(&decoder_ctx);
       ThumbnailResult result;
@@ -688,13 +651,14 @@ public:
     }
     
     // Convert frame to RGB
-    sws_scale(sws_ctx, bestFrame->data, bestFrame->linesize, 0, bestFrame->height,
+    sws_scale(sws_ctx, frame->data, frame->linesize, 0, frame->height,
               rgb_frame->data, rgb_frame->linesize);
     
     // Create a vector to hold the RGB data
     std::vector<uint8_t> rgb_data;
     rgb_data.reserve(output_width * output_height * 3);
     
+    printf("init prep writing data\n");
     // Copy RGB data to vector
     for (int y = 0; y < output_height; y++) {
       rgb_data.insert(rgb_data.end(), 
@@ -709,7 +673,6 @@ public:
     sws_freeContext(sws_ctx);
     av_frame_free(&rgb_frame);
     av_frame_free(&frame);
-    av_frame_free(&bestFrame);
     av_packet_free(&packet);
     avcodec_free_context(&decoder_ctx);
 

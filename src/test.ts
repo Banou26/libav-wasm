@@ -220,7 +220,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         return
       }
       try {
+        const p1 = performance.now()
         const res = await remuxer.read()
+        console.log('read', performance.now() - p1)
         await appendBuffer(res.data)
         await unbuffer()
       } catch (err: any) {
