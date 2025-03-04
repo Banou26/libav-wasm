@@ -11,6 +11,7 @@ extern "C" {
   #include <libavformat/avio.h>
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
+  #include <libswscale/swscale.h>
 }
 
 using namespace emscripten;
@@ -84,6 +85,13 @@ typedef struct ReadResult {
   bool cancelled;
   bool finished;
 } ReadResult;
+
+typedef struct ThumbnailResult {
+  emscripten::val data;
+  int width;
+  int height;
+  bool cancelled;
+} ThumbnailResult;
 
 // typedef struct SeekResult {
 //   emscripten::val data;
@@ -491,6 +499,239 @@ public:
     attachments.clear();
   }
 
+  ThumbnailResult extractThumbnail(emscripten::val read_function, double timestamp, int maxWidth, int maxHeight) {
+    resolved_promise.await();
+    
+    read_data_function = read_function;
+    
+    printf("inited\n");
+    
+    // // Find decoder for video stream
+    AVStream* video_stream = input_format_context->streams[video_stream_index];
+    const AVCodec* decoder = avcodec_find_decoder(video_stream->codecpar->codec_id);
+    if (!decoder) {
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+    
+    // Allocate and initialize decoder context
+    AVCodecContext* decoder_ctx = avcodec_alloc_context3(decoder);
+    if (!decoder_ctx) {
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+    
+    // Copy parameters from stream to decoder context
+    if (avcodec_parameters_to_context(decoder_ctx, video_stream->codecpar) < 0) {
+      avcodec_free_context(&decoder_ctx);
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+    
+    // Open decoder
+    if (avcodec_open2(decoder_ctx, decoder, NULL) < 0) {
+      avcodec_free_context(&decoder_ctx);
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+
+    // Convert timestamp to stream time base
+    int64_t seek_target = av_rescale_q(
+      timestamp * AV_TIME_BASE, 
+      AV_TIME_BASE_Q, 
+      video_stream->time_base
+    );
+
+    printf("init context created\n");
+
+    
+    // Seek to timestamp
+    if (av_seek_frame(input_format_context, video_stream_index, seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
+      avcodec_free_context(&decoder_ctx);
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+    
+    printf("init seeked\n");
+
+    // Allocate packet and frame
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    
+    bool frameFound = false;
+    int64_t bestDiff = INT64_MAX;
+    AVFrame* bestFrame = av_frame_alloc();
+    
+    // Read frames until we find one close to the requested timestamp
+    while (av_read_frame(input_format_context, packet) >= 0) {
+      if (packet->stream_index == video_stream_index) {
+        printf("init reading frame\n");
+        int ret = avcodec_send_packet(decoder_ctx, packet);
+        printf("init send packet\n");
+        if (ret < 0) {
+          break;
+        }
+        
+        while (ret >= 0) {
+          printf("init receive frame\n");
+          ret = avcodec_receive_frame(decoder_ctx, frame);
+          printf("init received frame\n");
+          if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            break;
+          } else if (ret < 0) {
+            frameFound = false;
+            goto cleanup;
+          }
+          
+          // Calculate frame timestamp
+          int64_t pts = frame->pts;
+          int64_t ptsDiff = llabs(pts - seek_target);
+          
+          // Check if this frame is closer to target than previous best
+          if (ptsDiff < bestDiff) {
+            bestDiff = ptsDiff;
+            av_frame_unref(bestFrame);
+            av_frame_ref(bestFrame, frame);
+            frameFound = true;
+            
+            // If this frame is very close to target, we can stop
+            if (ptsDiff < video_stream->time_base.den / (20 * video_stream->time_base.num)) {
+              break;
+            }
+          }
+          
+          av_frame_unref(frame);
+        }
+        
+        // If we found a frame very close to target, break
+        if (frameFound && bestDiff < video_stream->time_base.den / (5 * video_stream->time_base.num)) {
+          break;
+        }
+      }
+      av_packet_unref(packet);
+    }
+    printf("init read\n");
+    
+    // If no frame was found, send null packet to flush decoder
+    if (!frameFound) {
+      avcodec_send_packet(decoder_ctx, NULL);
+      if (avcodec_receive_frame(decoder_ctx, frame) >= 0) {
+        frameFound = true;
+        av_frame_ref(bestFrame, frame);
+      }
+    }
+    
+    // If no frame was found, return empty result
+    if (!frameFound) {
+      cleanup:
+      av_frame_free(&frame);
+      av_frame_free(&bestFrame);
+      av_packet_free(&packet);
+      avcodec_free_context(&decoder_ctx);
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+    
+    // Setup scaling context to convert frame to RGB
+    AVFrame* rgb_frame = av_frame_alloc();
+    
+    // Calculate output dimensions while maintaining aspect ratio
+    int output_width = bestFrame->width;
+    int output_height = bestFrame->height;
+    
+    if (maxWidth > 0 && maxHeight > 0) {
+      double aspectRatio = (double)bestFrame->width / bestFrame->height;
+      if (output_width > maxWidth) {
+        output_width = maxWidth;
+        output_height = output_width / aspectRatio;
+      }
+      if (output_height > maxHeight) {
+        output_height = maxHeight;
+        output_width = output_height * aspectRatio;
+      }
+    }
+    
+    // Ensure even dimensions (required by some pixel formats)
+    output_width = (output_width >> 1) << 1;
+    output_height = (output_height >> 1) << 1;
+    
+    rgb_frame->format = AV_PIX_FMT_RGB24;
+    rgb_frame->width = output_width;
+    rgb_frame->height = output_height;
+    av_frame_get_buffer(rgb_frame, 0);
+
+    printf("init prep write\n");
+
+    
+    // Initialize SwsContext for scaling
+    struct SwsContext* sws_ctx = sws_getContext(
+      bestFrame->width, bestFrame->height, (AVPixelFormat)bestFrame->format,
+      output_width, output_height, AV_PIX_FMT_RGB24,
+      SWS_BILINEAR, NULL, NULL, NULL
+    );
+    
+    if (!sws_ctx) {
+      av_frame_free(&rgb_frame);
+      av_frame_free(&frame);
+      av_frame_free(&bestFrame);
+      av_packet_free(&packet);
+      avcodec_free_context(&decoder_ctx);
+      ThumbnailResult result;
+      result.cancelled = true;
+      return result;
+    }
+    
+    // Convert frame to RGB
+    sws_scale(sws_ctx, bestFrame->data, bestFrame->linesize, 0, bestFrame->height,
+              rgb_frame->data, rgb_frame->linesize);
+    
+    // Create a vector to hold the RGB data
+    std::vector<uint8_t> rgb_data;
+    rgb_data.reserve(output_width * output_height * 3);
+    
+    // Copy RGB data to vector
+    for (int y = 0; y < output_height; y++) {
+      rgb_data.insert(rgb_data.end(), 
+                      rgb_frame->data[0] + y * rgb_frame->linesize[0],
+                      rgb_frame->data[0] + y * rgb_frame->linesize[0] + output_width * 3);
+    }
+
+    printf("init prep wrote\n");
+
+    
+    // Clean up
+    sws_freeContext(sws_ctx);
+    av_frame_free(&rgb_frame);
+    av_frame_free(&frame);
+    av_frame_free(&bestFrame);
+    av_packet_free(&packet);
+    avcodec_free_context(&decoder_ctx);
+
+    // Create result
+    ThumbnailResult result;
+    emscripten::val js_rgb_data = emscripten::val(
+      emscripten::typed_memory_view(
+        rgb_data.size(),
+        rgb_data.data()
+      )
+    );
+    result.data = js_rgb_data;
+    result.width = output_width;
+    result.height = output_height;
+    result.cancelled = false;
+
+    read_data_function = val::undefined();
+    printf("init prep done\n");
+
+    return result;
+  }
+
   InitResult init(emscripten::val read_function) {
     read_data_function = read_function;
 
@@ -888,10 +1129,17 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("cancelled", &ReadResult::cancelled)
     .field("finished",  &ReadResult::finished);
 
+  emscripten::value_object<ThumbnailResult>("ThumbnailResult")
+    .field("data",      &ThumbnailResult::data)
+    .field("width",     &ThumbnailResult::width)
+    .field("height",    &ThumbnailResult::height)
+    .field("cancelled", &ThumbnailResult::cancelled);
+
   emscripten::class_<Remuxer>("Remuxer")
     .constructor<emscripten::val>()
     .function("init",    &Remuxer::init)
     .function("read",    &Remuxer::read)
     .function("seek",    &Remuxer::seek)
-    .function("destroy", &Remuxer::destroy);
+    .function("destroy", &Remuxer::destroy)
+    .function("extractThumbnail", &Remuxer::extractThumbnail);
 }

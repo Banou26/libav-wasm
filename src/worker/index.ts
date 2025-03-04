@@ -35,6 +35,13 @@ export type SubtitleFragment =
     fields: Record<string, string>
   }
 
+export interface ThumbnailResult {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  cancelled: boolean;
+}
+
 export type Index = {
   index: number
   timestamp: number
@@ -123,6 +130,7 @@ export interface RemuxerInstance {
     finished: boolean
   }>
   seekInputConvert: (read: WASMReadFunction, byteOffsetOrTimestamp: number, isTimestamp: boolean) => Promise<number>
+  extractThumbnail: (read: WASMReadFunction, timestamp: number, maxWidth: number, maxHeight: number) => Promise<ThumbnailResult>;
 }
 
 export type Remuxer = {
@@ -147,6 +155,8 @@ export type Remuxer = {
         videoMimeType: string
       }
     }
+    chapters: Chapter[]
+    indexes: Index[]
   }>
   destroy: () => void
   seek: (read: WASMReadFunction, timestamp: number) => Promise<{
@@ -167,7 +177,12 @@ export type Remuxer = {
     cancelled: boolean
     finished: boolean
   }>
-  seekInputConvert: (read: WASMReadFunction, byteOffsetOrTimestamp: number, isTimestamp: boolean) => Promise<number>
+  extractThumbnail: (read: WASMReadFunction, timestamp: number, maxWidth: number, maxHeight: number) => Promise<{
+    data: ArrayBuffer;
+    width: number;
+    height: number;
+    cancelled: boolean;
+  }>;
 }
 
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
@@ -298,7 +313,20 @@ const resolvers = {
           cancelled: result.cancelled,
           finished: result.finished
         }
-      })
+      }),
+      extractThumbnail: (read, timestamp, maxWidth, maxHeight) => 
+        _remuxer.extractThumbnail(read, timestamp, maxWidth, maxHeight)
+          .then(result => {
+            if (result.cancelled) throw new Error('Cancelled')
+            const typedArray = new Uint8Array(result.data.byteLength)
+            typedArray.set(new Uint8Array(result.data))
+            return {
+              data: typedArray.buffer,
+              width: result.width,
+              height: result.height,
+              cancelled: result.cancelled
+            }
+          })
     } as Remuxer
 
     const readToWasmRead = (read: ReadFunction) => (offset: number, size: number) =>
@@ -312,7 +340,9 @@ const resolvers = {
       destroy: async () => remuxer.destroy(),
       init: (read: ReadFunction) => remuxer.init(readToWasmRead(read)),
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
-      read: (read: ReadFunction) => remuxer.read(readToWasmRead(read))
+      read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
+      extractThumbnail: (read: ReadFunction, timestamp: number, maxWidth: number, maxHeight: number) =>
+        remuxer.extractThumbnail(readToWasmRead(read), timestamp, maxWidth, maxHeight)
     }
   }
 }

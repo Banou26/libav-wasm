@@ -94,6 +94,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     })
 
     const header = await remuxer.init()
+    console.log('header', header.indexes)
 
     const video = document.createElement('video')
     video.width = 1440
@@ -241,12 +242,14 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       currentSeeks = [...currentSeeks, seekObject]
       lastSeekedPosition = currentTime
       try {
+        const p1 = performance.now()
         const res =
           await remuxer
             .seek(currentTime)
             .finally(() => {
               currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
             })
+        console.log('seek', performance.now() - p1)
         sourceBuffer.timestampOffset = res.pts
         await appendBuffer(res.data)
       } catch (err: any) {
@@ -259,4 +262,39 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     await appendBuffer(
       (await remuxer.read()).data
     )
+
+    const readThumbnail = async (timestamp: number) => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      container.style.display = 'flex';
+      container.style.flexWrap = 'wrap';
+      container.style.gap = '10px';
+      const p1 = performance.now()
+      const thumbnail = await remuxer.extractThumbnail(timestamp, 1080, 1920)
+      console.log('thumbnail', performance.now() - p1)
+      
+      // Create an image element to display the thumbnail
+      const thumbContainer = document.createElement('div');
+      thumbContainer.style.display = 'flex';
+      thumbContainer.style.flexDirection = 'column';
+      thumbContainer.style.alignItems = 'center';
+      
+      // Add the canvas directly to the DOM
+      thumbnail.canvas.style.border = '1px solid #ccc';
+      thumbContainer.appendChild(thumbnail.canvas);
+      
+      // Add a timestamp label
+      const label = document.createElement('div');
+      label.textContent = `Time: ${timestamp.toFixed(2)}s`;
+      thumbContainer.appendChild(label);
+
+      container.appendChild(thumbContainer);
+    }
+
+    setTimeout(async() => {
+      console.log('thumbnail...')
+      await readThumbnail(header.indexes[5].timestamp)
+      console.log('thumbnail done')
+      await readThumbnail(header.indexes[7].timestamp)
+    }, 5_000)
   })

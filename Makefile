@@ -23,9 +23,9 @@ dist/libav-wasm.js:
 	-I/tmp/ffmpeg-5.1/ \
 	-s FILESYSTEM=0 \
 	-s ENVIRONMENT=web \
-	-s INITIAL_MEMORY=150mb \
-	-s TOTAL_MEMORY=125mb \
-	-s STACK_SIZE=50mb \
+	-s INITIAL_MEMORY=200mb \
+	-s TOTAL_MEMORY=175mb \
+	-s STACK_SIZE=75mb \
 	-s ALLOW_MEMORY_GROWTH=1 \
 	-s ASYNCIFY \
 	-s MODULARIZE=1 \
