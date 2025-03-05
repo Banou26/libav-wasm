@@ -230,73 +230,102 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         console.error(err)
       }
     })
-    setInterval(loadMore, 100)
+    // setInterval(loadMore, 100)
 
-    video.addEventListener('seeking', async () => {
-      const { currentTime } = video
-      const bufferedRanges = getTimeRanges()
-      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
-      // seeking forward in a buffered range, can just continue by reading
-      if (timeRange && currentTime >= lastSeekedPosition) {
-        return
-      }
-      const seekObject = { currentTime }
-      currentSeeks = [...currentSeeks, seekObject]
-      lastSeekedPosition = currentTime
-      try {
-        const p1 = performance.now()
-        const res =
-          await remuxer
-            .seek(currentTime)
-            .finally(() => {
-              currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
-            })
-        console.log('seek', performance.now() - p1)
-        sourceBuffer.timestampOffset = res.pts
-        await appendBuffer(res.data)
-      } catch (err: any) {
-        if (err.message === 'Cancelled') return
-        console.error(err)
-      }
-      await unbuffer()
-    })
+    // video.addEventListener('seeking', async () => {
+    //   const { currentTime } = video
+    //   const bufferedRanges = getTimeRanges()
+    //   const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+    //   // seeking forward in a buffered range, can just continue by reading
+    //   if (timeRange && currentTime >= lastSeekedPosition) {
+    //     return
+    //   }
+    //   const seekObject = { currentTime }
+    //   currentSeeks = [...currentSeeks, seekObject]
+    //   lastSeekedPosition = currentTime
+    //   try {
+    //     const p1 = performance.now()
+    //     const res =
+    //       await remuxer
+    //         .seek(currentTime)
+    //         .finally(() => {
+    //           currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
+    //         })
+    //     console.log('seek', performance.now() - p1)
+    //     sourceBuffer.timestampOffset = res.pts
+    //     await appendBuffer(res.data)
+    //   } catch (err: any) {
+    //     if (err.message === 'Cancelled') return
+    //     console.error(err)
+    //   }
+    //   await unbuffer()
+    // })
 
-    await appendBuffer(
-      (await remuxer.read()).data
-    )
+    // await appendBuffer(
+    //   (await remuxer.read()).data
+    // )
 
-    const readThumbnail = async (timestamp: number) => {
-      const container = document.createElement('div');
-      document.body.appendChild(container);
-      container.style.display = 'flex';
-      container.style.flexWrap = 'wrap';
-      container.style.gap = '10px';
+    const thumbnailRatio = 16 / 9
+
+    const thumbnailCanvas = document.createElement('canvas')
+    const thumbnailCtx = thumbnailCanvas.getContext('2d')
+    if (!thumbnailCtx) throw new Error('Could not get canvas context')
+    thumbnailCanvas.width = thumbnailRatio * 200
+    thumbnailCanvas.height = 200
+
+    document.body.appendChild(thumbnailCanvas)
+
+    const thumbnailContainer = document.createElement('div')
+    document.body.appendChild(thumbnailContainer)
+    thumbnailContainer.style.display = 'flex'
+    thumbnailContainer.style.flexWrap = 'wrap'
+    thumbnailContainer.style.gap = '10px'
+
+    const thumbnails = []
+    const readThumbnail = async () => {
+      const currentIndex = header.indexes.at(thumbnails.length)
+      if (!currentIndex) return
+
+      console.log('thumbnail...', currentIndex.timestamp)
+
       const p1 = performance.now()
-      const thumbnail = await remuxer.extractThumbnail(timestamp, 1080, 1920)
+      const read = await remuxer.read()
+      await appendBuffer(read.data)
+      await new Promise(resolve => {
+        const interval = setInterval(() => {
+          if (video.readyState >= 2) {
+            clearInterval(interval)
+            resolve(undefined)
+          }
+        }, 10)
+      })
+      video.currentTime = currentIndex.timestamp
+      await new Promise(resolve =>
+        video.requestVideoFrameCallback(() => {
+          resolve(undefined)
+        })
+      )
+      thumbnailCtx.fillRect(0, 0, thumbnailCanvas.width, thumbnailCanvas.height)
+      thumbnailCtx.drawImage(video, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height)
+      const thumbnailData = thumbnailCanvas.toDataURL('image/png')
       console.log('thumbnail', performance.now() - p1)
-      
-      // Create an image element to display the thumbnail
-      const thumbContainer = document.createElement('div');
-      thumbContainer.style.display = 'flex';
-      thumbContainer.style.flexDirection = 'column';
-      thumbContainer.style.alignItems = 'center';
-      
-      // Add the canvas directly to the DOM
-      thumbnail.canvas.style.border = '1px solid #ccc';
-      thumbContainer.appendChild(thumbnail.canvas);
-      
-      // Add a timestamp label
-      const label = document.createElement('div');
-      label.textContent = `Time: ${timestamp.toFixed(2)}s`;
-      thumbContainer.appendChild(label);
+      await unbufferRange(read.pts, read.pts + read.duration)
 
-      container.appendChild(thumbContainer);
+      // Create an image element to display the thumbnail
+      const thumbnail = document.createElement('img')
+      thumbnail.src = thumbnailData
+
+      thumbnailContainer.appendChild(thumbnail)
+
+      thumbnails.push(thumbnail)
     }
 
     setTimeout(async() => {
-      console.log('thumbnail...')
-      await readThumbnail(header.indexes[5].timestamp)
-      console.log('thumbnail done')
-      await readThumbnail(header.indexes[7].timestamp)
-    }, 5_000)
+      while (true) {
+        await readThumbnail()
+        if (thumbnails.length >= header.indexes.length) break
+      }
+      // console.log('thumbnail done')
+      // await readThumbnail(header.indexes[7].timestamp)
+    }, 1_000)
   })
