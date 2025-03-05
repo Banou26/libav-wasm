@@ -63,6 +63,7 @@ To have C++ autocompletion, put a ffmpeg repo clone folder in the root
 
 
 ## Issues to fix / features to implement
+- Try to play around with `sourceBuffer.timestampOffset = res.pts` and always increasing timestamps to not have to re-init on backwards seeks
 - Transcoding
 - Decoding + canvas rendering
 - Thumbnail extraction
