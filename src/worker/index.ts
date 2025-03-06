@@ -109,6 +109,7 @@ export interface RemuxerInstance {
         videoMimeType: string
       }
     }
+    videoExtradata: WASMVector<number>
   }>
   destroy: () => void
   seek: (read: WASMReadFunction, timestamp: number) => Promise<{
@@ -128,6 +129,7 @@ export interface RemuxerInstance {
     duration: number
     cancelled: boolean
     finished: boolean
+    thumbnailData: Uint8Array
   }>
   seekInputConvert: (read: WASMReadFunction, byteOffsetOrTimestamp: number, isTimestamp: boolean) => Promise<number>
   extractThumbnail: (read: WASMReadFunction, timestamp: number, maxWidth: number, maxHeight: number) => Promise<ThumbnailResult>;
@@ -157,6 +159,7 @@ export type Remuxer = {
     }
     chapters: Chapter[]
     indexes: Index[]
+    videoExtradata: ArrayBuffer
   }>
   destroy: () => void
   seek: (read: WASMReadFunction, timestamp: number) => Promise<{
@@ -176,6 +179,7 @@ export type Remuxer = {
     duration: number
     cancelled: boolean
     finished: boolean
+    thumbnailData: Uint8Array
   }>
   extractThumbnail: (read: WASMReadFunction, timestamp: number, maxWidth: number, maxHeight: number) => Promise<{
     data: ArrayBuffer;
@@ -222,6 +226,7 @@ const resolvers = {
         typedArray.set(result.data)
         return {
           data: typedArray.buffer,
+          videoExtradata: new Uint8Array(vectorToArray(result.videoExtradata)).buffer,
           attachments: vectorToArray(result.attachments).map(attachment => {
             const data = new Uint8Array(HEAPU8.buffer, attachment.ptr, attachment.size)
             const dataCopy = new Uint8Array(data)
@@ -296,8 +301,11 @@ const resolvers = {
         if (result.cancelled) throw new Error('Cancelled')
         const typedArray = new Uint8Array(result.data.byteLength)
         typedArray.set(new Uint8Array(result.data))
+        const thumbnailTypedArray = new Uint8Array(result.thumbnailData.byteLength)
+        thumbnailTypedArray.set(new Uint8Array(result.thumbnailData))
         return {
           data: typedArray.buffer,
+          thumbnailData: thumbnailTypedArray.buffer,
           subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
             if (_subtitle.isHeader) throw new Error('Subtitle type is header')
             const { isHeader, data, ...subtitle } = _subtitle

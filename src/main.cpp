@@ -74,10 +74,12 @@ typedef struct InitResult {
   std::vector<uint8_t> attachments_data;
   std::vector<Index> indexes;
   std::vector<Chapter> chapters;
+  std::vector<uint8_t> video_extradata;
 } InitResult;
 
 typedef struct ReadResult {
   emscripten::val data;
+  emscripten::val thumbnail_data;
   std::vector<SubtitleFragment> subtitles;
   long offset;
   double pts;
@@ -135,6 +137,7 @@ public:
   int init_buffer_count = 0;
   std::vector<std::string> init_vector;
   std::vector<uint8_t> write_vector;
+  std::vector<uint8_t> thumbnail_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
 
@@ -453,6 +456,20 @@ public:
           "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
         );
       }
+      if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        AVDictionaryEntry *tag = NULL;
+        while ((tag = av_dict_get(output_format_context->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
+            printf("Key: %s, Value: %s\n", tag->key, tag->value);
+        }
+        
+        // For stream-level metadata:
+        for (unsigned i = 0; i < output_format_context->nb_streams; i++) {
+            tag = NULL;
+            while ((tag = av_dict_get(output_format_context->streams[i]->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
+                printf("Stream %u - Key: %s, Value: %s\n", i, tag->key, tag->value);
+            }
+        }
+      }
       streams_list[i] = out_index++;
     }
   }
@@ -762,6 +779,7 @@ public:
     int ret = av_seek_frame(input_format_context, video_stream_index, 0, AVSEEK_FLAG_BACKWARD);
 
     AVStream* in_stream = input_format_context->streams[video_stream_index];
+    AVCodecParameters* in_codecpar = in_stream->codecpar;
     int nb_entries = avformat_index_get_entries_count(in_stream);
     for (int i = 0; i < nb_entries; i++) {
       const AVIndexEntry* entry = avformat_index_get_entry(in_stream, i);
@@ -772,6 +790,14 @@ public:
         index.timestamp = entry->timestamp * av_q2d(in_stream->time_base);
         result.indexes.push_back(index);
       }
+    }
+
+    // Copy the extradata to the result
+    if (in_codecpar->extradata && in_codecpar->extradata_size > 0) {
+      result.video_extradata.assign(
+        in_codecpar->extradata,
+        in_codecpar->extradata + in_codecpar->extradata_size
+      );
     }
 
     read_data_function = val::undefined();
@@ -874,6 +900,8 @@ public:
 
         pts = packet->pts * av_q2d(out_stream->time_base);
         pos = packet->pos;
+
+        thumbnail_vector.assign(packet->data, packet->data + packet->size);
       }
 
       // Write to output
@@ -898,7 +926,15 @@ public:
         write_vector.data()
       )
     );
+
+    emscripten::val thumbnail_js_write_vector = emscripten::val(
+      emscripten::typed_memory_view(
+        thumbnail_vector.size(),
+        thumbnail_vector.data()
+      )
+    );
     result.data = js_write_vector;
+    result.thumbnail_data = thumbnail_js_write_vector;
     result.subtitles = subtitles;
     result.offset = prev_pos;
     result.pts = prev_pts;
@@ -1081,7 +1117,8 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("subtitles",   &InitResult::subtitles)
     .field("chapters",    &InitResult::chapters)
     .field("indexes",     &InitResult::indexes)
-    .field("info",        &InitResult::info);
+    .field("info",        &InitResult::info)
+    .field("videoExtradata", &InitResult::video_extradata);
 
   emscripten::value_object<ReadResult>("ReadResult")
     .field("data",      &ReadResult::data)
@@ -1090,7 +1127,8 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("pts",       &ReadResult::pts)
     .field("duration",  &ReadResult::duration)
     .field("cancelled", &ReadResult::cancelled)
-    .field("finished",  &ReadResult::finished);
+    .field("finished",  &ReadResult::finished)
+    .field("thumbnailData", &ReadResult::thumbnail_data);
 
   emscripten::value_object<ThumbnailResult>("ThumbnailResult")
     .field("data",      &ThumbnailResult::data)
