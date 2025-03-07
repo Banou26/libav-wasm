@@ -129,59 +129,6 @@ export const makeRemuxer = async ({
     },
     seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
     read: () => addTask((abortController) => remuxer.read(wasmRead(abortController))),
-    extractThumbnail: (timestamp: number, maxWidth: number = 0, maxHeight: number = 0) =>
-      console.log('thumbnail start') ||
-      addTask((abortController) => 
-        remuxer.extractThumbnail(
-          wasmRead(abortController), 
-          timestamp, 
-          maxWidth, 
-          maxHeight
-        )
-      ).then(result => {
-        console.log('thumbnail computed')
-        // Convert the raw RGB data to a Blob that can be used as an image source
-        const { data, width, height } = result
-        
-        // Create a canvas to convert RGB data to PNG
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        
-        if (!ctx) {
-          throw new Error('Could not get canvas context')
-        }
-        
-        // Create ImageData from the RGB buffer
-        const imgData = ctx.createImageData(width, height)
-        const rgbData = new Uint8Array(data)
-        
-        // Convert RGB to RGBA (canvas requires alpha channel)
-        for (let i = 0, j = 0; i < rgbData.length; i += 3, j += 4) {
-          imgData.data[j] = rgbData[i]         // R
-          imgData.data[j + 1] = rgbData[i + 1] // G
-          imgData.data[j + 2] = rgbData[i + 2] // B
-          imgData.data[j + 3] = 255            // A (fully opaque)
-        }
-        
-        // Put the image data on the canvas
-        ctx.putImageData(imgData, 0, 0)
-        console.log('thumbnail rendered')
-        
-        // Return both the canvas and a promise that resolves to a Blob
-        return {
-          canvas,
-          width,
-          height,
-          toBlob: (type = 'image/png', quality = 0.9) => new Promise<Blob>((resolve) => {
-            canvas.toBlob((blob) => {
-              if (blob) resolve(blob)
-              else throw new Error('Failed to create blob from canvas')
-            }, type, quality)
-          }),
-          toDataURL: (type = 'image/png', quality = 0.9) => canvas.toDataURL(type, quality)
-        }
-      })
+    readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp))
   }
 }

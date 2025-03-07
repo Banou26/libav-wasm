@@ -1,8 +1,6 @@
 import PQueue from 'p-queue'
 import { queuedThrottleWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeRemuxer } from '.'
-import { createFile, DataStream } from 'mp4box'
-import type { MP4File } from './mp4box'
 
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
@@ -273,181 +271,29 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     thumbnailContainer.style.flexWrap = 'wrap'
     thumbnailContainer.style.gap = '10px'
 
-    let info: any
-    let samples: any
-
-    const mp4boxfile = createFile() as MP4File
-
-    mp4boxfile.onError = err => console.error(err)
-    mp4boxfile.onReady = _info => {
-      info = _info
-      console.log(info)
-      // mp4boxfile.onSegment = (...args) => {
-      //   console.log('onSegment', args)
-      // }
-      // // mp4boxfile.setSegmentOptions(info.tracks[0].id, sb, options)  
-      // var initSegs = mp4boxfile.initializeSegmentation()
-      mp4boxfile.start()
-    }
-    // mp4boxfile.onSamples = _samples => {
-    //   if (!samples) samples = _samples
-    //   console.log('samples', samples)
-    // }
-    const headerBuffer = header.data
-    // console.log('headerBuffer', headerBuffer)
-    headerBuffer.fileStart = 0
-    mp4boxfile.appendBuffer(headerBuffer)
-    console.log(mp4boxfile)
-    mp4boxfile.flush()
-
-    // const track = info.videoTracks[0]
-    // console.log('track', track)
-    // mp4boxfile.setExtractionOptions(track.id)
-    // mp4boxfile.start()
-
-
-    const read = await remuxer.read()
-    console.log('read', read)
-    const readBuffer = read.data
-    // readBuffer.fileStart = read.offset
-    // console.log('readBuffer', readBuffer)
-    // mp4boxfile.appendBuffer(readBuffer)
-
-    // const read2 = await remuxer.read()
-    // console.log('read2', read2)
-    // const read2Buffer = read2.data
-    // read2Buffer.fileStart = read2.offset
-    // console.log('read2Buffer', read2Buffer)
-    // mp4boxfile.appendBuffer(read2Buffer)
-    // mp4boxfile.flush()
-
-    // return
-
-    // const track = mp4boxfile.getTrackById(1)
-    const track = info.videoTracks[0];
-
-    const toDescription = (track) => {
-      const trak = mp4boxfile.getTrackById(track.id);
-      console.log('trak', trak)
-      for (const entry of trak.mdia.minf.stbl.stsd.entries) {
-        const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
-        console.log('box', box)
-        if (box) {
-          const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
-          box.write(stream);
-          return new Uint8Array(stream.buffer, 8);  // Remove the box header.
-        }
-      }
-      throw new Error("avcC, hvcC, vpcC, or av1C box not found");
-    }
-
-
-    const config = {
-      codec: track.codec.startsWith('vp08') ? 'vp8' : track.codec,
-      codedHeight: track.video.height,
-      codedWidth: track.video.width,
-      description: toDescription(track),
-    }
-
-    console.log('config', config)
-
-
-    const videoDecoder = new VideoDecoder({
-      output: (output) => {
-        console.log('time: ', performance.now() - p1)
-        console.log('videoFrame', output)
-        videoFrameToImage(output)
-      },
-      error: (err) => {
-        console.error(err)
-      }
-    })
-
-    console.log('header', header)
-
-    console.log(
-      'isConfigSupported',
-      await VideoDecoder.isConfigSupported(config)
-    )
-
-    videoDecoder.configure(config)
-
-    function videoFrameToImage(frame) {
-      // Create a canvas with the same dimensions as the frame
-      const canvas = document.createElement('canvas');
-      canvas.width = frame.displayWidth;
-      canvas.height = frame.displayHeight;
-      const ctx = canvas.getContext('2d');
-      
-      // Draw the VideoFrame to the canvas
-      ctx.drawImage(frame, 0, 0);
-      
-      // Create an image element
-      const img = document.createElement('img');
-      
-      // Convert to data URL and set as src
-      img.src = canvas.toDataURL('image/jpeg', 0.9); // Use jpeg for better compression
-
-      document.body.appendChild(img);
-      
-      return img
-    }
-
-    const p1 = performance.now()
-    videoDecoder.decode(new EncodedVideoChunk({
-      type: "key",
-      timestamp: read.pts,
-      duration: read.duration,
-      data: read.thumbnailData
-    }))
-
-    // for (const sample of samples) {
-    //   videoDecoder.decode(new EncodedVideoChunk({
-    //     type: sample.is_sync ? "key" : "delta",
-    //     timestamp: 1e6 * sample.cts / sample.timescale,
-    //     duration: 1e6 * sample.duration / sample.timescale,
-    //     data: sample.data
-    //   }))
-    // }
-    return
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('OffscreenCanvas not supported')
 
     const thumbnails = []
-    const readThumbnail = async () => {
-      const currentIndex = header.indexes.at(thumbnails.length)
+    const createNewThumbnail = async (index: number) => {
+      const currentIndex = header.indexes.at(index)
       if (!currentIndex) return
 
-      console.log('thumbnail...', currentIndex.timestamp)
-
       const p1 = performance.now()
-      const read = await remuxer.read()
-      await appendBuffer(read.data)
-      const encodedVideoChunk = new EncodedVideoChunk({
-        type: 'key',
-        timestamp: read.pts,
-        duration: read.duration,
-        data: read.data
-      })
-      videoDecoder.decode(encodedVideoChunk)
-      console.log('encodedVideoChunk', encodedVideoChunk)
-      video.currentTime = currentIndex.timestamp
-      console.log('thumbnail', performance.now() - p1)
-      await unbufferRange(read.pts, read.pts + read.duration)
+      const arrayBuffer = await remuxer.readKeyframe(currentIndex.timestamp)
+      console.log('keyframe', performance.now() - p1)
+      const thumbnailBlob = new Blob([arrayBuffer], { type: 'image/png' })
 
-      // Create an image element to display the thumbnail
-      const thumbnail = document.createElement('img')
-      // thumbnail.src = thumbnailData
-
-      thumbnailContainer.appendChild(thumbnail)
-
-      thumbnails.push(thumbnail)
+      const img = document.createElement('img')
+      img.src = window.URL.createObjectURL(thumbnailBlob)
+      thumbnailContainer.appendChild(img)
+      console.log('keyframe 2', performance.now() - p1)
+      thumbnails.push(img)
     }
 
-    setTimeout(async() => {
-      while (true) {
-        await readThumbnail()
-        if (thumbnails.length >= header.indexes.length) break
-      }
-      // console.log('thumbnail done')
-      // await readThumbnail(header.indexes[7].timestamp)
-    }, 1_000)
+    while (true) {
+      await createNewThumbnail(thumbnails.length)
+      if (thumbnails.length >= header.indexes.length) break
+    }
   })

@@ -35,11 +35,12 @@ export type SubtitleFragment =
     fields: Record<string, string>
   }
 
-export interface ThumbnailResult {
-  data: Uint8Array;
-  width: number;
-  height: number;
-  cancelled: boolean;
+export interface ThumbnailReadResult {
+  data: Uint8Array
+  pts: number
+  duration: number
+  offset: number
+  cancelled: boolean
 }
 
 export type Index = {
@@ -131,8 +132,7 @@ export interface RemuxerInstance {
     finished: boolean
     thumbnailData: Uint8Array
   }>
-  seekInputConvert: (read: WASMReadFunction, byteOffsetOrTimestamp: number, isTimestamp: boolean) => Promise<number>
-  extractThumbnail: (read: WASMReadFunction, timestamp: number, maxWidth: number, maxHeight: number) => Promise<ThumbnailResult>;
+  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>;
 }
 
 export type Remuxer = {
@@ -181,12 +181,13 @@ export type Remuxer = {
     finished: boolean
     thumbnailData: Uint8Array
   }>
-  extractThumbnail: (read: WASMReadFunction, timestamp: number, maxWidth: number, maxHeight: number) => Promise<{
-    data: ArrayBuffer;
-    width: number;
-    height: number;
-    cancelled: boolean;
-  }>;
+  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<{
+    data: ArrayBuffer
+    pts: number
+    duration: number
+    offset: number
+    cancelled: boolean
+  }>
 }
 
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
@@ -322,16 +323,17 @@ const resolvers = {
           finished: result.finished
         }
       }),
-      extractThumbnail: (read, timestamp, maxWidth, maxHeight) => 
-        _remuxer.extractThumbnail(read, timestamp, maxWidth, maxHeight)
+      readKeyframe: (read, timestamp) => 
+        _remuxer.readKeyframe(read, timestamp)
           .then(result => {
             if (result.cancelled) throw new Error('Cancelled')
             const typedArray = new Uint8Array(result.data.byteLength)
             typedArray.set(new Uint8Array(result.data))
             return {
               data: typedArray.buffer,
-              width: result.width,
-              height: result.height,
+              pts: result.pts,
+              duration: result.duration,
+              offset: result.offset,
               cancelled: result.cancelled
             }
           })
@@ -344,13 +346,55 @@ const resolvers = {
           () => ({ resolved: new Uint8Array(0), rejected: true })
         )
 
+    let videoFrameResolve: ((value: VideoFrame) => void) | undefined
+    let videoFrameReject: ((reason?: any) => void) | undefined
+    const videoDecoder = new VideoDecoder({
+      output: (output) => {
+        videoFrameResolve?.(output)
+        videoFrameResolve = undefined
+        videoFrameReject = undefined
+      },
+      error: (err) => {
+        videoFrameReject?.(err)
+        videoFrameResolve = undefined
+        videoFrameReject = undefined
+      }
+    })
+    const offscreen = new OffscreenCanvas(200 * 16/9, 200)
+    const offscreenContext = offscreen.getContext('2d')
+    if (!offscreenContext) throw new Error('OffscreenCanvas not supported')
+
     return {
       destroy: async () => remuxer.destroy(),
-      init: (read: ReadFunction) => remuxer.init(readToWasmRead(read)),
+      init: async (read: ReadFunction) => {
+        const initResult = await remuxer.init(readToWasmRead(read))
+        if (videoDecoder.state === 'unconfigured') {
+          videoDecoder.configure({
+            codec: initResult.info.input.videoMimeType,
+            description: initResult.videoExtradata,
+          })
+        }
+        return initResult
+      },
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
-      extractThumbnail: (read: ReadFunction, timestamp: number, maxWidth: number, maxHeight: number) =>
-        remuxer.extractThumbnail(readToWasmRead(read), timestamp, maxWidth, maxHeight)
+      readKeyframe: async (read: ReadFunction, timestamp: number) => {
+        const videoFramePromise = new Promise<VideoFrame>((resolve, reject) => {
+          videoFrameResolve = resolve
+          videoFrameReject = reject
+        })
+        const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
+        videoDecoder.decode(new EncodedVideoChunk({
+          type: "key",
+          timestamp: readResult.pts,
+          duration: readResult.duration,
+          data: readResult.data
+        }))
+        videoDecoder.flush()
+        const videoFrame = await videoFramePromise
+        offscreenContext.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
+        return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
+      }
     }
   }
 }

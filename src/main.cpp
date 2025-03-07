@@ -79,7 +79,6 @@ typedef struct InitResult {
 
 typedef struct ReadResult {
   emscripten::val data;
-  emscripten::val thumbnail_data;
   std::vector<SubtitleFragment> subtitles;
   long offset;
   double pts;
@@ -88,20 +87,13 @@ typedef struct ReadResult {
   bool finished;
 } ReadResult;
 
-typedef struct ThumbnailResult {
+typedef struct ThumbnailReadResult {
   emscripten::val data;
-  int width;
-  int height;
+  long offset;
+  double pts;
+  double duration;
   bool cancelled;
-} ThumbnailResult;
-
-// typedef struct SeekResult {
-//   emscripten::val data;
-//   std::vector<SubtitleFragment> subtitles;
-//   long offset;
-//   double pts;
-//   double duration;
-// }
+} ThumbnailReadResult;
 
 class Remuxer {
 public:
@@ -137,7 +129,6 @@ public:
   int init_buffer_count = 0;
   std::vector<std::string> init_vector;
   std::vector<uint8_t> write_vector;
-  std::vector<uint8_t> thumbnail_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
 
@@ -456,20 +447,6 @@ public:
           "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
         );
       }
-      if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-        AVDictionaryEntry *tag = NULL;
-        while ((tag = av_dict_get(output_format_context->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
-            printf("Key: %s, Value: %s\n", tag->key, tag->value);
-        }
-        
-        // For stream-level metadata:
-        for (unsigned i = 0; i < output_format_context->nb_streams; i++) {
-            tag = NULL;
-            while ((tag = av_dict_get(output_format_context->streams[i]->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
-                printf("Stream %u - Key: %s, Value: %s\n", i, tag->key, tag->value);
-            }
-        }
-      }
       streams_list[i] = out_index++;
     }
   }
@@ -516,201 +493,302 @@ public:
     attachments.clear();
   }
 
-  ThumbnailResult extractThumbnail(emscripten::val read_function, double timestamp, int maxWidth, int maxHeight) {
+  ThumbnailReadResult read_keyframe(emscripten::val read_function, double timestamp) {
     resolved_promise.await();
-    
     read_data_function = read_function;
-    
-    printf("inited\n");
-    
-    // // Find decoder for video stream
+
+    write_vector.clear();
+    av_packet_free(&packet);
+
     AVStream* video_stream = input_format_context->streams[video_stream_index];
-    const AVCodec* decoder = avcodec_find_decoder(video_stream->codecpar->codec_id);
-    if (!decoder) {
-      ThumbnailResult result;
-      result.cancelled = true;
-      return result;
-    }
-    
-    // Allocate and initialize decoder context
-    AVCodecContext* decoder_ctx = avcodec_alloc_context3(decoder);
-    if (!decoder_ctx) {
-      ThumbnailResult result;
-      result.cancelled = true;
-      return result;
-    }
-    
-    // Copy parameters from stream to decoder context
-    if (avcodec_parameters_to_context(decoder_ctx, video_stream->codecpar) < 0) {
-      avcodec_free_context(&decoder_ctx);
-      ThumbnailResult result;
-      result.cancelled = true;
-      return result;
-    }
-    
-    // Open decoder
-    if (avcodec_open2(decoder_ctx, decoder, NULL) < 0) {
-      avcodec_free_context(&decoder_ctx);
-      ThumbnailResult result;
-      result.cancelled = true;
-      return result;
-    }
 
     // Convert timestamp to stream time base
     int64_t seek_target = av_rescale_q(
-      timestamp * AV_TIME_BASE, 
-      AV_TIME_BASE_Q, 
+      timestamp * AV_TIME_BASE,
+      AV_TIME_BASE_Q,
       video_stream->time_base
     );
 
-    printf("init context created\n");
-
-    
-    // Seek to timestamp
     if (av_seek_frame(input_format_context, video_stream_index, seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
-      avcodec_free_context(&decoder_ctx);
-      ThumbnailResult result;
+      ThumbnailReadResult result;
       result.cancelled = true;
       return result;
     }
-    
-    printf("init seeked\n");
 
-    // Allocate packet and frame
-    AVPacket* packet = av_packet_alloc();
-    AVFrame* frame = av_frame_alloc();
-    
-    bool frameFound = false;
-    int64_t bestDiff = INT64_MAX;
-    
-    // Read frames until we find one close to the requested timestamp
-    while (av_read_frame(input_format_context, packet) >= 0) {
-      if (packet->stream_index == video_stream_index) {
-        printf("init reading frame\n");
-        int ret = avcodec_send_packet(decoder_ctx, packet);
-        printf("init send packet\n");
-        if (ret < 0) {
+    while (true) {
+      packet = av_packet_alloc();
+      int ret = av_read_frame(input_format_context, packet);
+      if (ret < 0) {
+        if (ret == AVERROR_EXIT) {
+          ThumbnailReadResult cancelled_result;
+          cancelled_result.cancelled = true;
+          read_data_function = val::undefined();
+          return cancelled_result;
+        }
+        if (ret == AVERROR_EOF) {
+          // flush + trailer
+          avio_flush(output_format_context->pb);
+          av_write_trailer(output_format_context);
+          av_packet_free(&packet);
           break;
         }
-        ret = avcodec_receive_frame(decoder_ctx, frame);
-        frameFound = true;
+        av_packet_free(&packet);
         break;
       }
-      av_packet_unref(packet);
-    }
-    printf("init read\n");
-    
-    // If no frame was found, send null packet to flush decoder
-    if (!frameFound) {
-      avcodec_send_packet(decoder_ctx, NULL);
-      if (avcodec_receive_frame(decoder_ctx, frame) >= 0) {
-        frameFound = true;
+
+      AVStream* in_stream = input_format_context->streams[packet->stream_index];
+
+      // If it's a subtitle packet
+      if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE || in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        av_packet_free(&packet);
+        continue;
+      }
+
+      if (packet->stream_index >= number_of_streams
+          || streams_list[packet->stream_index] < 0) {
+        // not an included stream, drop
+        av_packet_free(&packet);
+        continue;
+      }
+
+      if (packet->stream_index >= number_of_streams
+          || streams_list[packet->stream_index] < 0) {
+        // not an included stream, drop
+        continue;
+      }
+
+      bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
+
+      duration += packet->duration * av_q2d(in_stream->time_base);
+
+      if (is_keyframe) {
+        pos = packet->pos;
+        pts = packet->pts * av_q2d(in_stream->time_base);
+        duration = packet->duration * av_q2d(in_stream->time_base);
+        break;
+      } else {
+        av_packet_unref(packet);
+        av_packet_free(&packet);
+        continue;
       }
     }
-    
-    // If no frame was found, return empty result
-    if (!frameFound) {
-      cleanup:
-      av_frame_free(&frame);
-      av_packet_free(&packet);
-      avcodec_free_context(&decoder_ctx);
-      ThumbnailResult result;
-      result.cancelled = true;
-      return result;
-    }
-    
-    // Setup scaling context to convert frame to RGB
-    AVFrame* rgb_frame = av_frame_alloc();
-    
-    // Calculate output dimensions while maintaining aspect ratio
-    int output_width = frame->width;
-    int output_height = frame->height;
-    
-    if (maxWidth > 0 && maxHeight > 0) {
-      double aspectRatio = (double)frame->width / frame->height;
-      if (output_width > maxWidth) {
-        output_width = maxWidth;
-        output_height = output_width / aspectRatio;
-      }
-      if (output_height > maxHeight) {
-        output_height = maxHeight;
-        output_width = output_height * aspectRatio;
-      }
-    }
-    
-    // Ensure even dimensions (required by some pixel formats)
-    output_width = (output_width >> 1) << 1;
-    output_height = (output_height >> 1) << 1;
-    
-    rgb_frame->format = AV_PIX_FMT_RGB24;
-    rgb_frame->width = output_width;
-    rgb_frame->height = output_height;
-    av_frame_get_buffer(rgb_frame, 0);
 
-    printf("init prep write\n");
+    ThumbnailReadResult result;
 
-    
-    // Initialize SwsContext for scaling
-    struct SwsContext* sws_ctx = sws_getContext(
-      frame->width, frame->height, (AVPixelFormat)frame->format,
-      output_width, output_height, AV_PIX_FMT_RGB24,
-      SWS_BILINEAR, NULL, NULL, NULL
-    );
-    
-    if (!sws_ctx) {
-      av_frame_free(&rgb_frame);
-      av_frame_free(&frame);
-      av_packet_free(&packet);
-      avcodec_free_context(&decoder_ctx);
-      ThumbnailResult result;
-      result.cancelled = true;
-      return result;
-    }
-    
-    // Convert frame to RGB
-    sws_scale(sws_ctx, frame->data, frame->linesize, 0, frame->height,
-              rgb_frame->data, rgb_frame->linesize);
-    
-    // Create a vector to hold the RGB data
-    std::vector<uint8_t> rgb_data;
-    rgb_data.reserve(output_width * output_height * 3);
-    
-    printf("init prep writing data\n");
-    // Copy RGB data to vector
-    for (int y = 0; y < output_height; y++) {
-      rgb_data.insert(rgb_data.end(), 
-                      rgb_frame->data[0] + y * rgb_frame->linesize[0],
-                      rgb_frame->data[0] + y * rgb_frame->linesize[0] + output_width * 3);
-    }
+    write_vector.assign(packet->data, packet->data + packet->size);
 
-    printf("init prep wrote\n");
-
-    
-    // Clean up
-    sws_freeContext(sws_ctx);
-    av_frame_free(&rgb_frame);
-    av_frame_free(&frame);
-    av_packet_free(&packet);
-    avcodec_free_context(&decoder_ctx);
-
-    // Create result
-    ThumbnailResult result;
-    emscripten::val js_rgb_data = emscripten::val(
+    emscripten::val js_write_vector = emscripten::val(
       emscripten::typed_memory_view(
-        rgb_data.size(),
-        rgb_data.data()
+        write_vector.size(),
+        write_vector.data()
       )
     );
-    result.data = js_rgb_data;
-    result.width = output_width;
-    result.height = output_height;
+
+    result.data = js_write_vector;
+    result.offset = pos;
+    result.pts = pts;
+    result.duration = duration;
     result.cancelled = false;
 
     read_data_function = val::undefined();
-    printf("init prep done\n");
-
     return result;
   }
+
+  // ThumbnailReadResult extractThumbnail(emscripten::val read_function, double timestamp, int maxWidth, int maxHeight) {
+  //   resolved_promise.await();
+    
+  //   read_data_function = read_function;
+    
+  //   printf("inited\n");
+    
+  //   // // Find decoder for video stream
+  //   AVStream* video_stream = input_format_context->streams[video_stream_index];
+  //   const AVCodec* decoder = avcodec_find_decoder(video_stream->codecpar->codec_id);
+  //   if (!decoder) {
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+    
+  //   // Allocate and initialize decoder context
+  //   AVCodecContext* decoder_ctx = avcodec_alloc_context3(decoder);
+  //   if (!decoder_ctx) {
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+    
+  //   // Copy parameters from stream to decoder context
+  //   if (avcodec_parameters_to_context(decoder_ctx, video_stream->codecpar) < 0) {
+  //     avcodec_free_context(&decoder_ctx);
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+    
+  //   // Open decoder
+  //   if (avcodec_open2(decoder_ctx, decoder, NULL) < 0) {
+  //     avcodec_free_context(&decoder_ctx);
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+
+  //   // Convert timestamp to stream time base
+  //   int64_t seek_target = av_rescale_q(
+  //     timestamp * AV_TIME_BASE, 
+  //     AV_TIME_BASE_Q, 
+  //     video_stream->time_base
+  //   );
+
+  //   printf("init context created\n");
+
+    
+  //   // Seek to timestamp
+  //   if (av_seek_frame(input_format_context, video_stream_index, seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
+  //     avcodec_free_context(&decoder_ctx);
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+    
+  //   printf("init seeked\n");
+
+  //   // Allocate packet and frame
+  //   AVPacket* packet = av_packet_alloc();
+  //   AVFrame* frame = av_frame_alloc();
+    
+  //   bool frameFound = false;
+  //   int64_t bestDiff = INT64_MAX;
+    
+  //   // Read frames until we find one close to the requested timestamp
+  //   while (av_read_frame(input_format_context, packet) >= 0) {
+  //     if (packet->stream_index == video_stream_index) {
+  //       printf("init reading frame\n");
+  //       int ret = avcodec_send_packet(decoder_ctx, packet);
+  //       printf("init send packet\n");
+  //       if (ret < 0) {
+  //         break;
+  //       }
+  //       ret = avcodec_receive_frame(decoder_ctx, frame);
+  //       frameFound = true;
+  //       break;
+  //     }
+  //     av_packet_unref(packet);
+  //   }
+  //   printf("init read\n");
+    
+  //   // If no frame was found, send null packet to flush decoder
+  //   if (!frameFound) {
+  //     avcodec_send_packet(decoder_ctx, NULL);
+  //     if (avcodec_receive_frame(decoder_ctx, frame) >= 0) {
+  //       frameFound = true;
+  //     }
+  //   }
+    
+  //   // If no frame was found, return empty result
+  //   if (!frameFound) {
+  //     cleanup:
+  //     av_frame_free(&frame);
+  //     av_packet_free(&packet);
+  //     avcodec_free_context(&decoder_ctx);
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+    
+  //   // Setup scaling context to convert frame to RGB
+  //   AVFrame* rgb_frame = av_frame_alloc();
+    
+  //   // Calculate output dimensions while maintaining aspect ratio
+  //   int output_width = frame->width;
+  //   int output_height = frame->height;
+    
+  //   if (maxWidth > 0 && maxHeight > 0) {
+  //     double aspectRatio = (double)frame->width / frame->height;
+  //     if (output_width > maxWidth) {
+  //       output_width = maxWidth;
+  //       output_height = output_width / aspectRatio;
+  //     }
+  //     if (output_height > maxHeight) {
+  //       output_height = maxHeight;
+  //       output_width = output_height * aspectRatio;
+  //     }
+  //   }
+    
+  //   // Ensure even dimensions (required by some pixel formats)
+  //   output_width = (output_width >> 1) << 1;
+  //   output_height = (output_height >> 1) << 1;
+    
+  //   rgb_frame->format = AV_PIX_FMT_RGB24;
+  //   rgb_frame->width = output_width;
+  //   rgb_frame->height = output_height;
+  //   av_frame_get_buffer(rgb_frame, 0);
+
+  //   printf("init prep write\n");
+
+    
+  //   // Initialize SwsContext for scaling
+  //   struct SwsContext* sws_ctx = sws_getContext(
+  //     frame->width, frame->height, (AVPixelFormat)frame->format,
+  //     output_width, output_height, AV_PIX_FMT_RGB24,
+  //     SWS_BILINEAR, NULL, NULL, NULL
+  //   );
+    
+  //   if (!sws_ctx) {
+  //     av_frame_free(&rgb_frame);
+  //     av_frame_free(&frame);
+  //     av_packet_free(&packet);
+  //     avcodec_free_context(&decoder_ctx);
+  //     ThumbnailReadResult result;
+  //     result.cancelled = true;
+  //     return result;
+  //   }
+    
+  //   // Convert frame to RGB
+  //   sws_scale(sws_ctx, frame->data, frame->linesize, 0, frame->height,
+  //             rgb_frame->data, rgb_frame->linesize);
+    
+  //   // Create a vector to hold the RGB data
+  //   std::vector<uint8_t> rgb_data;
+  //   rgb_data.reserve(output_width * output_height * 3);
+    
+  //   printf("init prep writing data\n");
+  //   // Copy RGB data to vector
+  //   for (int y = 0; y < output_height; y++) {
+  //     rgb_data.insert(rgb_data.end(), 
+  //                     rgb_frame->data[0] + y * rgb_frame->linesize[0],
+  //                     rgb_frame->data[0] + y * rgb_frame->linesize[0] + output_width * 3);
+  //   }
+
+  //   printf("init prep wrote\n");
+
+    
+  //   // Clean up
+  //   sws_freeContext(sws_ctx);
+  //   av_frame_free(&rgb_frame);
+  //   av_frame_free(&frame);
+  //   av_packet_free(&packet);
+  //   avcodec_free_context(&decoder_ctx);
+
+  //   // Create result
+  //   ThumbnailReadResult result;
+  //   emscripten::val js_thumbnail_data = emscripten::val(
+  //     emscripten::typed_memory_view(
+  //       rgb_data.size(),
+  //       rgb_data.data()
+  //     )
+  //   );
+  //   result.data = js_thumbnail_data;
+  //   result.width = output_width;
+  //   result.height = output_height;
+  //   result.cancelled = false;
+
+  //   read_data_function = val::undefined();
+  //   printf("init prep done\n");
+
+  //   return result;
+  // }
 
   InitResult init(emscripten::val read_function) {
     read_data_function = read_function;
@@ -900,8 +978,6 @@ public:
 
         pts = packet->pts * av_q2d(out_stream->time_base);
         pos = packet->pos;
-
-        thumbnail_vector.assign(packet->data, packet->data + packet->size);
       }
 
       // Write to output
@@ -927,14 +1003,7 @@ public:
       )
     );
 
-    emscripten::val thumbnail_js_write_vector = emscripten::val(
-      emscripten::typed_memory_view(
-        thumbnail_vector.size(),
-        thumbnail_vector.data()
-      )
-    );
     result.data = js_write_vector;
-    result.thumbnail_data = thumbnail_js_write_vector;
     result.subtitles = subtitles;
     result.offset = prev_pos;
     result.pts = prev_pts;
@@ -1127,14 +1196,14 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("pts",       &ReadResult::pts)
     .field("duration",  &ReadResult::duration)
     .field("cancelled", &ReadResult::cancelled)
-    .field("finished",  &ReadResult::finished)
-    .field("thumbnailData", &ReadResult::thumbnail_data);
+    .field("finished",  &ReadResult::finished);
 
-  emscripten::value_object<ThumbnailResult>("ThumbnailResult")
-    .field("data",      &ThumbnailResult::data)
-    .field("width",     &ThumbnailResult::width)
-    .field("height",    &ThumbnailResult::height)
-    .field("cancelled", &ThumbnailResult::cancelled);
+  emscripten::value_object<ThumbnailReadResult>("ThumbnailReadResult")
+    .field("data",      &ThumbnailReadResult::data)
+    .field("offset",    &ThumbnailReadResult::offset)
+    .field("pts",       &ThumbnailReadResult::pts)
+    .field("duration",  &ThumbnailReadResult::duration)
+    .field("cancelled", &ThumbnailReadResult::cancelled);
 
   emscripten::class_<Remuxer>("Remuxer")
     .constructor<emscripten::val>()
@@ -1142,5 +1211,5 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .function("read",    &Remuxer::read)
     .function("seek",    &Remuxer::seek)
     .function("destroy", &Remuxer::destroy)
-    .function("extractThumbnail", &Remuxer::extractThumbnail);
+    .function("readKeyframe", &Remuxer::read_keyframe);
 }
