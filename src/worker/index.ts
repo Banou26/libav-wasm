@@ -388,6 +388,7 @@ const resolvers = {
         videoDecoder.flush()
         const videoFrame = await videoFramePromise
         offscreenContext.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
+        videoFrame.close()
         return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
       }
     }
