@@ -130,7 +130,6 @@ export interface RemuxerInstance {
     duration: number
     cancelled: boolean
     finished: boolean
-    thumbnailData: Uint8Array
   }>
   readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>;
 }
@@ -179,7 +178,6 @@ export type Remuxer = {
     duration: number
     cancelled: boolean
     finished: boolean
-    thumbnailData: Uint8Array
   }>
   readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<{
     data: ArrayBuffer
@@ -302,11 +300,8 @@ const resolvers = {
         if (result.cancelled) throw new Error('Cancelled')
         const typedArray = new Uint8Array(result.data.byteLength)
         typedArray.set(new Uint8Array(result.data))
-        const thumbnailTypedArray = new Uint8Array(result.thumbnailData.byteLength)
-        thumbnailTypedArray.set(new Uint8Array(result.thumbnailData))
         return {
           data: typedArray.buffer,
-          thumbnailData: thumbnailTypedArray.buffer,
           subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
             if (_subtitle.isHeader) throw new Error('Subtitle type is header')
             const { isHeader, data, ...subtitle } = _subtitle
