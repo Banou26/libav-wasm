@@ -12,7 +12,7 @@ const remuxer = await makeRemuxer({
   publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
   // url of the worker file of libavWASM
   workerUrl: new URL('../build/worker.js', import.meta.url).toString(),
-  // reads are done in 2.5mb chunks
+  // reads will be done in 2.5mb chunks
   bufferSize: 2_500_000,
   // byte length of the video file
   length: contentLength,
@@ -26,19 +26,12 @@ const remuxer = await makeRemuxer({
         }
       }
     ).then(res => res.body)
-  ,
-  // callback where you'll receive the subtitle chunks
-  subtitle: (title, language, subtitle) => {
-    // console.log('SUBTITLE HEADER', title, language, subtitle)
-  },
-  // callback where you'll receive the attachments
-  attachment: (filename: string, mimetype: string, buffer: ArrayBuffer) => {
-    // console.log('attachment', filename, mimetype, buffer)
-  }
 })
 
+// returns the header of the video with all the metadata
+const header = await remuxer.init()
+
 // Returns a chunk that looks like {
-//   isHeader: boolean,
 //   offset: number,
 //   buffer: Uint8Array,
 //   pos: number,
@@ -49,11 +42,9 @@ const remuxer = await makeRemuxer({
 const chunk = await remuxer.read()
 
 // allows you to seek to timestamp and start reading from there
-await remuxer.seek(number)
-
-await remuxer.read()
+const seekChunk = await remuxer.seek(number)
+// ...
 ```
-
 
 
 ## Intellisense 
@@ -65,8 +56,6 @@ To have C++ autocompletion, put a ffmpeg repo clone folder in the root
 ## Issues to fix / features to implement
 - Try to play around with `sourceBuffer.timestampOffset = res.pts` and always increasing timestamps to not have to re-init on backwards seeks
 - Transcoding
-- Decoding + canvas rendering
-- Thumbnail extraction
 
 <!-- https://www.ffmpeg.org/doxygen/trunk/remuxing_8c-example.html -->
 <!-- https://github.com/leandromoreira/ffmpeg-libav-tutorial -->

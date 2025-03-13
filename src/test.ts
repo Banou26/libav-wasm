@@ -62,8 +62,8 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
 
-    const workerUrl2 = new URL('../build/worker.js', import.meta.url).toString()
-    const blob = new Blob([`importScripts(${JSON.stringify(workerUrl2)})`], { type: 'application/javascript' })
+    const _workerUrl = new URL('../build/worker.js', import.meta.url).toString()
+    const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
     const workerUrl = URL.createObjectURL(blob)
 
     const remuxer = await makeRemuxer({
