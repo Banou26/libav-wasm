@@ -152,7 +152,7 @@ export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
       if (done) controller.close()
     },
     cancel() {
-      this.reader!.cancel()
+      this.reader?.cancel()
       this.leftOverData = undefined
     }
   } as UnderlyingDefaultSource<Uint8Array> & {

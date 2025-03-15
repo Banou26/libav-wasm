@@ -16,6 +16,7 @@
     "docker-clean": "docker compose up --remove-orphans",
     "dev-web": "vite --port 1234",
     "vite-build": "vite build",
+    "vite-build-dev": "vite build --watch",
     "worker-build-dev": "nodemon -e ts --watch src/worker --exec \"npm run build-worker\"",
     "build": "npm run copy-package && npm run make-docker && npm i ./dist && vite build && npm run build-worker  && npm run types && npm run copy-wasm && npm remove libav",
     "types": "tsc",

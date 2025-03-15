@@ -11,7 +11,7 @@ export type MakeTransmuxerOptions = {
   /** Path that will be used to locate the javascript worker file */
   workerUrl: string
   workerOptions?: WorkerOptions
-  getStream: (offset: number, size?: number) => Promise<ReadableStream<Uint8Array>>
+  read: (offset: number, size: number) => Promise<ArrayBuffer>
   length: number
   bufferSize: number
 }
@@ -29,10 +29,10 @@ const abortSignalToPromise = (abortSignal: AbortSignal) =>
 export const makeRemuxer = async ({
   publicPath,
   workerUrl,
-  workerOptions, 
-  getStream,
+  workerOptions,
+  read,
   length,
-  bufferSize = 1_000_000
+  bufferSize = 2_500_000
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
 
@@ -41,23 +41,6 @@ export const makeRemuxer = async ({
   let currentStream: ReadableStream<Uint8Array> | undefined
   let currentStreamOffset: number | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
-
-  const read = async (offset: number, size?: number) => {
-    if (
-      !currentStream ||
-      (currentStreamOffset && currentStreamOffset + bufferSize !== offset)
-    ) {
-      reader?.cancel()
-      currentStream = await getStream(offset)
-      reader = currentStream.getReader() as ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>
-    }
-
-    if (!reader) throw new Error('No reader found')
-
-    currentStreamOffset = offset
-
-    return reader.read().then(({ value }) => value?.buffer ?? new ArrayBuffer(0))
-  }
 
   const remuxer = await makeRemuxer({
     publicPath,

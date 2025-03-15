@@ -71,30 +71,16 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
-      getStream: async (offset, size) => {
-        return fetch(
-          VIDEO_URL,
-          {
-            headers: {
-              Range: `bytes=${offset}-${(size ? Math.min(offset + size, contentLength) - 1 : undefined) ?? (!BACKPRESSURE_STREAM_ENABLED ? Math.min(offset + BUFFER_SIZE, size!) : '')}`
-            }
-          }
-        ).then(res =>
-          size
-            ? res.body!
-            : (
-              toBufferedStream(3)(
-                toStreamChunkSize(BUFFER_SIZE)(
-                  res.body!
-                )
-              )
-            )
+      read: (offset, size) => {
+        if (offset >= contentLength) return Promise.resolve(new Uint8Array(0).buffer)
+        return (
+          fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}` } })
+            .then(res => res.arrayBuffer())
         )
       }
     })
 
     const header = await remuxer.init()
-    console.log('header', header.indexes)
 
     const video = document.createElement('video')
     video.width = 1440
@@ -220,9 +206,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         return
       }
       try {
-        const p1 = performance.now()
         const res = await remuxer.read()
-        console.log('read', performance.now() - p1)
         await appendBuffer(res.data)
         await unbuffer()
       } catch (err: any) {
@@ -230,70 +214,95 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         console.error(err)
       }
     })
-    // setInterval(loadMore, 100)
+    setInterval(loadMore, 100)
 
-    // video.addEventListener('seeking', async () => {
-    //   const { currentTime } = video
-    //   const bufferedRanges = getTimeRanges()
-    //   const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
-    //   // seeking forward in a buffered range, can just continue by reading
-    //   if (timeRange && currentTime >= lastSeekedPosition) {
-    //     return
-    //   }
-    //   const seekObject = { currentTime }
-    //   currentSeeks = [...currentSeeks, seekObject]
-    //   lastSeekedPosition = currentTime
-    //   try {
-    //     const p1 = performance.now()
-    //     const res =
-    //       await remuxer
-    //         .seek(currentTime)
-    //         .finally(() => {
-    //           currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
-    //         })
-    //     console.log('seek', performance.now() - p1)
-    //     sourceBuffer.timestampOffset = res.pts
-    //     await appendBuffer(res.data)
-    //   } catch (err: any) {
-    //     if (err.message === 'Cancelled') return
-    //     console.error(err)
-    //   }
-    //   await unbuffer()
-    // })
+    video.addEventListener('seeking', async () => {
+      const { currentTime } = video
+      const bufferedRanges = getTimeRanges()
+      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      // seeking forward in a buffered range, can just continue by reading
+      if (timeRange && currentTime >= lastSeekedPosition) {
+        return
+      }
+      const seekObject = { currentTime }
+      currentSeeks = [...currentSeeks, seekObject]
+      lastSeekedPosition = currentTime
+      try {
+        const res =
+          await remuxer
+            .seek(currentTime)
+            .finally(() => {
+              currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
+            })
+        sourceBuffer.timestampOffset = res.pts
+        await appendBuffer(res.data)
+      } catch (err: any) {
+        if (err.message === 'Cancelled') return
+        console.error(err)
+      }
+      await unbuffer()
+    })
 
-    // await appendBuffer(
-    //   (await remuxer.read()).data
-    // )
+    await appendBuffer(
+      (await remuxer.read()).data
+    )
 
-    const thumbnailContainer = document.createElement('div')
-    document.body.appendChild(thumbnailContainer)
-    thumbnailContainer.style.display = 'flex'
-    thumbnailContainer.style.flexWrap = 'wrap'
-    thumbnailContainer.style.gap = '10px'
+    fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
+      .then(async ({ headers, body }) => {
+        if (!body) throw new Error('no body')
+        const contentRangeContentLength = headers.get('Content-Range')?.split('/').at(1)
+        const contentLength =
+          contentRangeContentLength
+            ? Number(contentRangeContentLength)
+            : Number(headers.get('Content-Length'))
 
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('OffscreenCanvas not supported')
+        const _workerUrl = new URL('../build/worker.js', import.meta.url).toString()
+        const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
+        const workerUrl = URL.createObjectURL(blob)
 
-    const thumbnails = []
-    const createNewThumbnail = async (index: number) => {
-      const currentIndex = header.indexes.at(index)
-      if (!currentIndex) return
+        const remuxer = await makeRemuxer({
+          publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
+          workerUrl,
+          bufferSize: BUFFER_SIZE,
+          length: contentLength,
+          read: (offset, size) => {
+            if (offset >= contentLength) return Promise.resolve(new Uint8Array(0).buffer)
+            return (
+              fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${Math.min(offset + size, contentLength) - 1}` } })
+                .then(res => res.arrayBuffer())
+            )
+          }
+        })
 
-      const p1 = performance.now()
-      const arrayBuffer = await remuxer.readKeyframe(currentIndex.timestamp)
-      console.log('keyframe', performance.now() - p1)
-      const thumbnailBlob = new Blob([arrayBuffer], { type: 'image/png' })
+        const header = await remuxer.init()
 
-      const img = document.createElement('img')
-      img.src = window.URL.createObjectURL(thumbnailBlob)
-      thumbnailContainer.appendChild(img)
-      console.log('keyframe 2', performance.now() - p1)
-      thumbnails.push(img)
-    }
+        const thumbnailContainer = document.createElement('div')
+        document.body.appendChild(thumbnailContainer)
+        thumbnailContainer.style.display = 'flex'
+        thumbnailContainer.style.flexWrap = 'wrap'
+        thumbnailContainer.style.gap = '10px'
 
-    while (true) {
-      await createNewThumbnail(thumbnails.length)
-      if (thumbnails.length >= header.indexes.length) break
-    }
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('OffscreenCanvas not supported')
+
+        const thumbnails = []
+        const createNewThumbnail = async (index: number) => {
+          const currentIndex = header.indexes.at(index)
+          if (!currentIndex) return
+
+          const arrayBuffer = await remuxer.readKeyframe(currentIndex.timestamp)
+          const thumbnailBlob = new Blob([arrayBuffer], { type: 'image/png' })
+
+          const img = document.createElement('img')
+          img.src = window.URL.createObjectURL(thumbnailBlob)
+          thumbnailContainer.appendChild(img)
+          thumbnails.push(img)
+        }
+
+        while (true) {
+          await createNewThumbnail(thumbnails.length)
+          if (thumbnails.length >= header.indexes.length) break
+        }
+      })
   })
