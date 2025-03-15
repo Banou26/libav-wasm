@@ -52,8 +52,7 @@ export const makeRemuxer = async ({
     }
   })
 
-  
-  const queue = new PQueue({ concurrency: 1, timeout: 10_000, throwOnTimeout: true })
+  const queue = new PQueue({ concurrency: 1 })
 
   const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
     if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0).buffer, rejected: true })
