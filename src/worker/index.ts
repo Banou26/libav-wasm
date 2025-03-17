@@ -217,8 +217,9 @@ const resolvers = {
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
-    const { Remuxer, HEAPU8 } = await makeModule(publicPath, log)
-    const _remuxer = new Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
+    // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
+    const module = await makeModule(publicPath, log)
+    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)
@@ -227,7 +228,7 @@ const resolvers = {
           data: typedArray.buffer,
           videoExtradata: new Uint8Array(vectorToArray(result.videoExtradata)).buffer,
           attachments: vectorToArray(result.attachments).map(attachment => {
-            const data = new Uint8Array(HEAPU8.buffer, attachment.ptr, attachment.size)
+            const data = new Uint8Array(module.HEAPU8.buffer, attachment.ptr, attachment.size)
             const dataCopy = new Uint8Array(data)
             return {
               filename: attachment.filename,
@@ -318,7 +319,7 @@ const resolvers = {
           finished: result.finished
         }
       }),
-      readKeyframe: (read, timestamp) => 
+      readKeyframe: (read, timestamp) =>
         _remuxer.readKeyframe(read, timestamp)
           .then(result => {
             if (result.cancelled) throw new Error('Cancelled')
