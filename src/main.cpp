@@ -699,6 +699,20 @@ public:
 
       // Resample if necessary
       if (ctx.swr_ctx) {
+        // Allocate a properly sized frame for resampling
+        if (ctx.resampled_frame->nb_samples != ctx.encoder_ctx->frame_size) {
+          av_frame_unref(ctx.resampled_frame);
+          ctx.resampled_frame->format = ctx.encoder_ctx->sample_fmt;
+          ctx.resampled_frame->channel_layout = ctx.encoder_ctx->channel_layout;
+          ctx.resampled_frame->sample_rate = ctx.encoder_ctx->sample_rate;
+          ctx.resampled_frame->nb_samples = ctx.encoder_ctx->frame_size;
+          if (av_frame_get_buffer(ctx.resampled_frame, 0) < 0) {
+            printf("Error allocating resampled frame buffer\n");
+            av_frame_unref(ctx.decoded_frame);
+            continue;
+          }
+        }
+
         ret = swr_convert_frame(ctx.swr_ctx, ctx.resampled_frame, ctx.decoded_frame);
         if (ret < 0) {
           printf("Error resampling frame: %s\n", ffmpegErrStr(ret).c_str());
@@ -706,6 +720,14 @@ public:
           continue;
         }
         frame_to_encode = ctx.resampled_frame;
+      } else if (ctx.decoded_frame->nb_samples != ctx.encoder_ctx->frame_size) {
+        // If we need exact frame size but aren't resampling, we need to buffer/split frames
+        printf("Warning: Frame size mismatch without resampling (decoded: %d, encoder: %d)\n", 
+               ctx.decoded_frame->nb_samples, ctx.encoder_ctx->frame_size);
+        
+        // For now, we'll adjust the frame size to match the encoder's expectation
+        ctx.decoded_frame->nb_samples = ctx.encoder_ctx->frame_size;
+        frame_to_encode = ctx.decoded_frame;
       }
 
       // Set proper timestamps
