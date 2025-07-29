@@ -637,15 +637,57 @@ public:
         )) {
           continue;
         }
+
+        // Check if this is an audio stream that needs transcoding
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+            in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          audio_stream_index = i;
+          init_audio_transcoding(in_stream);
+          audio_mime_type = "mp4a.40.2"; // AAC-LC
+        }
+
         AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
         if (!out_stream) {
           throw std::runtime_error("Could not allocate an output stream");
         }
-        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
-        if (cpRet < 0) {
-          throw std::runtime_error(
-            "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
-          );
+
+        // If we're transcoding EAC3 to AAC, set AAC parameters instead of copying
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+            in_codecpar->codec_id == AV_CODEC_ID_EAC3 &&
+            needs_audio_transcoding) {
+
+          out_stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+          out_stream->codecpar->codec_id = AV_CODEC_ID_AAC;
+          out_stream->codecpar->sample_rate = audio_encoder_context->sample_rate;
+          av_channel_layout_copy(&out_stream->codecpar->ch_layout, &audio_encoder_context->ch_layout);
+          out_stream->codecpar->bit_rate = audio_encoder_context->bit_rate;
+          out_stream->codecpar->profile = audio_encoder_context->profile;
+          // Ensure frame_size is valid before setting it
+          if (audio_encoder_context->frame_size <= 0) {
+            out_stream->codecpar->frame_size = 1024; // Default AAC frame size
+          } else {
+            out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
+          }
+
+          // Set proper time base for AAC (usually 1/sample_rate)
+          out_stream->time_base = (AVRational){1, audio_encoder_context->sample_rate};
+
+          // Copy extradata (important for AAC in MP4)
+          if (audio_encoder_context->extradata && audio_encoder_context->extradata_size > 0) {
+            out_stream->codecpar->extradata = (uint8_t*)av_mallocz(audio_encoder_context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+            if (!out_stream->codecpar->extradata) {
+              throw std::runtime_error("Could not allocate extradata for output stream");
+            }
+            memcpy(out_stream->codecpar->extradata, audio_encoder_context->extradata, audio_encoder_context->extradata_size);
+            out_stream->codecpar->extradata_size = audio_encoder_context->extradata_size;
+          }
+        } else {
+          int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+          if (cpRet < 0) {
+            throw std::runtime_error(
+              "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
+            );
+          }
         }
       }
       return;
@@ -753,7 +795,12 @@ public:
         av_channel_layout_copy(&out_stream->codecpar->ch_layout, &audio_encoder_context->ch_layout);
         out_stream->codecpar->bit_rate = audio_encoder_context->bit_rate;
         out_stream->codecpar->profile = audio_encoder_context->profile;
-        out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
+        // Ensure frame_size is valid before setting it
+        if (audio_encoder_context->frame_size <= 0) {
+          out_stream->codecpar->frame_size = 1024; // Default AAC frame size
+        } else {
+          out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
+        }
 
         // Set proper time base for AAC (usually 1/sample_rate)
         out_stream->time_base = (AVRational){1, audio_encoder_context->sample_rate};
