@@ -1,4 +1,3 @@
-#include <cstdio>
 #include <emscripten.h>
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
@@ -7,7 +6,6 @@
 #include <string>
 #include <cstring>  // for memcpy
 #include <numeric>  // std::accumulate
-#include <unordered_map>
 
 extern "C" {
   #include <libavformat/avio.h>
@@ -15,6 +13,7 @@ extern "C" {
   #include <libavformat/avformat.h>
   #include <libswscale/swscale.h>
   #include <libswresample/swresample.h>
+  #include <libavutil/audio_fifo.h>
 }
 
 using namespace emscripten;
@@ -98,22 +97,6 @@ typedef struct ThumbnailReadResult {
   bool cancelled;
 } ThumbnailReadResult;
 
-// Transcoding context for audio streams
-struct TranscodingContext {
-  AVCodecContext* decoder_ctx = nullptr;
-  AVCodecContext* encoder_ctx = nullptr;
-  SwrContext* swr_ctx = nullptr;
-  AVFrame* decoded_frame = nullptr;
-  AVFrame* resampled_frame = nullptr;
-  int64_t next_pts = 0;
-  
-  // Audio buffering for frame size conversion
-  std::vector<uint8_t> audio_buffer;
-  int samples_in_buffer = 0;
-  int bytes_per_sample = 0;
-  int channels = 0;
-};
-
 class Remuxer {
 public:
   AVIOContext* input_avio_context = nullptr;
@@ -128,8 +111,18 @@ public:
 
   int buffer_size;
   int video_stream_index;
+  int audio_stream_index;
   int number_of_streams;
   int* streams_list = nullptr;
+
+  // Audio transcoding components
+  AVCodecContext* audio_decoder_context = nullptr;
+  AVCodecContext* audio_encoder_context = nullptr;
+  SwrContext* audio_swr_context = nullptr;
+  AVFrame* audio_frame = nullptr;
+  AVFrame* audio_frame_converted = nullptr;
+  AVAudioFifo* audio_fifo = nullptr;
+  bool needs_audio_transcoding = false;
 
   // For partial segments
   double prev_duration = 0;
@@ -157,17 +150,253 @@ public:
   AVPacket* packet = nullptr;
   bool wrote = false;
 
-  // Transcoding contexts for audio streams
-  std::unordered_map<int, TranscodingContext> transcoding_contexts;
-
   Remuxer(emscripten::val options) {
     resolved_promise = options["resolvedPromise"];
     input_length = options["length"].as<float>();
     buffer_size = options["bufferSize"].as<int>();
+    video_stream_index = -1;
+    audio_stream_index = -1;
   }
 
   ~Remuxer() {
     destroy();
+  }
+
+  void init_audio_transcoding(AVStream* in_stream) {
+    AVCodecParameters* in_codecpar = in_stream->codecpar;
+
+    // Check if audio stream is EAC3
+    if (in_codecpar->codec_id != AV_CODEC_ID_EAC3) {
+      needs_audio_transcoding = false;
+      return;
+    }
+
+    needs_audio_transcoding = true;
+
+    // Initialize decoder
+    const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_EAC3);
+    if (!decoder) {
+      throw std::runtime_error("EAC3 decoder not found");
+    }
+
+    audio_decoder_context = avcodec_alloc_context3(decoder);
+    if (!audio_decoder_context) {
+      throw std::runtime_error("Could not allocate audio decoder context");
+    }
+
+    if (avcodec_parameters_to_context(audio_decoder_context, in_codecpar) < 0) {
+      throw std::runtime_error("Could not copy decoder parameters");
+    }
+
+    if (avcodec_open2(audio_decoder_context, decoder, nullptr) < 0) {
+      throw std::runtime_error("Could not open audio decoder");
+    }
+
+    // Initialize encoder
+    const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    if (!encoder) {
+      throw std::runtime_error("AAC encoder not found");
+    }
+
+    audio_encoder_context = avcodec_alloc_context3(encoder);
+    if (!audio_encoder_context) {
+      throw std::runtime_error("Could not allocate audio encoder context");
+    }
+
+    // Set encoder parameters
+    audio_encoder_context->sample_rate = audio_decoder_context->sample_rate;
+    av_channel_layout_copy(&audio_encoder_context->ch_layout, &audio_decoder_context->ch_layout);
+    audio_encoder_context->sample_fmt = encoder->sample_fmts[0]; // Use first supported format
+    audio_encoder_context->bit_rate = 128000; // 128 kbps
+    audio_encoder_context->profile = FF_PROFILE_AAC_LOW;
+    audio_encoder_context->frame_size = 1024; // AAC frame size
+
+    // Set global header flag for MP4 container
+    if (output_format_context->oformat->flags & AVFMT_GLOBALHEADER) {
+      audio_encoder_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    }
+
+    if (avcodec_open2(audio_encoder_context, encoder, nullptr) < 0) {
+      throw std::runtime_error("Could not open audio encoder");
+    }
+
+    // Update frame size after encoder is opened (encoder may adjust it)
+    if (audio_encoder_context->frame_size <= 0) {
+      audio_encoder_context->frame_size = 1024; // Default AAC frame size
+    }
+
+    // Initialize resampler if needed
+    if (audio_decoder_context->sample_fmt != audio_encoder_context->sample_fmt ||
+        audio_decoder_context->sample_rate != audio_encoder_context->sample_rate ||
+        av_channel_layout_compare(&audio_decoder_context->ch_layout, &audio_encoder_context->ch_layout) != 0) {
+
+      swr_alloc_set_opts2(&audio_swr_context,
+        &audio_encoder_context->ch_layout, audio_encoder_context->sample_fmt, audio_encoder_context->sample_rate,
+        &audio_decoder_context->ch_layout, audio_decoder_context->sample_fmt, audio_decoder_context->sample_rate,
+        0, nullptr);
+
+      if (!audio_swr_context || swr_init(audio_swr_context) < 0) {
+        throw std::runtime_error("Could not initialize audio resampler");
+      }
+    }
+
+    // Allocate frames
+    audio_frame = av_frame_alloc();
+    audio_frame_converted = av_frame_alloc();
+    if (!audio_frame || !audio_frame_converted) {
+      throw std::runtime_error("Could not allocate audio frames");
+    }
+
+    // Create audio FIFO buffer
+    audio_fifo = av_audio_fifo_alloc(audio_encoder_context->sample_fmt,
+      audio_encoder_context->ch_layout.nb_channels, 1024);
+    if (!audio_fifo) {
+      throw std::runtime_error("Could not allocate audio FIFO");
+    }
+  }
+
+  void cleanup_audio_transcoding() {
+    if (audio_decoder_context) {
+      avcodec_free_context(&audio_decoder_context);
+    }
+    if (audio_encoder_context) {
+      avcodec_free_context(&audio_encoder_context);
+    }
+    if (audio_swr_context) {
+      swr_free(&audio_swr_context);
+    }
+    if (audio_frame) {
+      av_frame_free(&audio_frame);
+    }
+    if (audio_frame_converted) {
+      av_frame_free(&audio_frame_converted);
+    }
+    if (audio_fifo) {
+      av_audio_fifo_free(audio_fifo);
+    }
+    needs_audio_transcoding = false;
+  }
+
+  int encode_audio_frame_from_fifo(AVStream* out_stream) {
+    AVFrame* frame = av_frame_alloc();
+    if (!frame) {
+      return AVERROR(ENOMEM);
+    }
+
+    frame->nb_samples = audio_encoder_context->frame_size;
+    frame->format = audio_encoder_context->sample_fmt;
+    av_channel_layout_copy(&frame->ch_layout, &audio_encoder_context->ch_layout);
+    frame->sample_rate = audio_encoder_context->sample_rate;
+
+    int ret = av_frame_get_buffer(frame, 0);
+    if (ret < 0) {
+      av_frame_free(&frame);
+      return ret;
+    }
+
+    ret = av_audio_fifo_read(audio_fifo, (void**)frame->data, frame->nb_samples);
+    if (ret < 0) {
+      av_frame_free(&frame);
+      return ret;
+    }
+
+    frame->nb_samples = ret;
+
+    // Encode the frame
+    ret = avcodec_send_frame(audio_encoder_context, frame);
+    av_frame_free(&frame);
+    if (ret < 0) {
+      return ret;
+    }
+
+    while (ret >= 0) {
+      AVPacket* encoded_packet = av_packet_alloc();
+      ret = avcodec_receive_packet(audio_encoder_context, encoded_packet);
+      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+        av_packet_free(&encoded_packet);
+        break;
+      }
+      if (ret < 0) {
+        av_packet_free(&encoded_packet);
+        return ret;
+      }
+
+      encoded_packet->stream_index = out_stream->index;
+      av_packet_rescale_ts(encoded_packet, audio_encoder_context->time_base, out_stream->time_base);
+
+      ret = av_interleaved_write_frame(output_format_context, encoded_packet);
+      av_packet_free(&encoded_packet);
+      if (ret < 0) {
+        return ret;
+      }
+    }
+
+    return 0;
+  }
+
+  int transcode_audio_packet(AVPacket* input_packet, AVStream* out_stream) {
+    int ret = avcodec_send_packet(audio_decoder_context, input_packet);
+    if (ret < 0) {
+      return ret;
+    }
+
+    while (ret >= 0) {
+      ret = avcodec_receive_frame(audio_decoder_context, audio_frame);
+      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+        break;
+      }
+      if (ret < 0) {
+        return ret;
+      }
+
+      AVFrame* frame_to_fifo = audio_frame;
+
+      // Resample if necessary
+      if (audio_swr_context) {
+        audio_frame_converted->sample_rate = audio_encoder_context->sample_rate;
+        av_channel_layout_copy(&audio_frame_converted->ch_layout, &audio_encoder_context->ch_layout);
+        audio_frame_converted->format = audio_encoder_context->sample_fmt;
+
+        int dst_nb_samples = av_rescale_rnd(
+          swr_get_delay(audio_swr_context, audio_frame->sample_rate) + audio_frame->nb_samples,
+          audio_encoder_context->sample_rate, audio_frame->sample_rate, AV_ROUND_UP);
+
+        ret = av_frame_get_buffer(audio_frame_converted, 0);
+        if (ret < 0) {
+          return ret;
+        }
+
+        ret = swr_convert(audio_swr_context,
+          audio_frame_converted->data, dst_nb_samples,
+          (const uint8_t**)audio_frame->data, audio_frame->nb_samples);
+        if (ret < 0) {
+          return ret;
+        }
+
+        audio_frame_converted->nb_samples = ret;
+        frame_to_fifo = audio_frame_converted;
+      }
+
+      // Add to FIFO buffer
+      ret = av_audio_fifo_write(audio_fifo, (void**)frame_to_fifo->data, frame_to_fifo->nb_samples);
+      if (ret < 0) {
+        return ret;
+      }
+
+      // Encode frames while we have enough samples
+      while (av_audio_fifo_size(audio_fifo) >= audio_encoder_context->frame_size) {
+        ret = encode_audio_frame_from_fifo(out_stream);
+        if (ret < 0) {
+          return ret;
+        }
+      }
+
+      if (audio_swr_context) {
+        av_frame_unref(audio_frame_converted);
+      }
+    }
+
+    return 0;
   }
 
   auto decimalToHex(int d, int padding) {
@@ -185,7 +414,7 @@ public:
       case FF_PROFILE_AAC_HE_V2:return "mp4a.40.29";  // HE-AAC v2 / AAC++ (SBR+PS)
       case FF_PROFILE_AAC_LD:   return "mp4a.40.23";  // AAC-LD
       case FF_PROFILE_AAC_ELD:  return "mp4a.40.39";  // AAC-ELD
-      default:                  return "mp4a.40.2";    // Default to AAC-LC
+      default:                  return "mp4a.40.unknown";
     }
   }
 
@@ -348,183 +577,6 @@ public:
     }
   }
 
-  void init_transcoding_context(int stream_index, AVCodecParameters* in_codecpar, AVCodecParameters* out_codecpar) {
-    TranscodingContext& ctx = transcoding_contexts[stream_index];
-
-    printf("init_transcoding_context 1\n");
-
-    // Initialize decoder
-    const AVCodec* decoder = avcodec_find_decoder(in_codecpar->codec_id);
-    if (!decoder) {
-        printf("ERROR: Decoder not found for audio codec\n");
-        return;
-    }
-    printf("init_transcoding_context 2\n");
-
-    ctx.decoder_ctx = avcodec_alloc_context3(decoder);
-    if (!ctx.decoder_ctx) {
-        printf("ERROR: Could not allocate decoder context\n");
-        return;
-    }
-    printf("init_transcoding_context 3\n");
-
-    if (avcodec_parameters_to_context(ctx.decoder_ctx, in_codecpar) < 0) {
-        printf("ERROR: Could not copy codec parameters to decoder context\n");
-        return;
-    }
-    printf("init_transcoding_context 4\n");
-
-    if (avcodec_open2(ctx.decoder_ctx, decoder, nullptr) < 0) {
-        printf("ERROR: Could not open decoder\n");
-        return;
-    }
-
-    printf("init_transcoding_context 5\n");
-    // Initialize encoder
-    const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!encoder) {
-      printf("ERROR: AAC encoder not found\n");
-      return;
-    }
-
-    printf("init_transcoding_context 6\n");
-    ctx.encoder_ctx = avcodec_alloc_context3(encoder);
-    if (!ctx.encoder_ctx) {
-      printf("ERROR: Could not allocate encoder context\n");
-      return;
-    }
-
-    printf("init_transcoding_context 7\n");
-    // Set encoder parameters
-    ctx.encoder_ctx->sample_rate = ctx.decoder_ctx->sample_rate;
-    ctx.encoder_ctx->channel_layout = ctx.decoder_ctx->channel_layout;
-    ctx.encoder_ctx->channels = ctx.decoder_ctx->channels;
-    ctx.encoder_ctx->sample_fmt = encoder->sample_fmts[0]; // Use encoder's preferred format
-    ctx.encoder_ctx->bit_rate = 128000; // 128 kbps
-    ctx.encoder_ctx->profile = FF_PROFILE_AAC_LOW;
-
-    // Validate encoder parameters
-    if (ctx.encoder_ctx->channels <= 0 || ctx.encoder_ctx->sample_rate <= 0) {
-      printf("ERROR: Invalid encoder parameters - channels: %d, sample_rate: %d\n", 
-             ctx.encoder_ctx->channels, ctx.encoder_ctx->sample_rate);
-      return;
-    }
-
-    // Open encoder
-    if (avcodec_open2(ctx.encoder_ctx, encoder, nullptr) < 0) {
-      printf("ERROR: Could not open AAC encoder\n");
-      return;
-    }
-    printf("init_transcoding_context 8\n");
-
-    // Update output codec parameters
-    avcodec_parameters_from_context(out_codecpar, ctx.encoder_ctx);
-    printf("init_transcoding_context 9\n");
-
-    // Initialize resampler if needed
-    if (ctx.decoder_ctx->sample_fmt != ctx.encoder_ctx->sample_fmt ||
-        ctx.decoder_ctx->sample_rate != ctx.encoder_ctx->sample_rate ||
-        ctx.decoder_ctx->channel_layout != ctx.encoder_ctx->channel_layout) {
-
-      ctx.swr_ctx = swr_alloc_set_opts(
-        nullptr,
-        ctx.encoder_ctx->channel_layout,
-        ctx.encoder_ctx->sample_fmt,
-        ctx.encoder_ctx->sample_rate,
-        ctx.decoder_ctx->channel_layout,
-        ctx.decoder_ctx->sample_fmt,
-        ctx.decoder_ctx->sample_rate,
-        0,
-        nullptr
-      );
-      printf("init_transcoding_context 10\n");
-
-      if (!ctx.swr_ctx || swr_init(ctx.swr_ctx) < 0) {
-        throw std::runtime_error("Could not initialize resampler");
-      }
-    }
-
-    printf("init_transcoding_context 11\n");
-    // Allocate frames
-    ctx.decoded_frame = av_frame_alloc();
-    ctx.resampled_frame = av_frame_alloc();
-    if (!ctx.decoded_frame || !ctx.resampled_frame) {
-      throw std::runtime_error("Could not allocate frames");
-    }
-
-    printf("init_transcoding_context 12\n");
-    // Setup resampled frame for encoder's expected frame size
-    ctx.resampled_frame->format = ctx.encoder_ctx->sample_fmt;
-    ctx.resampled_frame->channel_layout = ctx.encoder_ctx->channel_layout;
-    ctx.resampled_frame->channels = ctx.encoder_ctx->channels;  // Explicitly set channels
-    ctx.resampled_frame->sample_rate = ctx.encoder_ctx->sample_rate;
-    ctx.resampled_frame->nb_samples = ctx.encoder_ctx->frame_size;
-
-    printf("init_transcoding_context 13\n");
-    if (av_frame_get_buffer(ctx.resampled_frame, 0) < 0) {
-      throw std::runtime_error("Could not allocate resampled frame buffer");
-    }
-    
-    // Debug: Check frame allocation for planar formats
-    bool encoder_is_planar = av_sample_fmt_is_planar(ctx.encoder_ctx->sample_fmt);
-    printf("Resampled frame allocation - format: %s (%s), channels: %d\n",
-           av_get_sample_fmt_name((AVSampleFormat)ctx.resampled_frame->format),
-           encoder_is_planar ? "planar" : "packed", ctx.encoder_ctx->channels);
-    
-    for (int ch = 0; ch < ctx.encoder_ctx->channels; ch++) {
-      printf("Channel %d: data=%p, linesize=%d\n", ch, 
-             ctx.resampled_frame->data[ch], ctx.resampled_frame->linesize[ch]);
-    }
-
-    // Initialize audio buffer for frame size conversion
-    ctx.channels = ctx.encoder_ctx->channels;
-    ctx.bytes_per_sample = av_get_bytes_per_sample(ctx.encoder_ctx->sample_fmt);
-    ctx.samples_in_buffer = 0;
-    
-    // Validate buffer parameters
-    if (ctx.channels <= 0 || ctx.bytes_per_sample <= 0) {
-      printf("ERROR: Invalid buffer parameters - channels: %d, bytes_per_sample: %d\n", 
-             ctx.channels, ctx.bytes_per_sample);
-      return;
-    }
-    
-    printf("Audio buffer initialized - channels: %d, bytes_per_sample: %d, frame_size: %d\n",
-           ctx.channels, ctx.bytes_per_sample, ctx.encoder_ctx->frame_size);
-  }
-
-  void destroy_transcoding_contexts() {
-    for (auto& pair : transcoding_contexts) {
-      TranscodingContext& ctx = pair.second;
-
-      if (ctx.decoded_frame) {
-        av_frame_free(&ctx.decoded_frame);
-      }
-      if (ctx.resampled_frame) {
-        // Check if frame was manually allocated (buf[0] == nullptr)
-        if (ctx.resampled_frame->buf[0] == nullptr) {
-          // Free manually allocated channel buffers
-          for (int ch = 0; ch < ctx.channels; ch++) {
-            if (ctx.resampled_frame->data[ch]) {
-              av_free(ctx.resampled_frame->data[ch]);
-              ctx.resampled_frame->data[ch] = nullptr;
-            }
-          }
-        }
-        av_frame_free(&ctx.resampled_frame);
-      }
-      if (ctx.swr_ctx) {
-        swr_free(&ctx.swr_ctx);
-      }
-      if (ctx.decoder_ctx) {
-        avcodec_free_context(&ctx.decoder_ctx);
-      }
-      if (ctx.encoder_ctx) {
-        avcodec_free_context(&ctx.encoder_ctx);
-      }
-    }
-    transcoding_contexts.clear();
-  }
-
   void init_streams(bool skip = false) {
     if (skip) {
       int ret = avformat_find_stream_info(input_format_context, nullptr);
@@ -546,21 +598,11 @@ public:
         if (!out_stream) {
           throw std::runtime_error("Could not allocate an output stream");
         }
-
-        // Check if we need to transcode EAC3/AC3 to AAC
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-            (in_codecpar->codec_id == AV_CODEC_ID_EAC3 || in_codecpar->codec_id == AV_CODEC_ID_AC3)) {
-          // Initialize transcoding context
-          init_transcoding_context(i, in_codecpar, out_stream->codecpar);
-          // Update audio mime type
-          audio_mime_type = parse_mp4a_mime_type(out_stream->codecpar);
-        } else {
-          int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
-          if (cpRet < 0) {
-            throw std::runtime_error(
-              "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
-            );
-          }
+        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+        if (cpRet < 0) {
+          throw std::runtime_error(
+            "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
+          );
         }
       }
       return;
@@ -640,10 +682,13 @@ public:
         }
       }
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        audio_stream_index = i;
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
-        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3 || in_codecpar->codec_id == AV_CODEC_ID_AC3) {
-          // Will be transcoded to AAC
+        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          // Initialize EAC3 to AAC transcoding
+          init_audio_transcoding(in_stream);
+          // Set output mime type to AAC since we're transcoding
           audio_mime_type = "mp4a.40.2"; // AAC-LC
         }
       }
@@ -654,14 +699,29 @@ public:
         throw std::runtime_error("Could not allocate an output stream");
       }
 
-      printf("codec 2 %s %s\n", av_get_media_type_string(in_codecpar->codec_type), avcodec_get_name(in_codecpar->codec_id));
-      // Check if we need to transcode EAC3/AC3 to AAC
+      // If we're transcoding EAC3 to AAC, set AAC parameters instead of copying
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-          (in_codecpar->codec_id == AV_CODEC_ID_EAC3 || in_codecpar->codec_id == AV_CODEC_ID_AC3)) {
-        printf("eac3\n");
-        // Initialize transcoding context
-        init_transcoding_context(i, in_codecpar, out_stream->codecpar);
-        printf("eac3 2\n");
+          in_codecpar->codec_id == AV_CODEC_ID_EAC3 &&
+          needs_audio_transcoding) {
+
+        out_stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+        out_stream->codecpar->codec_id = AV_CODEC_ID_AAC;
+        out_stream->codecpar->sample_rate = audio_encoder_context->sample_rate;
+        av_channel_layout_copy(&out_stream->codecpar->ch_layout, &audio_encoder_context->ch_layout);
+        out_stream->codecpar->bit_rate = audio_encoder_context->bit_rate;
+        out_stream->codecpar->profile = audio_encoder_context->profile;
+        out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
+        out_stream->time_base = audio_encoder_context->time_base;
+
+        // Copy extradata (important for AAC in MP4)
+        if (audio_encoder_context->extradata && audio_encoder_context->extradata_size > 0) {
+          out_stream->codecpar->extradata = (uint8_t*)av_mallocz(audio_encoder_context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+          if (!out_stream->codecpar->extradata) {
+            throw std::runtime_error("Could not allocate extradata for output stream");
+          }
+          memcpy(out_stream->codecpar->extradata, audio_encoder_context->extradata, audio_encoder_context->extradata_size);
+          out_stream->codecpar->extradata_size = audio_encoder_context->extradata_size;
+        }
       } else {
         int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
         if (cpRet < 0) {
@@ -670,7 +730,6 @@ public:
           );
         }
       }
-
       streams_list[i] = out_index++;
     }
   }
@@ -680,7 +739,6 @@ public:
       av_freep(&streams_list);
       streams_list = nullptr;
     }
-    destroy_transcoding_contexts();
   }
 
   void write_header() {
@@ -716,274 +774,6 @@ public:
       }
     }
     attachments.clear();
-  }
-
-  void send_buffered_frame_to_encoder(TranscodingContext& ctx, AVStream* out_stream) {
-    if (ctx.samples_in_buffer < ctx.encoder_ctx->frame_size) {
-      return; // Not enough samples to form a complete frame
-    }
-
-    // Validate parameters to prevent buffer overflow
-    if (ctx.channels <= 0 || ctx.bytes_per_sample <= 0 || ctx.encoder_ctx->frame_size <= 0) {
-      printf("ERROR: Invalid parameters in send_buffered_frame_to_encoder\n");
-      return;
-    }
-
-    // Check if the encoder expects planar or packed format
-    bool encoder_is_planar = av_sample_fmt_is_planar(ctx.encoder_ctx->sample_fmt);
-    int samples_per_channel = ctx.encoder_ctx->frame_size;
-    int bytes_per_channel = samples_per_channel * ctx.bytes_per_sample;
-    
-    printf("Encoder format: %s (%s), linesize[0]: %d\n",
-           av_get_sample_fmt_name(ctx.encoder_ctx->sample_fmt),
-           encoder_is_planar ? "planar" : "packed",
-           ctx.resampled_frame->linesize[0]);
-    
-    if (encoder_is_planar) {
-      // Planar format: de-interleave our buffer into separate channel planes
-      for (int ch = 0; ch < ctx.channels; ch++) {
-        if (!ctx.resampled_frame->data[ch]) {
-          printf("ERROR: No data plane for channel %d\n", ch);
-          return;
-        }
-        
-        // Check bounds for this channel
-        if (bytes_per_channel > ctx.resampled_frame->linesize[ch] || ctx.resampled_frame->linesize[ch] == 0) {
-          printf("ERROR: Channel %d buffer invalid - need: %d, have: %d\n",
-                 ch, bytes_per_channel, ctx.resampled_frame->linesize[ch]);
-          
-          // Try manual buffer allocation for planar format
-          av_frame_unref(ctx.resampled_frame);
-          ctx.resampled_frame->format = ctx.encoder_ctx->sample_fmt;
-          ctx.resampled_frame->channel_layout = ctx.encoder_ctx->channel_layout;
-          ctx.resampled_frame->channels = ctx.encoder_ctx->channels;
-          ctx.resampled_frame->sample_rate = ctx.encoder_ctx->sample_rate;
-          ctx.resampled_frame->nb_samples = ctx.encoder_ctx->frame_size;
-          
-          // Manually allocate buffers for each channel in planar format
-          for (int manual_ch = 0; manual_ch < ctx.channels; manual_ch++) {
-            ctx.resampled_frame->data[manual_ch] = (uint8_t*)av_malloc(bytes_per_channel);
-            ctx.resampled_frame->linesize[manual_ch] = bytes_per_channel;
-            if (!ctx.resampled_frame->data[manual_ch]) {
-              printf("ERROR: Failed to manually allocate buffer for channel %d\n", manual_ch);
-              return;
-            }
-            printf("Manually allocated channel %d: data=%p, linesize=%d\n", manual_ch,
-                   ctx.resampled_frame->data[manual_ch], ctx.resampled_frame->linesize[manual_ch]);
-          }
-          
-          // Mark frame as manually allocated so we can free it properly later
-          ctx.resampled_frame->buf[0] = nullptr; // Indicates manual allocation
-          
-          printf("Manual allocation complete for channel %d\n", ch);
-        }
-        
-        // De-interleave: copy every nth sample to this channel
-        for (int sample = 0; sample < samples_per_channel; sample++) {
-          int src_offset = (sample * ctx.channels + ch) * ctx.bytes_per_sample;
-          int dst_offset = sample * ctx.bytes_per_sample;
-          
-          if (src_offset + ctx.bytes_per_sample <= ctx.audio_buffer.size()) {
-            memcpy(ctx.resampled_frame->data[ch] + dst_offset,
-                   ctx.audio_buffer.data() + src_offset,
-                   ctx.bytes_per_sample);
-          }
-        }
-      }
-    } else {
-      // Packed format: direct copy of interleaved data
-      int frame_size_bytes = ctx.encoder_ctx->frame_size * ctx.channels * ctx.bytes_per_sample;
-      
-      if (frame_size_bytes > ctx.audio_buffer.size() || 
-          frame_size_bytes > ctx.resampled_frame->linesize[0]) {
-        printf("ERROR: Buffer overflow prevented - frame_size_bytes: %d, buffer_size: %zu, linesize: %d\n",
-               frame_size_bytes, ctx.audio_buffer.size(), ctx.resampled_frame->linesize[0]);
-        return;
-      }
-      
-      memcpy(ctx.resampled_frame->data[0], ctx.audio_buffer.data(), frame_size_bytes);
-    }
-    
-    // Set proper timestamps
-    ctx.resampled_frame->pts = ctx.next_pts;
-    ctx.next_pts += ctx.encoder_ctx->frame_size;
-
-    // Send frame to encoder
-    int ret = avcodec_send_frame(ctx.encoder_ctx, ctx.resampled_frame);
-    if (ret < 0) {
-      printf("Error sending buffered frame to encoder: %s\n", ffmpegErrStr(ret).c_str());
-      return;
-    }
-
-    // Receive encoded packets
-    AVPacket* enc_pkt = av_packet_alloc();
-    while (ret >= 0) {
-      ret = avcodec_receive_packet(ctx.encoder_ctx, enc_pkt);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        break;
-      } else if (ret < 0) {
-        printf("Error receiving packet from encoder: %s\n", ffmpegErrStr(ret).c_str());
-        break;
-      }
-
-      // Set stream index and rescale timestamps
-      enc_pkt->stream_index = out_stream->index;
-      av_packet_rescale_ts(enc_pkt, ctx.encoder_ctx->time_base, out_stream->time_base);
-
-      // Write the encoded packet
-      ret = av_interleaved_write_frame(output_format_context, enc_pkt);
-      if (ret < 0) {
-        printf("Error writing encoded frame: %s\n", ffmpegErrStr(ret).c_str());
-      }
-
-      av_packet_unref(enc_pkt);
-    }
-    av_packet_free(&enc_pkt);
-
-    // Remove used samples from buffer
-    int used_bytes = ctx.encoder_ctx->frame_size * ctx.channels * ctx.bytes_per_sample;
-    int remaining_bytes = (ctx.samples_in_buffer - ctx.encoder_ctx->frame_size) * ctx.channels * ctx.bytes_per_sample;
-    if (remaining_bytes > 0) {
-      memmove(ctx.audio_buffer.data(), ctx.audio_buffer.data() + used_bytes, remaining_bytes);
-    }
-    ctx.samples_in_buffer -= ctx.encoder_ctx->frame_size;
-  }
-
-  bool transcode_audio_packet(AVPacket* pkt, int stream_index) {
-    auto it = transcoding_contexts.find(stream_index);
-    if (it == transcoding_contexts.end()) {
-      return false; // No transcoding needed
-    }
-
-    TranscodingContext& ctx = it->second;
-    AVStream* in_stream = input_format_context->streams[stream_index];
-    AVStream* out_stream = output_format_context->streams[streams_list[stream_index]];
-
-    // Send packet to decoder
-    int ret = avcodec_send_packet(ctx.decoder_ctx, pkt);
-    if (ret < 0) {
-      printf("Error sending packet to decoder: %s\n", ffmpegErrStr(ret).c_str());
-      return false;
-    }
-
-    // Receive and process frames
-    while (ret >= 0) {
-      ret = avcodec_receive_frame(ctx.decoder_ctx, ctx.decoded_frame);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        break;
-      } else if (ret < 0) {
-        printf("Error receiving frame from decoder: %s\n", ffmpegErrStr(ret).c_str());
-        return false;
-      }
-
-      AVFrame* processed_frame = ctx.decoded_frame;
-
-      // Resample if necessary
-      if (ctx.swr_ctx) {
-        // Create temporary frame for resampling with variable size
-        AVFrame* temp_frame = av_frame_alloc();
-        temp_frame->format = ctx.encoder_ctx->sample_fmt;
-        temp_frame->channel_layout = ctx.encoder_ctx->channel_layout;
-        temp_frame->sample_rate = ctx.encoder_ctx->sample_rate;
-        temp_frame->nb_samples = ctx.decoded_frame->nb_samples; // Keep original size for resampling
-        
-        if (av_frame_get_buffer(temp_frame, 0) < 0) {
-          printf("Error allocating temporary resampling frame\n");
-          av_frame_free(&temp_frame);
-          av_frame_unref(ctx.decoded_frame);
-          continue;
-        }
-
-        ret = swr_convert_frame(ctx.swr_ctx, temp_frame, ctx.decoded_frame);
-        if (ret < 0) {
-          printf("Error resampling frame: %s\n", ffmpegErrStr(ret).c_str());
-          av_frame_free(&temp_frame);
-          av_frame_unref(ctx.decoded_frame);
-          continue;
-        }
-        processed_frame = temp_frame;
-      }
-
-      // Add samples to buffer
-      int samples_to_add = processed_frame->nb_samples;
-      
-      // Validate parameters
-      if (samples_to_add <= 0) {
-        printf("WARNING: Invalid sample count - samples: %d\n", samples_to_add);
-        av_frame_unref(ctx.decoded_frame);
-        if (processed_frame != ctx.decoded_frame) {
-          av_frame_free(&processed_frame);
-        }
-        continue;
-      }
-      
-      // Check if format is planar or packed
-      bool is_planar = av_sample_fmt_is_planar((AVSampleFormat)processed_frame->format);
-      int bytes_per_channel_sample = av_get_bytes_per_sample((AVSampleFormat)processed_frame->format);
-      
-      printf("Frame info - samples: %d, channels: %d, format: %s (%s), linesize[0]: %d\n",
-             samples_to_add, ctx.channels,
-             av_get_sample_fmt_name((AVSampleFormat)processed_frame->format),
-             is_planar ? "planar" : "packed",
-             processed_frame->linesize[0]);
-      
-      // Calculate total bytes needed in our interleaved buffer
-      int total_bytes_needed = samples_to_add * ctx.channels * ctx.bytes_per_sample;
-      
-      // Ensure buffer has enough space
-      size_t required_size = (ctx.samples_in_buffer + samples_to_add) * ctx.channels * ctx.bytes_per_sample;
-      if (ctx.audio_buffer.size() < required_size) {
-        ctx.audio_buffer.resize(required_size);
-      }
-
-      // Copy samples to buffer - handle both planar and packed formats
-      size_t buffer_offset = ctx.samples_in_buffer * ctx.channels * ctx.bytes_per_sample;
-      
-      if (is_planar) {
-        // Planar format: each channel is in a separate data plane
-        for (int sample = 0; sample < samples_to_add; sample++) {
-          for (int ch = 0; ch < ctx.channels; ch++) {
-            if (processed_frame->data[ch] && 
-                (sample + 1) * bytes_per_channel_sample <= processed_frame->linesize[ch]) {
-              memcpy(ctx.audio_buffer.data() + buffer_offset + 
-                     (sample * ctx.channels + ch) * ctx.bytes_per_sample,
-                     processed_frame->data[ch] + sample * bytes_per_channel_sample,
-                     ctx.bytes_per_sample);
-            }
-          }
-        }
-      } else {
-        // Packed format: all channels interleaved in data[0]
-        int bytes_to_copy = samples_to_add * ctx.channels * ctx.bytes_per_sample;
-        if (bytes_to_copy <= processed_frame->linesize[0]) {
-          memcpy(ctx.audio_buffer.data() + buffer_offset, 
-                 processed_frame->data[0], bytes_to_copy);
-        } else {
-          printf("ERROR: Packed frame too small - need: %d, have: %d\n", 
-                 bytes_to_copy, processed_frame->linesize[0]);
-          av_frame_unref(ctx.decoded_frame);
-          if (processed_frame != ctx.decoded_frame) {
-            av_frame_free(&processed_frame);
-          }
-          continue;
-        }
-      }
-      
-      ctx.samples_in_buffer += samples_to_add;
-
-      // Send complete frames to encoder
-      while (ctx.samples_in_buffer >= ctx.encoder_ctx->frame_size) {
-        send_buffered_frame_to_encoder(ctx, out_stream);
-      }
-
-      // Clean up
-      av_frame_unref(ctx.decoded_frame);
-      if (processed_frame != ctx.decoded_frame) {
-        av_frame_free(&processed_frame);
-      }
-    }
-
-    return true;
   }
 
   ThumbnailReadResult read_keyframe(emscripten::val read_function, double timestamp) {
@@ -1115,7 +905,7 @@ public:
 
     infoObj.output.formatName = output_format_context->oformat->name ? output_format_context->oformat->name : "";
     infoObj.output.mimeType   = output_format_context->oformat->mime_type ? output_format_context->oformat->mime_type : "";
-    infoObj.output.duration   = 0.0; // we haven't written frames yet
+    infoObj.output.duration   = 0.0; // we haven’t written frames yet
     infoObj.output.video_mime_type = video_mime_type;
     infoObj.output.audio_mime_type = audio_mime_type;
 
@@ -1205,115 +995,6 @@ public:
         }
         // if ret == AVERROR_EOF, we finalize
         if (ret == AVERROR_EOF) {
-          // Flush transcoding contexts
-          for (auto& pair : transcoding_contexts) {
-            TranscodingContext& ctx = pair.second;
-            int stream_idx = pair.first;
-            AVStream* out_stream = output_format_context->streams[streams_list[stream_idx]];
-
-            // Flush decoder and process remaining frames
-            avcodec_send_packet(ctx.decoder_ctx, nullptr);
-            AVFrame* frame = av_frame_alloc();
-            while (avcodec_receive_frame(ctx.decoder_ctx, frame) == 0) {
-              // Process remaining decoded frames through our buffering system
-              AVFrame* processed_frame = frame;
-              
-              if (ctx.swr_ctx) {
-                AVFrame* temp_frame = av_frame_alloc();
-                temp_frame->format = ctx.encoder_ctx->sample_fmt;
-                temp_frame->channel_layout = ctx.encoder_ctx->channel_layout;
-                temp_frame->sample_rate = ctx.encoder_ctx->sample_rate;
-                temp_frame->nb_samples = frame->nb_samples;
-                
-                if (av_frame_get_buffer(temp_frame, 0) >= 0 && 
-                    swr_convert_frame(ctx.swr_ctx, temp_frame, frame) >= 0) {
-                  processed_frame = temp_frame;
-                }
-              }
-              
-              // Add to buffer using same logic as main transcoding
-              int samples_to_add = processed_frame->nb_samples;
-              
-              if (samples_to_add <= 0) {
-                if (processed_frame != frame) {
-                  av_frame_free(&processed_frame);
-                }
-                continue;
-              }
-              
-              bool is_planar = av_sample_fmt_is_planar((AVSampleFormat)processed_frame->format);
-              int bytes_per_channel_sample = av_get_bytes_per_sample((AVSampleFormat)processed_frame->format);
-              
-              size_t required_size = (ctx.samples_in_buffer + samples_to_add) * ctx.channels * ctx.bytes_per_sample;
-              if (ctx.audio_buffer.size() < required_size) {
-                ctx.audio_buffer.resize(required_size);
-              }
-              
-              size_t buffer_offset = ctx.samples_in_buffer * ctx.channels * ctx.bytes_per_sample;
-              
-              if (is_planar) {
-                // Planar format
-                for (int sample = 0; sample < samples_to_add; sample++) {
-                  for (int ch = 0; ch < ctx.channels; ch++) {
-                    if (processed_frame->data[ch] && 
-                        (sample + 1) * bytes_per_channel_sample <= processed_frame->linesize[ch]) {
-                      memcpy(ctx.audio_buffer.data() + buffer_offset + 
-                             (sample * ctx.channels + ch) * ctx.bytes_per_sample,
-                             processed_frame->data[ch] + sample * bytes_per_channel_sample,
-                             ctx.bytes_per_sample);
-                    }
-                  }
-                }
-              } else {
-                // Packed format
-                int bytes_to_copy = samples_to_add * ctx.channels * ctx.bytes_per_sample;
-                if (bytes_to_copy <= processed_frame->linesize[0]) {
-                  memcpy(ctx.audio_buffer.data() + buffer_offset, 
-                         processed_frame->data[0], bytes_to_copy);
-                }
-              }
-              
-              ctx.samples_in_buffer += samples_to_add;
-              
-              // Send complete frames
-              while (ctx.samples_in_buffer >= ctx.encoder_ctx->frame_size) {
-                send_buffered_frame_to_encoder(ctx, out_stream);
-              }
-              
-              if (processed_frame != frame) {
-                av_frame_free(&processed_frame);
-              }
-            }
-            av_frame_free(&frame);
-
-            // Send any remaining buffered samples (pad with silence if needed)
-            if (ctx.samples_in_buffer > 0) {
-              // Pad with silence to complete frame
-              int padding_samples = ctx.encoder_ctx->frame_size - ctx.samples_in_buffer;
-              if (padding_samples > 0) {
-                int padding_bytes = padding_samples * ctx.channels * ctx.bytes_per_sample;
-                if (ctx.audio_buffer.size() < (ctx.samples_in_buffer + padding_samples) * ctx.channels * ctx.bytes_per_sample) {
-                  ctx.audio_buffer.resize((ctx.samples_in_buffer + padding_samples) * ctx.channels * ctx.bytes_per_sample);
-                }
-                memset(ctx.audio_buffer.data() + (ctx.samples_in_buffer * ctx.channels * ctx.bytes_per_sample), 
-                       0, padding_bytes);
-                ctx.samples_in_buffer += padding_samples;
-              }
-              send_buffered_frame_to_encoder(ctx, out_stream);
-            }
-
-            // Flush encoder
-            avcodec_send_frame(ctx.encoder_ctx, nullptr);
-            AVPacket* enc_pkt = av_packet_alloc();
-            while (avcodec_receive_packet(ctx.encoder_ctx, enc_pkt) == 0) {
-              enc_pkt->stream_index = out_stream->index;
-              av_packet_rescale_ts(enc_pkt, ctx.encoder_ctx->time_base, out_stream->time_base);
-              av_interleaved_write_frame(output_format_context, enc_pkt);
-              av_packet_unref(enc_pkt);
-            }
-            av_packet_free(&enc_pkt);
-          }
-
           // flush + trailer
           avio_flush(output_format_context->pb);
           av_write_trailer(output_format_context);
@@ -1360,11 +1041,14 @@ public:
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        // Check if this is EAC3/AC3 that needs transcoding
-        if (in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3 || in_stream->codecpar->codec_id == AV_CODEC_ID_AC3) {
-          transcode_audio_packet(packet, packet->stream_index);
+        if (needs_audio_transcoding && in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          // Transcode EAC3 to AAC
+          ret = transcode_audio_packet(packet, out_stream);
+          if (ret < 0) {
+            printf("ERROR: could not transcode audio packet | %s \n", av_err2str(ret));
+          }
         } else {
-          // Just copy the packet
+          // Regular audio remuxing
           av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
           if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
             printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
@@ -1473,6 +1157,7 @@ public:
   // Cleanup everything
   //-----------------------------------------
   void destroy() {
+    cleanup_audio_transcoding();
     destroy_streams();
     destroy_input();
     destroy_output();
