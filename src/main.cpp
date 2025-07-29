@@ -123,6 +123,7 @@ public:
   AVFrame* audio_frame_converted = nullptr;
   AVAudioFifo* audio_fifo = nullptr;
   bool needs_audio_transcoding = false;
+  int64_t audio_pts_counter = 0;
 
   // For partial segments
   double prev_duration = 0;
@@ -207,18 +208,36 @@ public:
     audio_encoder_context->sample_rate = audio_decoder_context->sample_rate;
     av_channel_layout_copy(&audio_encoder_context->ch_layout, &audio_decoder_context->ch_layout);
     audio_encoder_context->sample_fmt = encoder->sample_fmts[0]; // Use first supported format
-    audio_encoder_context->bit_rate = 128000; // 128 kbps
+
+    // Use very conservative settings to avoid large packets
+    audio_encoder_context->bit_rate = 0; // Use VBR mode instead of CBR
     audio_encoder_context->profile = FF_PROFILE_AAC_LOW;
     audio_encoder_context->frame_size = 1024; // AAC frame size
+
+    // Set quality-based encoding instead of bitrate
+    audio_encoder_context->global_quality = FF_QP2LAMBDA * 8; // Quality level 8 (reasonable compression)
+    audio_encoder_context->flags |= AV_CODEC_FLAG_QSCALE; // Enable quality-based encoding
+
+    // Ensure strict compliance for MP4
+    audio_encoder_context->strict_std_compliance = FF_COMPLIANCE_STRICT;
 
     // Set global header flag for MP4 container
     if (output_format_context->oformat->flags & AVFMT_GLOBALHEADER) {
       audio_encoder_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     }
 
-    if (avcodec_open2(audio_encoder_context, encoder, nullptr) < 0) {
+    // Set encoder-specific options
+    AVDictionary* encoder_opts = nullptr;
+    av_dict_set(&encoder_opts, "aac_coder", "twoloop", 0);
+    av_dict_set(&encoder_opts, "aac_ms", "0", 0);
+    av_dict_set(&encoder_opts, "aac_is", "0", 0);
+    av_dict_set(&encoder_opts, "aac_pns", "0", 0);
+
+    if (avcodec_open2(audio_encoder_context, encoder, &encoder_opts) < 0) {
+      av_dict_free(&encoder_opts);
       throw std::runtime_error("Could not open audio encoder");
     }
+    av_dict_free(&encoder_opts);
 
     // Update frame size after encoder is opened (encoder may adjust it)
     if (audio_encoder_context->frame_size <= 0) {
@@ -253,6 +272,9 @@ public:
     if (!audio_fifo) {
       throw std::runtime_error("Could not allocate audio FIFO");
     }
+
+    // Initialize PTS counter
+    audio_pts_counter = 0;
   }
 
   void cleanup_audio_transcoding() {
@@ -275,6 +297,7 @@ public:
       av_audio_fifo_free(audio_fifo);
     }
     needs_audio_transcoding = false;
+    audio_pts_counter = 0;
   }
 
   int encode_audio_frame_from_fifo(AVStream* out_stream) {
@@ -302,6 +325,10 @@ public:
 
     frame->nb_samples = ret;
 
+    // Set proper PTS for the frame
+    frame->pts = audio_pts_counter;
+    audio_pts_counter += frame->nb_samples;
+
     // Encode the frame
     ret = avcodec_send_frame(audio_encoder_context, frame);
     av_frame_free(&frame);
@@ -322,7 +349,23 @@ public:
       }
 
       encoded_packet->stream_index = out_stream->index;
+
+      // Ensure packet has proper timestamps
+      if (encoded_packet->pts == AV_NOPTS_VALUE) {
+        encoded_packet->pts = encoded_packet->dts;
+      }
+      if (encoded_packet->dts == AV_NOPTS_VALUE) {
+        encoded_packet->dts = encoded_packet->pts;
+      }
+
       av_packet_rescale_ts(encoded_packet, audio_encoder_context->time_base, out_stream->time_base);
+
+      // Check packet size and warn if it's too large for MP4
+      const int MAX_AAC_PACKET_SIZE = 3449; // Typical max for AAC in MP4
+      if (encoded_packet->size > MAX_AAC_PACKET_SIZE) {
+        printf("Warning: AAC packet size %d exceeds recommended maximum %d\n",
+               encoded_packet->size, MAX_AAC_PACKET_SIZE);
+      }
 
       ret = av_interleaved_write_frame(output_format_context, encoded_packet);
       av_packet_free(&encoded_packet);
@@ -711,7 +754,9 @@ public:
         out_stream->codecpar->bit_rate = audio_encoder_context->bit_rate;
         out_stream->codecpar->profile = audio_encoder_context->profile;
         out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
-        out_stream->time_base = audio_encoder_context->time_base;
+
+        // Set proper time base for AAC (usually 1/sample_rate)
+        out_stream->time_base = (AVRational){1, audio_encoder_context->sample_rate};
 
         // Copy extradata (important for AAC in MP4)
         if (audio_encoder_context->extradata && audio_encoder_context->extradata_size > 0) {
