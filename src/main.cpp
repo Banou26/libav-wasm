@@ -12,8 +12,6 @@ extern "C" {
   #include <libavcodec/avcodec.h>
   #include <libavformat/avformat.h>
   #include <libswscale/swscale.h>
-  #include <libswresample/swresample.h>
-  #include <libavutil/audio_fifo.h>
 }
 
 using namespace emscripten;
@@ -111,19 +109,8 @@ public:
 
   int buffer_size;
   int video_stream_index;
-  int audio_stream_index;
   int number_of_streams;
   int* streams_list = nullptr;
-
-  // Audio transcoding components
-  AVCodecContext* audio_decoder_context = nullptr;
-  AVCodecContext* audio_encoder_context = nullptr;
-  SwrContext* audio_swr_context = nullptr;
-  AVFrame* audio_frame = nullptr;
-  AVFrame* audio_frame_converted = nullptr;
-  AVAudioFifo* audio_fifo = nullptr;
-  bool needs_audio_transcoding = false;
-  int64_t audio_pts_counter = 0;
 
   // For partial segments
   double prev_duration = 0;
@@ -155,291 +142,10 @@ public:
     resolved_promise = options["resolvedPromise"];
     input_length = options["length"].as<float>();
     buffer_size = options["bufferSize"].as<int>();
-    video_stream_index = -1;
-    audio_stream_index = -1;
   }
 
   ~Remuxer() {
     destroy();
-  }
-
-  void init_audio_transcoding(AVStream* in_stream) {
-    AVCodecParameters* in_codecpar = in_stream->codecpar;
-
-    // Check if audio stream is EAC3
-    if (in_codecpar->codec_id != AV_CODEC_ID_EAC3) {
-      needs_audio_transcoding = false;
-      return;
-    }
-
-    needs_audio_transcoding = true;
-
-    // Initialize decoder
-    const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_EAC3);
-    if (!decoder) {
-      throw std::runtime_error("EAC3 decoder not found");
-    }
-
-    audio_decoder_context = avcodec_alloc_context3(decoder);
-    if (!audio_decoder_context) {
-      throw std::runtime_error("Could not allocate audio decoder context");
-    }
-
-    if (avcodec_parameters_to_context(audio_decoder_context, in_codecpar) < 0) {
-      throw std::runtime_error("Could not copy decoder parameters");
-    }
-
-    if (avcodec_open2(audio_decoder_context, decoder, nullptr) < 0) {
-      throw std::runtime_error("Could not open audio decoder");
-    }
-
-    // Initialize encoder
-    const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!encoder) {
-      throw std::runtime_error("AAC encoder not found");
-    }
-
-    audio_encoder_context = avcodec_alloc_context3(encoder);
-    if (!audio_encoder_context) {
-      throw std::runtime_error("Could not allocate audio encoder context");
-    }
-
-    // Set encoder parameters
-    audio_encoder_context->sample_rate = audio_decoder_context->sample_rate;
-    av_channel_layout_copy(&audio_encoder_context->ch_layout, &audio_decoder_context->ch_layout);
-    audio_encoder_context->sample_fmt = encoder->sample_fmts[0]; // Use first supported format
-
-    // Use very conservative settings to avoid large packets
-    audio_encoder_context->bit_rate = 0; // Use VBR mode instead of CBR
-    audio_encoder_context->profile = FF_PROFILE_AAC_LOW;
-    audio_encoder_context->frame_size = 1024; // AAC frame size
-
-    // Set quality-based encoding instead of bitrate
-    audio_encoder_context->global_quality = FF_QP2LAMBDA * 8; // Quality level 8 (reasonable compression)
-    audio_encoder_context->flags |= AV_CODEC_FLAG_QSCALE; // Enable quality-based encoding
-
-    // Ensure strict compliance for MP4
-    audio_encoder_context->strict_std_compliance = FF_COMPLIANCE_STRICT;
-
-    // Set global header flag for MP4 container
-    if (output_format_context->oformat->flags & AVFMT_GLOBALHEADER) {
-      audio_encoder_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    }
-
-    // Set encoder-specific options
-    AVDictionary* encoder_opts = nullptr;
-    av_dict_set(&encoder_opts, "aac_coder", "twoloop", 0);
-    av_dict_set(&encoder_opts, "aac_ms", "0", 0);
-    av_dict_set(&encoder_opts, "aac_is", "0", 0);
-    av_dict_set(&encoder_opts, "aac_pns", "0", 0);
-
-    if (avcodec_open2(audio_encoder_context, encoder, &encoder_opts) < 0) {
-      av_dict_free(&encoder_opts);
-      throw std::runtime_error("Could not open audio encoder");
-    }
-    av_dict_free(&encoder_opts);
-
-    // Update frame size after encoder is opened (encoder may adjust it)
-    if (audio_encoder_context->frame_size <= 0) {
-      audio_encoder_context->frame_size = 1024; // Default AAC frame size
-    }
-
-    // Initialize resampler if needed
-    if (audio_decoder_context->sample_fmt != audio_encoder_context->sample_fmt ||
-        audio_decoder_context->sample_rate != audio_encoder_context->sample_rate ||
-        av_channel_layout_compare(&audio_decoder_context->ch_layout, &audio_encoder_context->ch_layout) != 0) {
-
-      swr_alloc_set_opts2(&audio_swr_context,
-        &audio_encoder_context->ch_layout, audio_encoder_context->sample_fmt, audio_encoder_context->sample_rate,
-        &audio_decoder_context->ch_layout, audio_decoder_context->sample_fmt, audio_decoder_context->sample_rate,
-        0, nullptr);
-
-      if (!audio_swr_context || swr_init(audio_swr_context) < 0) {
-        throw std::runtime_error("Could not initialize audio resampler");
-      }
-    }
-
-    // Allocate frames
-    audio_frame = av_frame_alloc();
-    audio_frame_converted = av_frame_alloc();
-    if (!audio_frame || !audio_frame_converted) {
-      throw std::runtime_error("Could not allocate audio frames");
-    }
-
-    // Create audio FIFO buffer
-    audio_fifo = av_audio_fifo_alloc(audio_encoder_context->sample_fmt,
-      audio_encoder_context->ch_layout.nb_channels, 1024);
-    if (!audio_fifo) {
-      throw std::runtime_error("Could not allocate audio FIFO");
-    }
-
-    // Initialize PTS counter
-    audio_pts_counter = 0;
-  }
-
-  void cleanup_audio_transcoding() {
-    if (audio_decoder_context) {
-      avcodec_free_context(&audio_decoder_context);
-    }
-    if (audio_encoder_context) {
-      avcodec_free_context(&audio_encoder_context);
-    }
-    if (audio_swr_context) {
-      swr_free(&audio_swr_context);
-    }
-    if (audio_frame) {
-      av_frame_free(&audio_frame);
-    }
-    if (audio_frame_converted) {
-      av_frame_free(&audio_frame_converted);
-    }
-    if (audio_fifo) {
-      av_audio_fifo_free(audio_fifo);
-    }
-    needs_audio_transcoding = false;
-    audio_pts_counter = 0;
-  }
-
-  int encode_audio_frame_from_fifo(AVStream* out_stream) {
-    AVFrame* frame = av_frame_alloc();
-    if (!frame) {
-      return AVERROR(ENOMEM);
-    }
-
-    frame->nb_samples = audio_encoder_context->frame_size;
-    frame->format = audio_encoder_context->sample_fmt;
-    av_channel_layout_copy(&frame->ch_layout, &audio_encoder_context->ch_layout);
-    frame->sample_rate = audio_encoder_context->sample_rate;
-
-    int ret = av_frame_get_buffer(frame, 0);
-    if (ret < 0) {
-      av_frame_free(&frame);
-      return ret;
-    }
-
-    ret = av_audio_fifo_read(audio_fifo, (void**)frame->data, frame->nb_samples);
-    if (ret < 0) {
-      av_frame_free(&frame);
-      return ret;
-    }
-
-    frame->nb_samples = ret;
-
-    // Set proper PTS for the frame
-    frame->pts = audio_pts_counter;
-    audio_pts_counter += frame->nb_samples;
-
-    // Encode the frame
-    ret = avcodec_send_frame(audio_encoder_context, frame);
-    av_frame_free(&frame);
-    if (ret < 0) {
-      return ret;
-    }
-
-    while (ret >= 0) {
-      AVPacket* encoded_packet = av_packet_alloc();
-      ret = avcodec_receive_packet(audio_encoder_context, encoded_packet);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        av_packet_free(&encoded_packet);
-        break;
-      }
-      if (ret < 0) {
-        av_packet_free(&encoded_packet);
-        return ret;
-      }
-
-      encoded_packet->stream_index = out_stream->index;
-
-      // Ensure packet has proper timestamps
-      if (encoded_packet->pts == AV_NOPTS_VALUE) {
-        encoded_packet->pts = encoded_packet->dts;
-      }
-      if (encoded_packet->dts == AV_NOPTS_VALUE) {
-        encoded_packet->dts = encoded_packet->pts;
-      }
-
-      av_packet_rescale_ts(encoded_packet, audio_encoder_context->time_base, out_stream->time_base);
-
-      // Check packet size and warn if it's too large for MP4
-      const int MAX_AAC_PACKET_SIZE = 3449; // Typical max for AAC in MP4
-      if (encoded_packet->size > MAX_AAC_PACKET_SIZE) {
-        printf("Warning: AAC packet size %d exceeds recommended maximum %d\n",
-               encoded_packet->size, MAX_AAC_PACKET_SIZE);
-      }
-
-      ret = av_interleaved_write_frame(output_format_context, encoded_packet);
-      av_packet_free(&encoded_packet);
-      if (ret < 0) {
-        return ret;
-      }
-    }
-
-    return 0;
-  }
-
-  int transcode_audio_packet(AVPacket* input_packet, AVStream* out_stream) {
-    int ret = avcodec_send_packet(audio_decoder_context, input_packet);
-    if (ret < 0) {
-      return ret;
-    }
-
-    while (ret >= 0) {
-      ret = avcodec_receive_frame(audio_decoder_context, audio_frame);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        break;
-      }
-      if (ret < 0) {
-        return ret;
-      }
-
-      AVFrame* frame_to_fifo = audio_frame;
-
-      // Resample if necessary
-      if (audio_swr_context) {
-        audio_frame_converted->sample_rate = audio_encoder_context->sample_rate;
-        av_channel_layout_copy(&audio_frame_converted->ch_layout, &audio_encoder_context->ch_layout);
-        audio_frame_converted->format = audio_encoder_context->sample_fmt;
-
-        int dst_nb_samples = av_rescale_rnd(
-          swr_get_delay(audio_swr_context, audio_frame->sample_rate) + audio_frame->nb_samples,
-          audio_encoder_context->sample_rate, audio_frame->sample_rate, AV_ROUND_UP);
-
-        ret = av_frame_get_buffer(audio_frame_converted, 0);
-        if (ret < 0) {
-          return ret;
-        }
-
-        ret = swr_convert(audio_swr_context,
-          audio_frame_converted->data, dst_nb_samples,
-          (const uint8_t**)audio_frame->data, audio_frame->nb_samples);
-        if (ret < 0) {
-          return ret;
-        }
-
-        audio_frame_converted->nb_samples = ret;
-        frame_to_fifo = audio_frame_converted;
-      }
-
-      // Add to FIFO buffer
-      ret = av_audio_fifo_write(audio_fifo, (void**)frame_to_fifo->data, frame_to_fifo->nb_samples);
-      if (ret < 0) {
-        return ret;
-      }
-
-      // Encode frames while we have enough samples
-      while (av_audio_fifo_size(audio_fifo) >= audio_encoder_context->frame_size) {
-        ret = encode_audio_frame_from_fifo(out_stream);
-        if (ret < 0) {
-          return ret;
-        }
-      }
-
-      if (audio_swr_context) {
-        av_frame_unref(audio_frame_converted);
-      }
-    }
-
-    return 0;
   }
 
   auto decimalToHex(int d, int padding) {
@@ -637,57 +343,15 @@ public:
         )) {
           continue;
         }
-
-        // Check if this is an audio stream that needs transcoding
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-            in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
-          audio_stream_index = i;
-          init_audio_transcoding(in_stream);
-          audio_mime_type = "mp4a.40.2"; // AAC-LC
-        }
-
         AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
         if (!out_stream) {
           throw std::runtime_error("Could not allocate an output stream");
         }
-
-        // If we're transcoding EAC3 to AAC, set AAC parameters instead of copying
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-            in_codecpar->codec_id == AV_CODEC_ID_EAC3 &&
-            needs_audio_transcoding) {
-
-          out_stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
-          out_stream->codecpar->codec_id = AV_CODEC_ID_AAC;
-          out_stream->codecpar->sample_rate = audio_encoder_context->sample_rate;
-          av_channel_layout_copy(&out_stream->codecpar->ch_layout, &audio_encoder_context->ch_layout);
-          out_stream->codecpar->bit_rate = audio_encoder_context->bit_rate;
-          out_stream->codecpar->profile = audio_encoder_context->profile;
-          // Ensure frame_size is valid before setting it
-          if (audio_encoder_context->frame_size <= 0) {
-            out_stream->codecpar->frame_size = 1024; // Default AAC frame size
-          } else {
-            out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
-          }
-
-          // Set proper time base for AAC (usually 1/sample_rate)
-          out_stream->time_base = (AVRational){1, audio_encoder_context->sample_rate};
-
-          // Copy extradata (important for AAC in MP4)
-          if (audio_encoder_context->extradata && audio_encoder_context->extradata_size > 0) {
-            out_stream->codecpar->extradata = (uint8_t*)av_mallocz(audio_encoder_context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
-            if (!out_stream->codecpar->extradata) {
-              throw std::runtime_error("Could not allocate extradata for output stream");
-            }
-            memcpy(out_stream->codecpar->extradata, audio_encoder_context->extradata, audio_encoder_context->extradata_size);
-            out_stream->codecpar->extradata_size = audio_encoder_context->extradata_size;
-          }
-        } else {
-          int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
-          if (cpRet < 0) {
-            throw std::runtime_error(
-              "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
-            );
-          }
+        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+        if (cpRet < 0) {
+          throw std::runtime_error(
+            "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
+          );
         }
       }
       return;
@@ -767,14 +431,8 @@ public:
         }
       }
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        audio_stream_index = i;
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
-        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
-          // Initialize EAC3 to AAC transcoding
-          init_audio_transcoding(in_stream);
-          // Set output mime type to AAC since we're transcoding
-          audio_mime_type = "mp4a.40.2"; // AAC-LC
         }
       }
 
@@ -783,44 +441,11 @@ public:
       if (!out_stream) {
         throw std::runtime_error("Could not allocate an output stream");
       }
-
-      // If we're transcoding EAC3 to AAC, set AAC parameters instead of copying
-      if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-          in_codecpar->codec_id == AV_CODEC_ID_EAC3 &&
-          needs_audio_transcoding) {
-
-        out_stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
-        out_stream->codecpar->codec_id = AV_CODEC_ID_AAC;
-        out_stream->codecpar->sample_rate = audio_encoder_context->sample_rate;
-        av_channel_layout_copy(&out_stream->codecpar->ch_layout, &audio_encoder_context->ch_layout);
-        out_stream->codecpar->bit_rate = audio_encoder_context->bit_rate;
-        out_stream->codecpar->profile = audio_encoder_context->profile;
-        // Ensure frame_size is valid before setting it
-        if (audio_encoder_context->frame_size <= 0) {
-          out_stream->codecpar->frame_size = 1024; // Default AAC frame size
-        } else {
-          out_stream->codecpar->frame_size = audio_encoder_context->frame_size;
-        }
-
-        // Set proper time base for AAC (usually 1/sample_rate)
-        out_stream->time_base = (AVRational){1, audio_encoder_context->sample_rate};
-
-        // Copy extradata (important for AAC in MP4)
-        if (audio_encoder_context->extradata && audio_encoder_context->extradata_size > 0) {
-          out_stream->codecpar->extradata = (uint8_t*)av_mallocz(audio_encoder_context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
-          if (!out_stream->codecpar->extradata) {
-            throw std::runtime_error("Could not allocate extradata for output stream");
-          }
-          memcpy(out_stream->codecpar->extradata, audio_encoder_context->extradata, audio_encoder_context->extradata_size);
-          out_stream->codecpar->extradata_size = audio_encoder_context->extradata_size;
-        }
-      } else {
-        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
-        if (cpRet < 0) {
-          throw std::runtime_error(
-            "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
-          );
-        }
+      int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+      if (cpRet < 0) {
+        throw std::runtime_error(
+          "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
+        );
       }
       streams_list[i] = out_index++;
     }
@@ -1133,18 +758,9 @@ public:
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        if (needs_audio_transcoding && in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3) {
-          // Transcode EAC3 to AAC
-          ret = transcode_audio_packet(packet, out_stream);
-          if (ret < 0) {
-            printf("ERROR: could not transcode audio packet | %s \n", av_err2str(ret));
-          }
-        } else {
-          // Regular audio remuxing
-          av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-          if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-            printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
-          }
+        av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+        if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+          printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
         }
         av_packet_unref(packet);
         av_packet_free(&packet);
@@ -1249,7 +865,6 @@ public:
   // Cleanup everything
   //-----------------------------------------
   void destroy() {
-    cleanup_audio_transcoding();
     destroy_streams();
     destroy_input();
     destroy_output();
