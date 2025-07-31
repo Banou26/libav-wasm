@@ -103,7 +103,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         mediaSource.addEventListener(
           'sourceopen',
           () => {
-            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${header.info.input.videoMimeType},${header.info.input.audioMimeType}"`)
+            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${header.info.output.videoMimeType},${header.info.output.audioMimeType}"`)
             mediaSource.duration = header.info.input.duration
             sourceBuffer.mode = 'segments'
             resolve(sourceBuffer)
@@ -193,10 +193,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let lastSeekedPosition = 0
 
     const loadMore = queuedThrottleWithLastCall(100, async () => {
+      console.log('loadMore currentSeeks', currentSeeks)
       if (currentSeeks.length) return
+      console.log('loadMore 2')
       const { currentTime } = video
       const bufferedRanges = getTimeRanges()
-      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      const timeRange = bufferedRanges.at(0)//.find(({ start, end }) => start <= currentTime && currentTime <= end)
+      console.log('loadMore timeRange', bufferedRanges, timeRange, currentTime)
       if (!timeRange) {
         return
       }
@@ -207,6 +210,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
       try {
         const res = await remuxer.read()
+        console.log('res', res)
         await appendBuffer(res.data)
         await unbuffer()
       } catch (err: any) {
@@ -232,9 +236,11 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           await remuxer
             .seek(currentTime)
             .finally(() => {
+              console.log('finally')
               currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
             })
         sourceBuffer.timestampOffset = res.pts
+        console.log('res', res)
         await appendBuffer(res.data)
       } catch (err: any) {
         if (err.message === 'Cancelled') return

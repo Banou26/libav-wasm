@@ -119,6 +119,8 @@ public:
   int audio_buffer_size = 0;
   int audio_buffer_samples = 0;
   int aac_frame_size = 1024; // Standard AAC frame size
+  int64_t next_audio_pts = 0; // Track cumulative timestamp
+  bool audio_pts_initialized = false; // Track if we've set initial timestamp
 
   uint8_t* input_avio_buffer = nullptr;
   uint8_t* output_avio_buffer = nullptr;
@@ -162,6 +164,8 @@ public:
     input_length = options["length"].as<float>();
     buffer_size = options["bufferSize"].as<int>();
     needs_audio_transcoding = false;
+    next_audio_pts = 0;
+    audio_pts_initialized = false;
   }
 
   ~Remuxer() {
@@ -429,6 +433,8 @@ public:
         }
 
         audio_output_frame->nb_samples = aac_frame_size;
+        audio_output_frame->pts = next_audio_pts;
+        next_audio_pts += aac_frame_size; // Increment by frame size in encoder time base
 
         if (send_audio_frame_to_encoder(audio_output_frame, out_stream) < 0) {
             return -1;
@@ -466,6 +472,8 @@ public:
     }
 
     audio_output_frame->nb_samples = aac_frame_size;
+    audio_output_frame->pts = next_audio_pts;
+    next_audio_pts += aac_frame_size;
     int result = send_audio_frame_to_encoder(audio_output_frame, out_stream);
     audio_buffer_samples = 0;
 
@@ -489,6 +497,13 @@ public:
       }
 
       if (response >= 0) {
+        // Set initial timestamp from input packet, rescaled to encoder time base
+        if (!audio_pts_initialized && input_packet->pts != AV_NOPTS_VALUE) {
+          next_audio_pts = av_rescale_q(input_packet->pts, 
+                                        input_format_context->streams[audio_index]->time_base,
+                                        audio_avcc->time_base);
+          audio_pts_initialized = true;
+        }
         if (encode_audio(audio_input_frame, out_stream)) return -1;
       }
       av_frame_unref(audio_input_frame);
@@ -1171,6 +1186,7 @@ public:
     // Reset audio transcoding buffer
     if (needs_audio_transcoding) {
         audio_buffer_samples = 0;
+        audio_pts_initialized = false; // Reset so we get proper timestamp from seek position
     }
 
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
