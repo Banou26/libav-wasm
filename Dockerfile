@@ -8,35 +8,13 @@ ARG PREFIX=/opt/ffmpeg
 ARG MAKEFLAGS="-j4"
 
 RUN apt-get update && apt-get install -y autoconf libtool build-essential
-# libass-dev libfreetype6-dev libfontconfig1-dev xclip
 
-# Make sure Emscripten’s tools are used instead of 'llvm-*'.
+# Make sure Emscripten's tools are used instead of 'llvm-*'.
 ENV CC=emcc \
     CXX=em++ \
     AR=emar \
     NM=emnm \
     RANLIB=emranlib
-
-# # libass
-# RUN cd /tmp && \
-#   wget https://github.com/libass/libass/releases/download/${LASS_VERSION}/libass-${LASS_VERSION}.tar.xz && \
-#   tar Jxvf "libass-$LASS_VERSION.tar.xz"
-
-# RUN cd /tmp/libass-${LASS_VERSION} && \
-#   emconfigure ./configure \
-#   -s USE_FREETYPE=1 \
-#   --disable-asm \
-#   --enable-shared
-#   # --disable-static \
-#   # --prefix=${PREFIX} \
-#   # --host=x86-none-linux \
-#   # --build=x86_64 \
-#   # --enable-static \
-#   # --disable-shared \
-#   # --disable-debug
-
-# RUN cd /tmp/libass-${LASS_VERSION} && \
-#   emmake make && emmake make install 
 
 # libx264
 RUN cd /tmp && \
@@ -53,39 +31,51 @@ RUN cd /tmp/x264-snapshot-${X264_VERSION} && \
   --extra-cflags="-s USE_PTHREADS=1"
 
 RUN cd /tmp/x264-snapshot-${X264_VERSION} && \
-  emmake make && emmake make install 
+  emmake make && emmake make install
 
 # Get ffmpeg source.
 RUN cd /tmp/ && \
   wget http://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz && \
   tar zxf ffmpeg-${FFMPEG_VERSION}.tar.gz && rm ffmpeg-${FFMPEG_VERSION}.tar.gz
-# COPY ./ffmpeg-5.1 /tmp/ffmpeg-5.1
 
 ARG CFLAGS="-s USE_PTHREADS=1 -O3 -I${PREFIX}/include"
 ARG LDFLAGS="$CFLAGS -L${PREFIX}/lib -s INITIAL_MEMORY=1GB"
 
 ARG CACHE_BUST
 
-# Compile ffmpeg.
+# Compile ffmpeg with native AAC encoder support
+# Note: We need to be careful with --disable-all flag
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   emconfigure ./configure \
   --prefix=${PREFIX} \
-  --disable-autodetect --disable-all --disable-doc --disable-everything --disable-static --disable-debug \
-  --disable-amd3dnow --disable-amd3dnowext --disable-avx512 --disable-aesni --enable-stripping --disable-network \
+  --target-os=none \
+  --arch=x86_32 \
+  --enable-cross-compile \
+  --disable-x86asm \
+  --disable-inline-asm \
+  --disable-stripping \
   --disable-programs \
-  --enable-static --enable-small \
-  --enable-avutil --enable-avfilter --enable-avcodec \
-  --enable-avformat --enable-demuxer=matroska --enable-muxer=mp4 \
+  --disable-doc \
+  --disable-debug \
+  --disable-autodetect \
+  --disable-network \
+  --enable-small \
+  --enable-avcodec \
+  --enable-avformat \
+  --enable-avfilter \
   --enable-avdevice \
+  --enable-avutil \
   --enable-swresample \
   --enable-swscale \
-  --enable-decoder=hevc,h264,h264,aac,pcm_s16le,eac3,ac3 \
-  --disable-stripping \
-  --disable-inline-asm \
-  --enable-cross-compile \
-  --target-os=none \
-  --disable-x86asm \
-  --arch=x86_32 \
+  --enable-postproc \
+  --enable-demuxer=matroska,mov \
+  --enable-muxer=mp4,mov \
+  --enable-decoder=h264,hevc,aac,mp3,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,eac3,ac3 \
+  --enable-encoder=aac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le \
+  --enable-parser=aac,h264,hevc,ac3 \
+  --enable-filter=aresample,aformat,anull,atempo,volume \
+  --enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb \
+  --enable-protocol=file \
   --extra-cflags="$CFLAGS" \
   --extra-cxxflags="$CFLAGS" \
   --extra-ldflags="$LDFLAGS" \
@@ -94,53 +84,13 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --as=llvm-as \
   --cc="${CC}" \
   --cxx="${CXX}" \
-  --ar="${AR}" \
   --ranlib="${RANLIB}" \
   --objcc=emcc \
   --dep-cc=emcc
 
-  # ORIGINAL COMPILATION FLAGS WITHOUT SIZE REDUCTION
-  # --prefix=${PREFIX} \
-  # --target-os=none \
-  # --arch=x86_32 \
-  # --enable-cross-compile \
-  # --disable-debug \
-  # --disable-x86asm \
-  # --disable-inline-asm \
-  # --disable-stripping \
-  # --disable-programs \
-  # --disable-doc \
-  # --disable-all \
-  # --enable-avcodec \
-  # --enable-avformat \
-  # --enable-avfilter \
-  # --enable-avdevice \
-  # --enable-avutil \
-  # --enable-swresample \
-  # --enable-postproc \
-  # --enable-swscale \
-  # --enable-protocol=file \
-  # --enable-decoder=h264,aac,pcm_s16le \
-  # --enable-demuxer=mov,matroska \
-  # --enable-muxer=mp4 \
-  # --enable-gpl \
-  # --enable-libx264 \
-  # --extra-cflags="$CFLAGS" \
-  # --extra-cxxflags="$CFLAGS" \
-  # --extra-ldflags="$LDFLAGS" \
-  # --nm="llvm-nm -g" \
-  # --ar=emar \
-  # --as=llvm-as \
-  # --ranlib=llvm-ranlib \
-  # --cc=emcc \
-  # --cxx=em++ \
-  # --objcc=emcc \
-  # --dep-cc=emcc
-
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   emmake make -j4 && \
   emmake make install
-
 
 COPY ./src/main.cpp /build/src/main.cpp
 COPY ./Makefile /build/Makefile

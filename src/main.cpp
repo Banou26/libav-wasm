@@ -101,6 +101,27 @@ public:
   AVIOContext* output_avio_context = nullptr;
   AVFormatContext* output_format_context = nullptr;
   AVFormatContext* input_format_context = nullptr;
+
+  const AVCodec *audio_avc = nullptr;
+  AVStream *audio_avs = nullptr;
+  AVCodecContext *audio_avcc = nullptr;
+  int audio_index = -1;
+
+  // For transcoding (decoder)
+  const AVCodec *audio_decoder_avc = nullptr;
+  AVCodecContext *audio_decoder_avcc = nullptr;
+  AVFrame *audio_input_frame = nullptr;
+  AVFrame *audio_output_frame = nullptr;
+  bool needs_audio_transcoding = false;
+
+  // Frame buffering for AAC encoder
+  uint8_t **audio_buffer = nullptr;
+  int audio_buffer_size = 0;
+  int audio_buffer_samples = 0;
+  int aac_frame_size = 1024; // Standard AAC frame size
+  int64_t next_audio_pts = 0; // Track cumulative timestamp
+  bool audio_pts_initialized = false; // Track if we've set initial timestamp
+
   uint8_t* input_avio_buffer = nullptr;
   uint8_t* output_avio_buffer = nullptr;
 
@@ -142,6 +163,9 @@ public:
     resolved_promise = options["resolvedPromise"];
     input_length = options["length"].as<float>();
     buffer_size = options["bufferSize"].as<int>();
+    needs_audio_transcoding = false;
+    next_audio_pts = 0;
+    audio_pts_initialized = false;
   }
 
   ~Remuxer() {
@@ -249,6 +273,274 @@ public:
     return mime_type;
   }
 
+  int fill_stream_info(AVStream *avs, const AVCodec **avc, AVCodecContext **avcc) {
+    *avc = avcodec_find_decoder(avs->codecpar->codec_id);
+    if (!*avc) {
+        printf("failed to find the codec"); return -1;
+    }
+
+    *avcc = avcodec_alloc_context3(*avc);
+    if (!*avcc) {
+        printf("failed to alloc memory for codec context"); return -1;
+    }
+
+    if (avcodec_parameters_to_context(*avcc, avs->codecpar) < 0) {
+        printf("failed to fill codec context"); return -1;
+    }
+
+    if (avcodec_open2(*avcc, *avc, NULL) < 0) {
+        printf("failed to open codec"); return -1;
+    }
+    return 0;
+  }
+
+  int prepare_audio_encoder(){
+    if (!needs_audio_transcoding) {
+        return 0; // No transcoding needed
+    }
+
+    // Find the output stream for audio in the output format
+    AVStream* output_audio_stream = nullptr;
+    for (int i = 0; i < output_format_context->nb_streams; i++) {
+        if (output_format_context->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            output_audio_stream = output_format_context->streams[i];
+            break;
+        }
+    }
+
+    if (!output_audio_stream) {
+        printf("No audio output stream found");
+        return -1;
+    }
+
+    audio_avc = avcodec_find_encoder_by_name("aac");
+    if (!audio_avc) {
+        printf("could not find AAC encoder");
+        return -1;
+    }
+
+    audio_avcc = avcodec_alloc_context3(audio_avc);
+    if (!audio_avcc) {
+        printf("could not allocate memory for codec context");
+        return -1;
+    }
+
+    // Use input stream parameters as basis
+    int sample_rate = audio_decoder_avcc->sample_rate;
+    int input_channels = audio_decoder_avcc->ch_layout.nb_channels;
+    if (input_channels > 2) input_channels = 2; // Downmix to stereo if needed
+
+    av_channel_layout_default(&audio_avcc->ch_layout, input_channels);
+    audio_avcc->sample_rate = sample_rate;
+    audio_avcc->sample_fmt = audio_avc->sample_fmts[0];
+    audio_avcc->bit_rate = 196000;
+    audio_avcc->time_base = (AVRational){1, sample_rate};
+    audio_avcc->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
+
+    if (avcodec_open2(audio_avcc, audio_avc, NULL) < 0) {
+        printf("could not open AAC encoder");
+        return -1;
+    }
+
+    // Update the output stream with encoder parameters
+    avcodec_parameters_from_context(output_audio_stream->codecpar, audio_avcc);
+    output_audio_stream->time_base = audio_avcc->time_base;
+
+    // Set frame_size for MP4 muxer
+    output_audio_stream->codecpar->frame_size = aac_frame_size;
+
+    // Set up output frame for AAC encoding
+    audio_output_frame->format = audio_avcc->sample_fmt;
+    audio_output_frame->ch_layout = audio_avcc->ch_layout;
+    audio_output_frame->sample_rate = audio_avcc->sample_rate;
+    audio_output_frame->nb_samples = aac_frame_size;
+
+    if (av_frame_get_buffer(audio_output_frame, 0) < 0) {
+        printf("Could not allocate audio output frame buffer");
+        return -1;
+    }
+
+    // Allocate sample buffer for frame splitting
+    int output_channels = audio_avcc->ch_layout.nb_channels;
+    audio_buffer_size = av_samples_get_buffer_size(NULL, output_channels, aac_frame_size * 4, audio_avcc->sample_fmt, 0);
+    audio_buffer = (uint8_t**)av_calloc(output_channels, sizeof(uint8_t*));
+    for (int i = 0; i < output_channels; i++) {
+        audio_buffer[i] = (uint8_t*)av_malloc(audio_buffer_size);
+    }
+    audio_buffer_samples = 0;
+
+    return 0;
+  }
+
+  int send_audio_frame_to_encoder(AVFrame *frame, AVStream *out_stream) {
+    AVPacket *output_packet = av_packet_alloc();
+    if (!output_packet) {
+        printf("could not allocate memory for output packet");
+        return -1;
+    }
+
+    int response = avcodec_send_frame(audio_avcc, frame);
+
+    while (response >= 0) {
+      response = avcodec_receive_packet(audio_avcc, output_packet);
+      if (response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
+        break;
+      } else if (response < 0) {
+        printf("Error while receiving packet from encoder: %s", av_err2str(response));
+        av_packet_free(&output_packet);
+        return -1;
+      }
+
+      output_packet->stream_index = streams_list[audio_index];
+      av_packet_rescale_ts(output_packet, audio_avcc->time_base, out_stream->time_base);
+
+      response = av_interleaved_write_frame(output_format_context, output_packet);
+      if (response != 0) {
+          printf("Error %d while writing encoded packet: %s", response, av_err2str(response));
+          av_packet_free(&output_packet);
+          return -1;
+      }
+      av_packet_unref(output_packet);
+    }
+    av_packet_free(&output_packet);
+    return 0;
+  }
+
+  int encode_audio(AVFrame *input_frame, AVStream *out_stream) {
+    if (!needs_audio_transcoding || !audio_buffer) {
+        return send_audio_frame_to_encoder(input_frame, out_stream);
+    }
+
+    int channels = audio_avcc->ch_layout.nb_channels;
+    int sample_size = av_get_bytes_per_sample(audio_avcc->sample_fmt);
+    int input_samples = input_frame->nb_samples;
+
+    // Copy input frame data to our buffer
+    for (int ch = 0; ch < channels; ch++) {
+        memcpy(audio_buffer[ch] + (audio_buffer_samples * sample_size),
+               input_frame->data[ch],
+               input_samples * sample_size);
+    }
+    audio_buffer_samples += input_samples;
+
+    // Send complete frames to encoder
+    while (audio_buffer_samples >= aac_frame_size) {
+        // Copy one frame worth of samples to output frame
+        for (int ch = 0; ch < channels; ch++) {
+            memcpy(audio_output_frame->data[ch],
+                   audio_buffer[ch],
+                   aac_frame_size * sample_size);
+        }
+
+        audio_output_frame->nb_samples = aac_frame_size;
+        audio_output_frame->pts = next_audio_pts;
+        next_audio_pts += aac_frame_size; // Increment by frame size in encoder time base
+
+        if (send_audio_frame_to_encoder(audio_output_frame, out_stream) < 0) {
+            return -1;
+        }
+
+        // Shift remaining samples to beginning of buffer
+        int remaining_samples = audio_buffer_samples - aac_frame_size;
+        if (remaining_samples > 0) {
+            for (int ch = 0; ch < channels; ch++) {
+                memmove(audio_buffer[ch],
+                        audio_buffer[ch] + (aac_frame_size * sample_size),
+                        remaining_samples * sample_size);
+            }
+        }
+        audio_buffer_samples = remaining_samples;
+    }
+
+    return 0;
+  }
+
+  int flush_audio_buffer(AVStream *out_stream) {
+    if (!needs_audio_transcoding || !audio_buffer || audio_buffer_samples == 0) {
+        return 0;
+    }
+
+    int channels = audio_avcc->ch_layout.nb_channels;
+    int sample_size = av_get_bytes_per_sample(audio_avcc->sample_fmt);
+
+    // Send remaining samples (pad with silence if needed)
+    for (int ch = 0; ch < channels; ch++) {
+        memcpy(audio_output_frame->data[ch], audio_buffer[ch], audio_buffer_samples * sample_size);
+        // Pad with silence
+        memset(audio_output_frame->data[ch] + (audio_buffer_samples * sample_size), 0,
+               (aac_frame_size - audio_buffer_samples) * sample_size);
+    }
+
+    audio_output_frame->nb_samples = aac_frame_size;
+    audio_output_frame->pts = next_audio_pts;
+    next_audio_pts += aac_frame_size;
+    int result = send_audio_frame_to_encoder(audio_output_frame, out_stream);
+    audio_buffer_samples = 0;
+
+    return result;
+  }
+
+  int transcode_audio(AVPacket *input_packet, AVStream *out_stream) {
+    int response = avcodec_send_packet(audio_decoder_avcc, input_packet);
+    if (response < 0) {
+        printf("Error while sending packet to decoder: %s", av_err2str(response));
+        return response;
+    }
+
+    while (response >= 0) {
+      response = avcodec_receive_frame(audio_decoder_avcc, audio_input_frame);
+      if (response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
+        break;
+      } else if (response < 0) {
+        printf("Error while receiving frame from decoder: %s", av_err2str(response));
+        return response;
+      }
+
+      if (response >= 0) {
+        // Set initial timestamp from input packet, rescaled to encoder time base
+        if (!audio_pts_initialized && input_packet->pts != AV_NOPTS_VALUE) {
+          next_audio_pts = av_rescale_q(input_packet->pts, 
+                                        input_format_context->streams[audio_index]->time_base,
+                                        audio_avcc->time_base);
+          audio_pts_initialized = true;
+        }
+        if (encode_audio(audio_input_frame, out_stream)) return -1;
+      }
+      av_frame_unref(audio_input_frame);
+    }
+    return 0;
+  }
+
+  int prepare_decoder() {
+    for (int i = 0; i < input_format_context->nb_streams; i++) {
+        if (input_format_context->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            audio_avs = input_format_context->streams[i];
+            audio_index = i;
+
+            // Set up decoder for transcoding if needed
+            if (needs_audio_transcoding) {
+                if (fill_stream_info(audio_avs, &audio_decoder_avc, &audio_decoder_avcc))
+                    return -1;
+
+                audio_input_frame = av_frame_alloc();
+                if (!audio_input_frame) {
+                    printf("Could not allocate audio input frame");
+                    return -1;
+                }
+
+                audio_output_frame = av_frame_alloc();
+                if (!audio_output_frame) {
+                    printf("Could not allocate audio output frame");
+                    return -1;
+                }
+            }
+        } else {
+            printf("skipping streams other than audio");
+        }
+    }
+    return 0;
+  }
+
   void init_input(bool skip = false) {
     input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     input_avio_context = avio_alloc_context(
@@ -256,9 +548,9 @@ public:
       buffer_size,
       0,                       // not writing
       this,                    // opaque
-      &Remuxer::avio_read,     // custom read
+      avio_read,               // custom read
       nullptr,                 // no write
-      &Remuxer::avio_seek      // custom seek
+      avio_seek                // custom seek
     );
     input_format_context = avformat_alloc_context();
     input_format_context->pb = input_avio_context;
@@ -305,7 +597,7 @@ public:
       1,
       this,
       nullptr,
-      &Remuxer::avio_write,
+      avio_write,
       nullptr
     );
 
@@ -334,6 +626,14 @@ public:
           "Could not find stream info: " + ffmpegErrStr(ret)
         );
       }
+
+      number_of_streams = input_format_context->nb_streams;
+      streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
+      if (!streams_list) {
+        throw std::runtime_error("Could not allocate streams_list");
+      }
+
+      int out_index = 0;
       for (int i = 0; i < number_of_streams; i++) {
         AVStream* in_stream = input_format_context->streams[i];
         AVCodecParameters* in_codecpar = in_stream->codecpar;
@@ -343,16 +643,34 @@ public:
         )) {
           continue;
         }
+
+        // Check if this is EAC3 audio that needs transcoding
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+            in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          needs_audio_transcoding = true;
+          audio_mime_type = "mp4a.40.2"; // AAC-LC output
+          audio_index = i;
+        }
+
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+          video_stream_index = i;
+        }
+
         AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
         if (!out_stream) {
           throw std::runtime_error("Could not allocate an output stream");
         }
+
+        // For EAC3 audio, we'll set AAC parameters later in prepare_audio_encoder
+        // For now, just copy the parameters - they'll be overwritten if transcoding
         int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
         if (cpRet < 0) {
           throw std::runtime_error(
             "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
           );
         }
+
+        streams_list[i] = out_index++;
       }
       return;
     }
@@ -379,7 +697,7 @@ public:
       // We handle attachments separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
         Attachment attachment;
-    
+
         // Copy metadata
         if (auto fn = av_dict_get(in_stream->metadata, "filename", NULL, 0)) {
           attachment.filename = fn->value;
@@ -433,6 +751,9 @@ public:
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
+        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          needs_audio_transcoding = true;
+          audio_mime_type = "mp4a.40.2"; // AAC-LC output
         }
       }
 
@@ -608,6 +929,8 @@ public:
     init_input();
     init_output();
     init_streams();
+    prepare_decoder();
+    prepare_audio_encoder();
     write_header();
     initializing = false;
     first_initialization_done = true;
@@ -758,9 +1081,17 @@ public:
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
-        if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
-          printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
+        if (needs_audio_transcoding && in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          // Transcode EAC3 to AAC
+          if (transcode_audio(packet, out_stream) < 0) {
+            printf("ERROR: could not transcode audio\n");
+          }
+        } else {
+          // Direct copy for other audio formats
+          av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+          if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
+            printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
+          }
         }
         av_packet_unref(packet);
         av_packet_free(&packet);
@@ -837,15 +1168,26 @@ public:
     // video_mime_type.clear();
     // audio_mime_type.clear();
 
+    // Reset transcoding state
+    needs_audio_transcoding = false;
+
     initializing = true;
     init_input(true);
     init_output();
     init_streams(true);
+    prepare_decoder();
+    prepare_audio_encoder();
     write_header();
     initializing = false;
     write_vector.clear();
     subtitles.clear();
     wrote = false;
+
+    // Reset audio transcoding buffer
+    if (needs_audio_transcoding) {
+        audio_buffer_samples = 0;
+        audio_pts_initialized = false; // Reset so we get proper timestamp from seek position
+    }
 
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
@@ -856,7 +1198,6 @@ public:
       return cancelled_result;
     }
 
-    read_data_function = val::undefined();
     ReadResult read_result = read(read_function);
     return read_result;
   }
@@ -868,6 +1209,32 @@ public:
     destroy_streams();
     destroy_input();
     destroy_output();
+
+    // Cleanup transcoding resources
+    if (audio_input_frame) {
+      av_frame_free(&audio_input_frame);
+      audio_input_frame = nullptr;
+    }
+    if (audio_output_frame) {
+      av_frame_free(&audio_output_frame);
+      audio_output_frame = nullptr;
+    }
+    if (audio_buffer) {
+      int channels = audio_avcc ? audio_avcc->ch_layout.nb_channels : 2;
+      for (int i = 0; i < channels; i++) {
+        if (audio_buffer[i]) av_free(audio_buffer[i]);
+      }
+      av_free(audio_buffer);
+      audio_buffer = nullptr;
+    }
+    if (audio_decoder_avcc) {
+      avcodec_free_context(&audio_decoder_avcc);
+      audio_decoder_avcc = nullptr;
+    }
+    if (audio_avcc) {
+      avcodec_free_context(&audio_avcc);
+      audio_avcc = nullptr;
+    }
   }
 
 private:
@@ -891,7 +1258,7 @@ private:
     if (is_rejected) {
       return AVERROR_EXIT;
     }
-    
+
     buffer = result["resolved"].as<std::string>();
     int buffer_size = buffer.size();
     if (buffer_size == 0) {
