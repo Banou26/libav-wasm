@@ -364,7 +364,6 @@ const resolvers = {
       destroy: async () => remuxer.destroy(),
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
-        console.log('initResult', initResult)
         if (videoDecoder.state === 'unconfigured') {
           videoDecoder.configure({
             codec: initResult.info.input.videoMimeType,

@@ -276,20 +276,20 @@ public:
   int fill_stream_info(AVStream *avs, const AVCodec **avc, AVCodecContext **avcc) {
     *avc = avcodec_find_decoder(avs->codecpar->codec_id);
     if (!*avc) {
-        printf("failed to find the codec"); return -1;
+        printf("failed to find the codec\n"); return -1;
     }
 
     *avcc = avcodec_alloc_context3(*avc);
     if (!*avcc) {
-        printf("failed to alloc memory for codec context"); return -1;
+        printf("failed to alloc memory for codec context\n"); return -1;
     }
 
     if (avcodec_parameters_to_context(*avcc, avs->codecpar) < 0) {
-        printf("failed to fill codec context"); return -1;
+        printf("failed to fill codec context\n"); return -1;
     }
 
     if (avcodec_open2(*avcc, *avc, NULL) < 0) {
-        printf("failed to open codec"); return -1;
+        printf("failed to open codec\n"); return -1;
     }
     return 0;
   }
@@ -309,19 +309,19 @@ public:
     }
 
     if (!output_audio_stream) {
-        printf("No audio output stream found");
+        printf("No audio output stream found\n");
         return -1;
     }
 
     audio_avc = avcodec_find_encoder_by_name("aac");
     if (!audio_avc) {
-        printf("could not find AAC encoder");
+        printf("could not find AAC encoder\n");
         return -1;
     }
 
     audio_avcc = avcodec_alloc_context3(audio_avc);
     if (!audio_avcc) {
-        printf("could not allocate memory for codec context");
+        printf("could not allocate memory for codec context\n");
         return -1;
     }
 
@@ -338,7 +338,7 @@ public:
     audio_avcc->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
 
     if (avcodec_open2(audio_avcc, audio_avc, NULL) < 0) {
-        printf("could not open AAC encoder");
+        printf("could not open AAC encoder\n");
         return -1;
     }
 
@@ -356,7 +356,7 @@ public:
     audio_output_frame->nb_samples = aac_frame_size;
 
     if (av_frame_get_buffer(audio_output_frame, 0) < 0) {
-        printf("Could not allocate audio output frame buffer");
+        printf("Could not allocate audio output frame buffer\n");
         return -1;
     }
 
@@ -375,7 +375,7 @@ public:
   int send_audio_frame_to_encoder(AVFrame *frame, AVStream *out_stream) {
     AVPacket *output_packet = av_packet_alloc();
     if (!output_packet) {
-        printf("could not allocate memory for output packet");
+        printf("could not allocate memory for output packet\n");
         return -1;
     }
 
@@ -386,7 +386,7 @@ public:
       if (response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
         break;
       } else if (response < 0) {
-        printf("Error while receiving packet from encoder: %s", av_err2str(response));
+        printf("Error while receiving packet from encoder: %s\n", av_err2str(response));
         av_packet_free(&output_packet);
         return -1;
       }
@@ -396,7 +396,7 @@ public:
 
       response = av_interleaved_write_frame(output_format_context, output_packet);
       if (response != 0) {
-          printf("Error %d while writing encoded packet: %s", response, av_err2str(response));
+          printf("Error %d while writing encoded packet: %s\n", response, av_err2str(response));
           av_packet_free(&output_packet);
           return -1;
       }
@@ -483,7 +483,7 @@ public:
   int transcode_audio(AVPacket *input_packet, AVStream *out_stream) {
     int response = avcodec_send_packet(audio_decoder_avcc, input_packet);
     if (response < 0) {
-        printf("Error while sending packet to decoder: %s", av_err2str(response));
+        printf("Error while sending packet to decoder: %s\n", av_err2str(response));
         return response;
     }
 
@@ -492,14 +492,14 @@ public:
       if (response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
         break;
       } else if (response < 0) {
-        printf("Error while receiving frame from decoder: %s", av_err2str(response));
+        printf("Error while receiving frame from decoder: %s\n", av_err2str(response));
         return response;
       }
 
       if (response >= 0) {
         // Set initial timestamp from input packet, rescaled to encoder time base
         if (!audio_pts_initialized && input_packet->pts != AV_NOPTS_VALUE) {
-          next_audio_pts = av_rescale_q(input_packet->pts, 
+          next_audio_pts = av_rescale_q(input_packet->pts,
                                         input_format_context->streams[audio_index]->time_base,
                                         audio_avcc->time_base);
           audio_pts_initialized = true;
@@ -524,18 +524,18 @@ public:
 
                 audio_input_frame = av_frame_alloc();
                 if (!audio_input_frame) {
-                    printf("Could not allocate audio input frame");
+                    printf("Could not allocate audio input frame\n");
                     return -1;
                 }
 
                 audio_output_frame = av_frame_alloc();
                 if (!audio_output_frame) {
-                    printf("Could not allocate audio output frame");
+                    printf("Could not allocate audio output frame\n");
                     return -1;
                 }
             }
         } else {
-            printf("skipping streams other than audio");
+            // printf("skipping streams other than audio\n");
         }
     }
     return 0;

@@ -4,7 +4,7 @@ import { makeRemuxer } from '.'
 
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
-const VIDEO_URL = '../video8.mkv'
+const VIDEO_URL = '../video2.mkv'
 // const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
@@ -193,13 +193,10 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     let lastSeekedPosition = 0
 
     const loadMore = queuedThrottleWithLastCall(100, async () => {
-      console.log('loadMore currentSeeks', currentSeeks)
       if (currentSeeks.length) return
-      console.log('loadMore 2')
       const { currentTime } = video
       const bufferedRanges = getTimeRanges()
-      const timeRange = bufferedRanges.at(0)//.find(({ start, end }) => start <= currentTime && currentTime <= end)
-      console.log('loadMore timeRange', bufferedRanges, timeRange, currentTime)
+      const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
       if (!timeRange) {
         return
       }
@@ -210,7 +207,6 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       }
       try {
         const res = await remuxer.read()
-        console.log('res', res)
         await appendBuffer(res.data)
         await unbuffer()
       } catch (err: any) {
@@ -236,11 +232,9 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
           await remuxer
             .seek(currentTime)
             .finally(() => {
-              console.log('finally')
               currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
             })
         sourceBuffer.timestampOffset = res.pts
-        console.log('res', res)
         await appendBuffer(res.data)
       } catch (err: any) {
         if (err.message === 'Cancelled') return
