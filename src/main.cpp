@@ -329,6 +329,12 @@ public:
     int sample_rate = audio_decoder_avcc->sample_rate;
     int input_channels = audio_decoder_avcc->ch_layout.nb_channels;
     if (input_channels > 2) input_channels = 2; // Downmix to stereo if needed
+    
+    // Ensure we have a valid channel count
+    if (input_channels <= 0) {
+        printf("Invalid channel count %d, defaulting to stereo\n", input_channels);
+        input_channels = 2;
+    }
 
     av_channel_layout_default(&audio_avcc->ch_layout, input_channels);
     audio_avcc->sample_rate = sample_rate;
@@ -559,16 +565,21 @@ public:
     if (skip) {
       AVDictionary* opts = nullptr;
       av_dict_set(&opts, "analyzeduration", "1", 0);
+      av_dict_set(&opts, "strict", "experimental", 0);
       // av_dict_set(&opts, "probesize", "1310720", 0);
       int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
-      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+      av_dict_free(&opts);
       if (ret < 0) {
         throw std::runtime_error(
           "Could not open input: " + ffmpegErrStr(ret)
         );
       }
     } else {
-      int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+      AVDictionary* opts = nullptr;
+      // Add options to handle FLAC and other formats more robustly
+      av_dict_set(&opts, "strict", "experimental", 0);
+      int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
+      av_dict_free(&opts);
       if (ret < 0) {
         throw std::runtime_error(
           "Could not open input: " + ffmpegErrStr(ret)
@@ -645,9 +656,10 @@ public:
           continue;
         }
 
-        // Check if this is EAC3 audio that needs transcoding
+        // Check if this is audio that needs transcoding
         if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-            in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+            (in_codecpar->codec_id == AV_CODEC_ID_EAC3 || 
+             in_codecpar->codec_id == AV_CODEC_ID_FLAC)) {
           needs_audio_transcoding = true;
           audio_mime_type = "mp4a.40.2"; // AAC-LC output
           audio_index = i;
@@ -752,7 +764,8 @@ public:
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
-        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3 || 
+                   in_codecpar->codec_id == AV_CODEC_ID_FLAC) {
           needs_audio_transcoding = true;
           audio_mime_type = "mp4a.40.2"; // AAC-LC output
         }
@@ -1082,8 +1095,10 @@ public:
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        if (needs_audio_transcoding && in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3) {
-          // Transcode EAC3 to AAC
+        if (needs_audio_transcoding && 
+            (in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3 ||
+             in_stream->codecpar->codec_id == AV_CODEC_ID_FLAC)) {
+          // Transcode EAC3/FLAC to AAC
           if (transcode_audio(packet, out_stream) < 0) {
             printf("ERROR: could not transcode audio\n");
           }
@@ -1295,7 +1310,8 @@ private:
     }
   }
 
-  static int avio_write(void* opaque, uint8_t* buf, int buf_size) {
+  // Compatibility wrapper for different FFmpeg versions
+  static int avio_write_impl(void* opaque, const uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
     self->wrote = true;
@@ -1304,6 +1320,15 @@ private:
     self->write_vector.insert(self->write_vector.end(), chunk.begin(), chunk.end());
 
     return buf_size;
+  }
+
+  // Create function pointer with the correct signature for the current FFmpeg version
+  #if LIBAVFORMAT_VERSION_MAJOR >= 59
+  static int avio_write(void* opaque, const uint8_t* buf, int buf_size) {
+  #else
+  static int avio_write(void* opaque, uint8_t* buf, int buf_size) {
+  #endif
+    return avio_write_impl(opaque, buf, buf_size);
   }
 };
 
