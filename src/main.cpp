@@ -332,7 +332,8 @@ public:
 
     av_channel_layout_default(&audio_avcc->ch_layout, input_channels);
     audio_avcc->sample_rate = sample_rate;
-    audio_avcc->sample_fmt = audio_avc->sample_fmts[0];
+    // Use appropriate sample format for AAC encoder
+    audio_avcc->sample_fmt = AV_SAMPLE_FMT_FLTP; // AAC encoder typically uses float planar
     audio_avcc->bit_rate = 196000;
     audio_avcc->time_base = (AVRational){1, sample_rate};
     audio_avcc->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
@@ -594,11 +595,11 @@ public:
     output_avio_context = avio_alloc_context(
       output_avio_buffer,
       buffer_size,
-      1,
-      this,
-      nullptr,
-      avio_write,
-      nullptr
+      1,                       // write flag
+      this,                    // opaque
+      nullptr,                 // no read
+      avio_write,             // custom write
+      nullptr                 // no seek
     );
 
     avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
@@ -1294,7 +1295,8 @@ private:
     }
   }
 
-  static int avio_write(void* opaque, uint8_t* buf, int buf_size) {
+  // Compatibility wrapper for different FFmpeg versions
+  static int avio_write_impl(void* opaque, const uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
     self->wrote = true;
@@ -1303,6 +1305,15 @@ private:
     self->write_vector.insert(self->write_vector.end(), chunk.begin(), chunk.end());
 
     return buf_size;
+  }
+
+  // Create function pointer with the correct signature for the current FFmpeg version
+  #if LIBAVFORMAT_VERSION_MAJOR >= 59
+  static int avio_write(void* opaque, const uint8_t* buf, int buf_size) {
+  #else
+  static int avio_write(void* opaque, uint8_t* buf, int buf_size) {
+  #endif
+    return avio_write_impl(opaque, buf, buf_size);
   }
 };
 
