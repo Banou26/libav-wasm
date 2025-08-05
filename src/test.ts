@@ -103,7 +103,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         mediaSource.addEventListener(
           'sourceopen',
           () => {
-            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${header.info.output.videoMimeType},${header.info.output.audioMimeType}"`)
+            const sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${[header.info.output.videoMimeType, header.info.output.audioMimeType].filter(Boolean).join(',')}"`)
             mediaSource.duration = header.info.input.duration
             sourceBuffer.mode = 'segments'
             resolve(sourceBuffer)
