@@ -1,6 +1,6 @@
 {
   "name": "libav-wasm",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "main": "build/index.js",
   "files": [
     "build"
@@ -35,7 +35,6 @@
   },
   "dependencies": {
     "@types/emscripten": "^1.40.0",
-    "libav": "file:dist",
     "osra": "^0.1.2",
     "p-queue": "^7.3.0"
   }
