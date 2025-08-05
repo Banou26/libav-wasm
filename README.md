@@ -47,7 +47,7 @@ const seekChunk = await remuxer.seek(number)
 ```
 
 
-## Intellisense 
+## Intellisense
 To have C++ autocompletion, put a ffmpeg repo clone folder in the root
 `git clone https://github.com/FFmpeg/FFmpeg` & `git clone https://github.com/emscripten-core/emscripten`
 
@@ -56,6 +56,6 @@ To have C++ autocompletion, put a ffmpeg repo clone folder in the root
 ## Issues to fix / features to implement
 - Try to play around with `sourceBuffer.timestampOffset = res.pts` and always increasing timestamps to not have to re-init on backwards seeks
 - Transcoding
-
+- Base transcoding off of https://cconcolato.github.io/media-mime-support/#audio_codecs
 <!-- https://www.ffmpeg.org/doxygen/trunk/remuxing_8c-example.html -->
 <!-- https://github.com/leandromoreira/ffmpeg-libav-tutorial -->
