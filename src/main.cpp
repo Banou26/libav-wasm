@@ -122,6 +122,12 @@ public:
   int64_t next_audio_pts = 0; // Track cumulative timestamp
   bool audio_pts_initialized = false; // Track if we've set initial timestamp
 
+  // Timestamp tracking for seek
+  int64_t last_video_dts = AV_NOPTS_VALUE;
+  int64_t last_audio_dts = AV_NOPTS_VALUE;
+  int64_t pts_offset = 0;
+  bool after_seek = false;
+
   uint8_t* input_avio_buffer = nullptr;
   uint8_t* output_avio_buffer = nullptr;
 
@@ -1090,6 +1096,22 @@ public:
         } else {
           // Direct copy for other audio formats
           av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
+
+          // Fix timestamps after seek
+          if (after_seek && packet->dts != AV_NOPTS_VALUE) {
+            if (last_audio_dts == AV_NOPTS_VALUE) {
+              // First packet after seek
+              last_audio_dts = packet->dts;
+            } else if (packet->dts < last_audio_dts) {
+              // Non-monotonic timestamp detected, adjust
+              packet->dts = last_audio_dts + 1;
+              if (packet->pts != AV_NOPTS_VALUE && packet->pts < packet->dts) {
+                packet->pts = packet->dts;
+              }
+            }
+            last_audio_dts = packet->dts;
+          }
+
           if ((ret = av_interleaved_write_frame(output_format_context, packet)) < 0) {
             printf("ERROR: could not write interleaved frame | %s \n", av_err2str(ret));
           }
@@ -1105,6 +1127,26 @@ public:
       // rescale timestamps
       av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
+      // Fix timestamps after seek for video packets
+      if (after_seek && packet->dts != AV_NOPTS_VALUE) {
+        if (last_video_dts == AV_NOPTS_VALUE) {
+          // First packet after seek
+          last_video_dts = packet->dts;
+        } else if (packet->dts <= last_video_dts) {
+          // Non-monotonic timestamp detected, adjust
+          packet->dts = last_video_dts + 1;
+          if (packet->pts != AV_NOPTS_VALUE && packet->pts < packet->dts) {
+            packet->pts = packet->dts;
+          }
+        }
+        last_video_dts = packet->dts;
+      }
+
+      // Set proper timestamps for packets without them
+      if (packet->pts == AV_NOPTS_VALUE && packet->dts != AV_NOPTS_VALUE) {
+        packet->pts = packet->dts;
+      }
+
       if (is_keyframe) {
         prev_duration = duration;
         prev_pts = pts;
@@ -1114,6 +1156,11 @@ public:
 
         pts = packet->pts * av_q2d(out_stream->time_base);
         pos = packet->pos;
+
+        // Clear after_seek flag on keyframe since we've stabilized
+        if (after_seek) {
+          after_seek = false;
+        }
       }
 
       // Write to output
@@ -1189,6 +1236,12 @@ public:
         audio_buffer_samples = 0;
         audio_pts_initialized = false; // Reset so we get proper timestamp from seek position
     }
+
+    // Reset timestamp tracking after seek
+    last_video_dts = AV_NOPTS_VALUE;
+    last_audio_dts = AV_NOPTS_VALUE;
+    pts_offset = 0;
+    after_seek = true;
 
     int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
