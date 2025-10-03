@@ -564,8 +564,9 @@ public:
 
     if (skip) {
       AVDictionary* opts = nullptr;
-      av_dict_set(&opts, "analyzeduration", "1", 0);
-      // av_dict_set(&opts, "probesize", "1310720", 0);
+      // Increase analyzeduration and probesize for better codec detection during seek
+      // av_dict_set(&opts, "analyzeduration", "5000000", 0);  // 5 seconds
+      // av_dict_set(&opts, "probesize", "10000000", 0);       // 10MB
       int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
       // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
       if (ret < 0) {
