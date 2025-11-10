@@ -398,5 +398,4 @@ const resolvers = {
 
 export type Resolvers = typeof resolvers
 
-// @ts-expect-error
-expose(resolvers, { remote: globalThis, local: globalThis })
+expose(resolvers, { transport: globalThis })

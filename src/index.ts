@@ -36,8 +36,7 @@ export const makeRemuxer = async ({
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
 
-  const { makeRemuxer } = await expose<Resolvers>({}, { remote: worker, local: worker })
-
+  const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
   let currentStream: ReadableStream<Uint8Array> | undefined
   let currentStreamOffset: number | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
