@@ -2,10 +2,8 @@
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
 #include <vector>
-#include <sstream>
 #include <string>
-#include <cstring>  // for memcpy
-#include <numeric>  // std::accumulate
+#include <cstring>
 
 extern "C" {
   #include <libavformat/avio.h>
@@ -178,12 +176,12 @@ public:
     destroy();
   }
 
-  auto decimalToHex(int d, int padding) {
-    std::string hex = std::to_string(d);
-    while (hex.length() < padding) {
-      hex = "0" + hex;
+  std::string padDecimal(int d, size_t padding) {
+    std::string str = std::to_string(d);
+    while (str.length() < padding) {
+      str = "0" + str;
     }
-    return hex;
+    return str;
   }
 
   std::string parse_mp4a_mime_type(AVCodecParameters* in_codecpar) {
@@ -200,16 +198,16 @@ public:
   std::string parse_h264_mime_type(AVCodecParameters *in_codecpar) {
     auto extradata = in_codecpar->extradata;
     auto extradata_size = in_codecpar->extradata_size;
-    char mime_type[50];
+    char mime_type[50] = {0};
 
-    if (!extradata || extradata_size < 1) {
+    if (!extradata || extradata_size < 4) {
       printf("Invalid extradata.\n");
-      return mime_type;
+      return "";
     }
 
     if (extradata[0] != 1) {
       printf("Unsupported extradata format.\n");
-      return mime_type;
+      return "";
     }
 
     // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/avcC.js#L6
@@ -224,16 +222,16 @@ public:
   std::string parse_h265_mime_type(AVCodecParameters *in_codecpar) {
     auto extradata = in_codecpar->extradata;
     auto extradata_size = in_codecpar->extradata_size;
-    char mime_type[50];
+    char mime_type[50] = {0};
 
-    if (!extradata || extradata_size < 1) {
+    if (!extradata || extradata_size < 13) {
       printf("Invalid extradata.\n");
-      return mime_type;
+      return "";
     }
 
     if (extradata[0] != 1) {
       printf("Unsupported extradata format.\n");
-      return mime_type;
+      return "";
     }
 
     // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/hvcC.js
@@ -271,7 +269,7 @@ public:
       mime_type, "hev1.%s%d.%s.%s%d.%02x",
       general_profile_space_str,
       general_profile_idc,
-      decimalToHex(general_profile_compatibility_reversed, 0).c_str(),
+      padDecimal(general_profile_compatibility_reversed, 0).c_str(),
       general_tier_flag_str,
       general_level_idc,
       general_constraint_indicator_flags
@@ -541,14 +539,12 @@ public:
                     return -1;
                 }
             }
-        } else {
-            // printf("skipping streams other than audio\n");
         }
     }
     return 0;
   }
 
-  void init_input(bool skip = false) {
+  void init_input() {
     input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     input_avio_context = avio_alloc_context(
       input_avio_buffer,
@@ -562,25 +558,11 @@ public:
     input_format_context = avformat_alloc_context();
     input_format_context->pb = input_avio_context;
 
-    if (skip) {
-      AVDictionary* opts = nullptr;
-      // Increase analyzeduration and probesize for better codec detection during seek
-      // av_dict_set(&opts, "analyzeduration", "5000000", 0);  // 5 seconds
-      // av_dict_set(&opts, "probesize", "10000000", 0);       // 10MB
-      int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
-      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
-      if (ret < 0) {
-        throw std::runtime_error(
-          "Could not open input: " + ffmpegErrStr(ret)
-        );
-      }
-    } else {
-      int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
-      if (ret < 0) {
-        throw std::runtime_error(
-          "Could not open input: " + ffmpegErrStr(ret)
-        );
-      }
+    int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
+    if (ret < 0) {
+      throw std::runtime_error(
+        "Could not open input: " + ffmpegErrStr(ret)
+      );
     }
   }
 
@@ -875,14 +857,7 @@ public:
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         av_packet_free(&packet);
-        continue;
-      }
-
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         continue;
       }
 
@@ -980,10 +955,10 @@ public:
       chapter.index = i;
       chapter.start = start_time;
       chapter.end = end_time;
-      AVDictionaryEntry *capter_entry = NULL;
-      capter_entry = av_dict_get(av_chapter->metadata, "title", NULL, 0);
-      if (capter_entry) {
-        chapter.title = capter_entry->value;
+      AVDictionaryEntry *chapter_entry = NULL;
+      chapter_entry = av_dict_get(av_chapter->metadata, "title", NULL, 0);
+      if (chapter_entry) {
+        chapter.title = chapter_entry->value;
       }
       result.chapters.push_back(chapter);
     }
@@ -1032,9 +1007,7 @@ public:
     while (true) {
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
-      // printf("READ FRAME read error | %s \n", av_err2str(ret));
       if (ret < 0) {
-        // read_data_function = val::undefined();
         if (ret == AVERROR_EXIT) {
           ReadResult cancelled_result;
           cancelled_result.cancelled = true;
@@ -1074,18 +1047,10 @@ public:
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         av_packet_free(&packet);
         continue;
       }
 
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
-        continue;
-      }
-
-      // If it's audio or video, we remux
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
@@ -1204,7 +1169,6 @@ public:
 
     read_data_function = read_function;
 
-    // destroy_streams();
     destroy_input();
     destroy_output();
 
@@ -1214,14 +1178,12 @@ public:
     write_vector.clear();
     clear_attachments();
     subtitles.clear();
-    // video_mime_type.clear();
-    // audio_mime_type.clear();
 
     // Reset transcoding state
     needs_audio_transcoding = false;
 
     initializing = true;
-    init_input(true);
+    init_input();
     init_output();
     init_streams(true);
     prepare_decoder();
@@ -1349,14 +1311,11 @@ private:
     }
   }
 
-  // Compatibility wrapper for different FFmpeg versions
   static int avio_write_impl(void* opaque, const uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
     self->wrote = true;
-    std::vector<uint8_t> chunk(buf, buf + buf_size);
-    memcpy(chunk.data(), buf, buf_size);
-    self->write_vector.insert(self->write_vector.end(), chunk.begin(), chunk.end());
+    self->write_vector.insert(self->write_vector.end(), buf, buf + buf_size);
 
     return buf_size;
   }

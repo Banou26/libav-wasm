@@ -3,17 +3,9 @@ import { expose } from 'osra'
 // @ts-ignore
 import WASMModule from 'libav'
 
-export type RemuxerInstanceSubtitleFragment =
-  | {
-    isHeader: true
-    streamIndex: number
-    data: Uint8Array
-    format: string[]
-    language: string
-    title: string
-    start: string
-    end: string
-  }
+// ──────────────────────────────────────────────
+// Shared types
+// ──────────────────────────────────────────────
 
 export type SubtitleFragment =
   | {
@@ -26,7 +18,7 @@ export type SubtitleFragment =
   }
   | {
     type: 'dialogue'
-    streamIndex: any
+    streamIndex: number
     start: number
     end: number
     dialogueIndex: number
@@ -34,14 +26,6 @@ export type SubtitleFragment =
     content: string
     fields: Record<string, string>
   }
-
-export interface ThumbnailReadResult {
-  data: Uint8Array
-  pts: number
-  duration: number
-  offset: number
-  cancelled: boolean
-}
 
 export type Index = {
   index: number
@@ -56,7 +40,33 @@ export type Chapter = {
   title: string
 }
 
-export type RemuxerInstanceAttachment = {
+export type Attachment = {
+  filename: string
+  mimetype: string
+  data: ArrayBuffer
+}
+
+// ──────────────────────────────────────────────
+// WASM-specific types (internal)
+// ──────────────────────────────────────────────
+
+type WASMVector<T> = {
+  size: () => number
+  get: (index: number) => T
+}
+
+type RemuxerInstanceSubtitleFragment = {
+  isHeader: boolean
+  streamIndex: number
+  data: Uint8Array
+  format: string[]
+  language: string
+  title: string
+  start: string
+  end: string
+}
+
+type RemuxerInstanceAttachment = {
   filename: string
   mimetype: string
   data: Uint8Array
@@ -64,152 +74,172 @@ export type RemuxerInstanceAttachment = {
   ptr: number
 }
 
-export type Attachment = {
-  filename: string
-  mimetype: string
-  data: ArrayBuffer
-}
-
-export type RemuxerInstanceOptions = {
-  resolvedPromise: Promise<void>
-  length: number
-  bufferSize: number
-}
+type WASMReadFunction = (offset: number, size: number) => Promise<{
+  resolved: Uint8Array
+  rejected: boolean
+}>
 
 type ReadFunction = (offset: number, size: number) => Promise<{
   resolved: ArrayBuffer
   rejected: boolean
 }>
 
-type WASMReadFunction = (offset: number, size: number) => Promise<{
-  resolved: Uint8Array
-  rejected: boolean
-}>
-
-export interface RemuxerInstance {
-  new(options: RemuxerInstanceOptions): RemuxerInstance
-  init: (read: WASMReadFunction) => Promise<{
-    data: Uint8Array
-    attachments: WASMVector<RemuxerInstanceAttachment>
-    subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
-    indexes: WASMVector<Index>
-    chapters: WASMVector<Chapter>
-    info: {
-      input: {
-        audioMimeType: string
-        duration: number
-        formatName: string
-        mimeType: string
-        videoMimeType: string
-      }
-      output: {
-        audioMimeType: string
-        duration: number
-        formatName: string
-        mimeType: string
-        videoMimeType: string
-      }
-    }
-    videoExtradata: WASMVector<number>
-  }>
-  destroy: () => void
-  seek: (read: WASMReadFunction, timestamp: number) => Promise<{
-    data: Uint8Array
-    subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
-    offset: number
-    pts: number
-    duration: number
-    cancelled: boolean
-    finished: boolean
-  }>
-  read: (read: WASMReadFunction) => Promise<{
-    data: Uint8Array
-    subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
-    offset: number
-    pts: number
-    duration: number
-    cancelled: boolean
-    finished: boolean
-  }>
-  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>;
+interface IOInfo {
+  input: MediaInfoFields
+  output: MediaInfoFields
 }
 
-export type Remuxer = {
-  new(options: RemuxerInstanceOptions): RemuxerInstance
-  init: (read: WASMReadFunction) => Promise<{
-    data: ArrayBuffer
-    attachments: Attachment[]
-    subtitles: SubtitleFragment[]
-    info: {
-      input: {
-        audioMimeType: string
-        duration: number
-        formatName: string
-        mimeType: string
-        videoMimeType: string
-      }
-      output: {
-        audioMimeType: string
-        duration: number
-        formatName: string
-        mimeType: string
-        videoMimeType: string
-      }
-    }
-    chapters: Chapter[]
-    indexes: Index[]
-    videoExtradata: ArrayBuffer
-  }>
-  destroy: () => void
-  seek: (read: WASMReadFunction, timestamp: number) => Promise<{
-    data: ArrayBuffer
-    subtitles: SubtitleFragment[]
-    offset: number
-    pts: number
-    duration: number
-    cancelled: boolean
-    finished: boolean
-  }>
-  read: (read: WASMReadFunction) => Promise<{
-    data: ArrayBuffer
-    subtitles: SubtitleFragment[]
-    offset: number
-    pts: number
-    duration: number
-    cancelled: boolean
-    finished: boolean
-  }>
-  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<{
-    data: ArrayBuffer
-    pts: number
-    duration: number
-    offset: number
-    cancelled: boolean
-  }>
+interface MediaInfoFields {
+  audioMimeType: string
+  duration: number
+  formatName: string
+  mimeType: string
+  videoMimeType: string
 }
 
-const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
+interface WASMInitResult {
+  data: Uint8Array
+  attachments: WASMVector<RemuxerInstanceAttachment>
+  subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
+  indexes: WASMVector<Index>
+  chapters: WASMVector<Chapter>
+  info: IOInfo
+  videoExtradata: WASMVector<number>
+}
+
+interface WASMReadResult {
+  data: Uint8Array
+  subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
+  offset: number
+  pts: number
+  duration: number
+  cancelled: boolean
+  finished: boolean
+}
+
+interface WASMThumbnailReadResult {
+  data: Uint8Array
+  pts: number
+  duration: number
+  offset: number
+  cancelled: boolean
+}
+
+interface RemuxerInstance {
+  init: (read: WASMReadFunction) => Promise<WASMInitResult>
+  destroy: () => void
+  seek: (read: WASMReadFunction, timestamp: number) => Promise<WASMReadResult>
+  read: (read: WASMReadFunction) => Promise<WASMReadResult>
+  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<WASMThumbnailReadResult>
+}
+
+// ──────────────────────────────────────────────
+// Public result types
+// ──────────────────────────────────────────────
+
+export interface InitResult {
+  data: ArrayBuffer
+  attachments: Attachment[]
+  subtitles: SubtitleFragment[]
+  info: IOInfo
+  chapters: Chapter[]
+  indexes: Index[]
+  videoExtradata: ArrayBuffer
+}
+
+export interface ReadResult {
+  data: ArrayBuffer
+  subtitles: SubtitleFragment[]
+  offset: number
+  pts: number
+  duration: number
+  cancelled: boolean
+  finished: boolean
+}
+
+export interface ThumbnailReadResult {
+  data: ArrayBuffer
+  pts: number
+  duration: number
+  offset: number
+  cancelled: boolean
+}
+
+// ──────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────
+
+const vectorToArray = <T>(vector: WASMVector<T>): T[] => {
+  const length = vector.size()
+  const result: T[] = new Array(length)
+  for (let i = 0; i < length; i++) {
+    result[i] = vector.get(i)
+  }
+  return result
+}
+
+const copyTypedArray = (source: Uint8Array): ArrayBuffer => {
+  const copy = new Uint8Array(source.byteLength)
+  copy.set(source)
+  return copy.buffer
+}
+
+const readToWasmRead = (read: ReadFunction): WASMReadFunction =>
+  (offset: number, size: number) =>
+    read(Number(offset), Number(size))
+      .then(
+        ({ resolved, rejected }) => ({ resolved: new Uint8Array(resolved), rejected }),
+        () => ({ resolved: new Uint8Array(0), rejected: true })
+      )
+
+const mapDialogueSubtitles = (wasmSubtitles: WASMVector<RemuxerInstanceSubtitleFragment>): SubtitleFragment[] =>
+  vectorToArray(wasmSubtitles).map((sub) => {
+    if (sub.isHeader) throw new Error('Subtitle type is header')
+    const { isHeader: _, data, ...rest } = sub
+    return { ...rest, type: 'dialogue' as const, content: data }
+  })
+
+const mapReadResult = (result: WASMReadResult): ReadResult => {
+  if (result.cancelled) throw new Error('Cancelled')
+  return {
+    data: copyTypedArray(new Uint8Array(result.data)),
+    subtitles: mapDialogueSubtitles(result.subtitles),
+    offset: result.offset,
+    pts: result.pts,
+    duration: result.duration,
+    cancelled: result.cancelled,
+    finished: result.finished
+  }
+}
+
+const copyIOInfo = (info: IOInfo): IOInfo => ({
+  input: { ...info.input },
+  output: { ...info.output }
+})
+
+// ──────────────────────────────────────────────
+// WASM module loader
+// ──────────────────────────────────────────────
+
+const makeModule = (publicPath: string) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     print: (text: string) => console.log(text),
-    printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
-    // print: (text: string) => log(false, text),
-    // printErr: (text: string) => log(true, text),
-  }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
+    printErr: (text: string) => {
+      if (!text.includes('Read error at pos')) console.error(text)
+    },
+  }) as Promise<EmscriptenModule & { Remuxer: { new(options: { resolvedPromise: Promise<void>; length: number; bufferSize: number }): RemuxerInstance } }>
 
-type WASMVector<T> = {
-  size: () => number
-  get: (index: number) => T
-}
+// ──────────────────────────────────────────────
+// Worker resolvers
+// ──────────────────────────────────────────────
 
-const vectorToArray = <T>(vector: WASMVector<T>) =>
-  Array(vector.size())
-    .fill(undefined)
-    .map((_, index) => vector.get(index))
+const THUMBNAIL_HEIGHT = 200
+const THUMBNAIL_WIDTH = Math.round(THUMBNAIL_HEIGHT * 16 / 9)
 
 const resolvers = {
   makeRemuxer: async (
-    { publicPath, length, bufferSize, log }:
+    { publicPath, length, bufferSize }:
     {
       publicPath: string
       length: number
@@ -217,133 +247,12 @@ const resolvers = {
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
-    // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
-    const module = await makeModule(publicPath, log)
-    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
-    const remuxer = {
-      init: (read) => _remuxer.init(read).then(result => {
-        const typedArray = new Uint8Array(result.data.byteLength)
-        typedArray.set(result.data)
-        return {
-          data: typedArray.buffer,
-          videoExtradata: new Uint8Array(vectorToArray(result.videoExtradata)).buffer,
-          attachments: vectorToArray(result.attachments).map(attachment => {
-            const data = new Uint8Array(module.HEAPU8.buffer, attachment.ptr, attachment.size)
-            const dataCopy = new Uint8Array(data)
-            return {
-              filename: attachment.filename,
-              mimetype: attachment.mimetype,
-              data: dataCopy.buffer
-            }
-          }),
-          subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
-            if (!_subtitle.isHeader) throw new Error('Subtitle type is not header')
-            const { isHeader, data, ...subtitle } = _subtitle
-            return {
-              ...subtitle,
-              type: 'header',
-              content: data
-            }
-          }),
-          indexes: vectorToArray(result.indexes).map(({ index, timestamp, pos }) => ({
-            index,
-            timestamp,
-            pos
-          })),
-          chapters: vectorToArray(result.chapters).map(({ index, start, end, title }) => ({
-            index,
-            start,
-            end,
-            title
-          })),
-          info: {
-            input: {
-              audioMimeType: result.info.input.audioMimeType,
-              duration: result.info.input.duration,
-              formatName: result.info.input.formatName,
-              mimeType: result.info.input.mimeType,
-              videoMimeType: result.info.input.videoMimeType
-            },
-            output: {
-              audioMimeType: result.info.output.audioMimeType,
-              duration: result.info.output.duration,
-              formatName: result.info.output.formatName,
-              mimeType: result.info.output.mimeType,
-              videoMimeType: result.info.output.videoMimeType
-            }
-          }
-        }
-      }),
-      destroy: () => _remuxer.destroy(),
-      seek: (read, timestamp) => _remuxer.seek(read, timestamp * 1000).then(result => {
-        if (result.cancelled) throw new Error('Cancelled')
-        const typedArray = new Uint8Array(result.data.byteLength)
-        typedArray.set(new Uint8Array(result.data))
-        return {
-          data: typedArray.buffer,
-          subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
-            if (_subtitle.isHeader) throw new Error('Subtitle type is header')
-            const { isHeader, data, ...subtitle } = _subtitle
-            return {
-              ...subtitle,
-              type: 'dialogue',
-              content: data
-            }
-          }),
-          offset: result.offset,
-          pts: result.pts,
-          duration: result.duration,
-          cancelled: result.cancelled,
-          finished: result.finished
-        }
-      }),
-      read: (read) => _remuxer.read(read).then(result => {
-        if (result.cancelled) throw new Error('Cancelled')
-        const typedArray = new Uint8Array(result.data.byteLength)
-        typedArray.set(new Uint8Array(result.data))
-        return {
-          data: typedArray.buffer,
-          subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
-            if (_subtitle.isHeader) throw new Error('Subtitle type is header')
-            const { isHeader, data, ...subtitle } = _subtitle
-            return {
-              ...subtitle,
-              type: 'dialogue',
-              content: data
-            }
-          }),
-          offset: result.offset,
-          pts: result.pts,
-          duration: result.duration,
-          cancelled: result.cancelled,
-          finished: result.finished
-        }
-      }),
-      readKeyframe: (read, timestamp) =>
-        _remuxer.readKeyframe(read, timestamp)
-          .then(result => {
-            if (result.cancelled) throw new Error('Cancelled')
-            const typedArray = new Uint8Array(result.data.byteLength)
-            typedArray.set(new Uint8Array(result.data))
-            return {
-              data: typedArray.buffer,
-              pts: result.pts,
-              duration: result.duration,
-              offset: result.offset,
-              cancelled: result.cancelled
-            }
-          })
-    } as Remuxer
-
-    const readToWasmRead = (read: ReadFunction) => (offset: number, size: number) =>
-      read(Number(offset), Number(size))
-        .then(
-          ({ resolved, rejected }) => ({ resolved: new Uint8Array(resolved), rejected }),
-          () => ({ resolved: new Uint8Array(0), rejected: true })
-        )
+    const module = await makeModule(publicPath)
+    const instance = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
 
     let videoFrameResolve: ((value: VideoFrame) => void) | undefined
-    let videoFrameReject: ((reason?: any) => void) | undefined
+    let videoFrameReject: ((reason?: unknown) => void) | undefined
+
     const videoDecoder = new VideoDecoder({
       output: (output) => {
         videoFrameResolve?.(output)
@@ -356,41 +265,76 @@ const resolvers = {
         videoFrameReject = undefined
       }
     })
-    const offscreen = new OffscreenCanvas(200 * 16/9, 200)
+
+    const offscreen = new OffscreenCanvas(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
     const offscreenContext = offscreen.getContext('2d')
-    if (!offscreenContext) throw new Error('OffscreenCanvas not supported')
+    if (!offscreenContext) throw new Error('OffscreenCanvas 2d context not supported')
 
     return {
-      destroy: async () => remuxer.destroy(),
-      init: async (read: ReadFunction) => {
-        const initResult = await remuxer.init(readToWasmRead(read))
+      destroy: async () => instance.destroy(),
+
+      init: async (read: ReadFunction): Promise<InitResult> => {
+        const result = await instance.init(readToWasmRead(read))
+
         if (videoDecoder.state === 'unconfigured') {
           videoDecoder.configure({
-            codec: initResult.info.input.videoMimeType,
-            description: initResult.videoExtradata,
+            codec: result.info.input.videoMimeType,
+            description: new Uint8Array(vectorToArray(result.videoExtradata)),
           })
         }
-        return initResult
+
+        return {
+          data: copyTypedArray(result.data),
+          videoExtradata: new Uint8Array(vectorToArray(result.videoExtradata)).buffer,
+          attachments: vectorToArray(result.attachments).map(attachment => {
+            const data = new Uint8Array(module.HEAPU8.buffer, attachment.ptr, attachment.size)
+            return {
+              filename: attachment.filename,
+              mimetype: attachment.mimetype,
+              data: new Uint8Array(data).buffer
+            }
+          }),
+          subtitles: vectorToArray(result.subtitles).map((sub) => {
+            if (!sub.isHeader) throw new Error('Subtitle type is not header')
+            const { isHeader: _, data, ...rest } = sub
+            return { ...rest, type: 'header' as const, content: data }
+          }),
+          indexes: vectorToArray(result.indexes).map(({ index, timestamp, pos }) => ({
+            index, timestamp, pos
+          })),
+          chapters: vectorToArray(result.chapters).map(({ index, start, end, title }) => ({
+            index, start, end, title
+          })),
+          info: copyIOInfo(result.info)
+        }
       },
-      seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
-      read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
-      readKeyframe: async (read: ReadFunction, timestamp: number) => {
+
+      seek: (read: ReadFunction, timestamp: number): Promise<ReadResult> =>
+        instance.seek(readToWasmRead(read), timestamp * 1000).then(mapReadResult),
+
+      read: (read: ReadFunction): Promise<ReadResult> =>
+        instance.read(readToWasmRead(read)).then(mapReadResult),
+
+      readKeyframe: async (read: ReadFunction, timestamp: number): Promise<ArrayBuffer> => {
         const videoFramePromise = new Promise<VideoFrame>((resolve, reject) => {
           videoFrameResolve = resolve
           videoFrameReject = reject
         })
-        const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
+        const readResult = await instance.readKeyframe(readToWasmRead(read), timestamp)
+        if (readResult.cancelled) throw new Error('Cancelled')
+
         videoDecoder.decode(new EncodedVideoChunk({
-          type: "key",
+          type: 'key',
           timestamp: readResult.pts,
           duration: readResult.duration,
           data: readResult.data
         }))
-        videoDecoder.flush()
+        await videoDecoder.flush()
         const videoFrame = await videoFramePromise
-        offscreenContext.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
+        offscreenContext.drawImage(videoFrame, 0, 0, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
         videoFrame.close()
-        return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
+        const blob = await offscreen.convertToBlob()
+        return blob.arrayBuffer()
       }
     }
   }

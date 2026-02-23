@@ -5,7 +5,12 @@ import type { SubtitleFragment } from './worker'
 import { expose } from 'osra'
 export * from './utils'
 
-export type MakeTransmuxerOptions = {
+export type { SubtitleFragment }
+
+/** @deprecated Use MakeRemuxerOptions instead */
+export type MakeTransmuxerOptions = MakeRemuxerOptions
+
+export type MakeRemuxerOptions = {
   /** Path that will be used to locate the .wasm file imported from the worker */
   publicPath: string
   /** Path that will be used to locate the javascript worker file */
@@ -17,13 +22,13 @@ export type MakeTransmuxerOptions = {
 }
 
 const abortSignalToPromise = (abortSignal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
+  new Promise<never>((_resolve, reject) => {
     if (abortSignal.aborted) {
-      return reject()
+      return reject(new DOMException('Aborted', 'AbortError'))
     }
     abortSignal.addEventListener('abort', () => {
-      reject()
-    })
+      reject(new DOMException('Aborted', 'AbortError'))
+    }, { once: true })
   })
 
 export const makeRemuxer = async ({
@@ -33,13 +38,10 @@ export const makeRemuxer = async ({
   read,
   length,
   bufferSize = 2_500_000
-}: MakeTransmuxerOptions) => {
+}: MakeRemuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
 
   const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
-  let currentStream: ReadableStream<Uint8Array> | undefined
-  let currentStreamOffset: number | undefined
-  let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
 
   const remuxer = await makeRemuxer({
     publicPath,
@@ -54,7 +56,9 @@ export const makeRemuxer = async ({
   const queue = new PQueue({ concurrency: 1 })
 
   const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
-    if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0).buffer, rejected: true })
+    if (abortController.signal.aborted) {
+      return Promise.resolve({ resolved: new Uint8Array(0).buffer, rejected: true })
+    }
     return Promise.race([
       read(Number(offset), Number(size))
         .then(
@@ -71,16 +75,18 @@ export const makeRemuxer = async ({
 
   let abortControllers: AbortController[] = []
 
-  const addTask = <T extends (abortController: AbortController) => Promise<any>>(func: T) => {
+  const addTask = <T extends (abortController: AbortController) => Promise<unknown>>(func: T) => {
     const currentAbortControllers = [...abortControllers]
     abortControllers = []
     queue.clear()
-    currentAbortControllers.forEach(abortController => abortController.abort())
+    currentAbortControllers.forEach(controller => controller.abort())
+
     const abortController = new AbortController()
     abortControllers = [...abortControllers, abortController]
+
     return Promise.race([
       queue.add<Awaited<ReturnType<T>>>(
-        async () => func(abortController),
+        async () => func(abortController) as Awaited<ReturnType<T>>,
         { signal: abortController.signal }
       ),
       abortSignalToPromise(abortController.signal)
@@ -95,16 +101,10 @@ export const makeRemuxer = async ({
     worker,
     init: () => addTask((abortController) => remuxer.init(wasmRead(abortController))),
     destroy: async () => {
-      try {
-        await reader?.cancel()
-      } catch (err) {}
-      reader = undefined
-      currentStream = undefined
-      currentStreamOffset = undefined
       const currentAbortControllers = [...abortControllers]
       abortControllers = []
       queue.clear()
-      currentAbortControllers.forEach(abortController => abortController.abort())
+      currentAbortControllers.forEach(controller => controller.abort())
       await remuxer.destroy()
       worker.terminate()
     },

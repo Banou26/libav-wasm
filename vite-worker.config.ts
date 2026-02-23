@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import commonjs from '@rollup/plugin-commonjs'
 
-export default defineConfig((env) => ({
+export default defineConfig(({ mode }) => ({
   build: {
     emptyOutDir: false,
     target: 'esnext',
@@ -14,7 +14,7 @@ export default defineConfig((env) => ({
   },
   plugins: [
     ...(
-      env.mode === 'development'
+      mode === 'development'
         ? []
         : [commonjs()]
     )

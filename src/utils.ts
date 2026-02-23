@@ -1,46 +1,41 @@
 
-export function debounceImmediateAndLatest<T extends (...args: any[]) => any>(
+export function debounceImmediateAndLatest<T extends (...args: unknown[]) => unknown>(
   wait: number,
   func: T
 ): T {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let lastArgs: any[] | null = null;
+  let lastArgs: Parameters<T> | null = null;
 
-  const debouncedFunction = function(...args: any[]) {
-    // @ts-expect-error
-    const context = this;
-
+  const debouncedFunction = function(this: unknown, ...args: Parameters<T>) {
     if (timeoutId === null) {
-      // Call immediately on the first call
-      func.apply(context, args);
+      func.apply(this, args);
     } else {
-      // Store the latest arguments for the last call
       lastArgs = args;
     }
 
-    clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+    clearTimeout(timeoutId!);
 
     timeoutId = setTimeout(() => {
       if (lastArgs) {
-        func.apply(context, lastArgs);
+        func.apply(this, lastArgs);
         lastArgs = null;
       }
       timeoutId = null;
     }, wait);
   };
 
-  return debouncedFunction as T;
+  return debouncedFunction as unknown as T;
 }
 
-export const queuedThrottleWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
+export const queuedThrottleWithLastCall = <TArgs extends unknown[], T extends (...args: TArgs) => unknown>(time: number, func: T) => {
   let runningFunction: Promise<ReturnType<T>> | undefined
   let lastCall: Promise<ReturnType<T>> | undefined
-  let lastCallArguments: T2 | undefined
+  let lastCallArguments: TArgs | undefined
 
   const checkForLastCall = (
     timeStart: number,
     resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void,
-    reject: (reason?: any) => void
+    reject: (reason?: unknown) => void
   ) =>
     (result: ReturnType<T>) => {
       const currentTime = performance.now()
@@ -50,148 +45,151 @@ export const queuedThrottleWithLastCall = <T2 extends any[], T extends (...args:
           lastCall = undefined
           return
         }
-        const funcResult = (async () => (func(...lastCallArguments)))()
+        const funcResult = (async () => (func(...lastCallArguments) as ReturnType<T>))()
         lastCallArguments = undefined
         funcResult
           .then(resolve)
-          .catch((err) => {
+          .catch((err: unknown) => {
             console.error(err)
             reject(err)
           })
 
-        let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
-        let _reject: (reason?: any) => void
-        lastCall = new Promise((resolve, reject) => {
-          _resolve = resolve
-          _reject = reject
+        let _resolve!: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
+        let _reject!: (reason?: unknown) => void
+        lastCall = new Promise<ReturnType<T>>((res, rej) => {
+          _resolve = res
+          _reject = rej
         })
-  
+
         runningFunction =
           funcResult
-            // @ts-ignore
-            .then(checkForLastCall(currentTime, _resolve, _reject))
-            // @ts-ignore
-            .catch(err => {
+            .then(checkForLastCall(currentTime, _resolve, _reject) as (value: ReturnType<T>) => ReturnType<T>)
+            .catch((err: unknown) => {
               console.error(err)
-              return checkForLastCall(timeStart, _resolve, _reject)(err)
-            })
+              return checkForLastCall(timeStart, _resolve, _reject)(err as ReturnType<T>)
+            }) as Promise<ReturnType<T>>
       }, time - (currentTime - timeStart))
       return result
     }
 
   return (...args: Parameters<T>) => {
-    lastCallArguments = args
+    lastCallArguments = args as TArgs
     if (!runningFunction) {
       const timeStart = performance.now()
-      const funcResult = (async () => (func(...args)))()
+      const funcResult = (async () => (func(...args) as ReturnType<T>))()
       lastCallArguments = undefined
-      let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
-      let _reject: (reason?: any) => void
-      lastCall = new Promise((resolve, reject) => {
-        _resolve = resolve
-        _reject = reject
+      let _resolve!: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
+      let _reject!: (reason?: unknown) => void
+      lastCall = new Promise<ReturnType<T>>((res, rej) => {
+        _resolve = res
+        _reject = rej
       })
 
       runningFunction =
         funcResult
-            // @ts-ignore
-          .then(checkForLastCall(timeStart, _resolve, _reject))
-            // @ts-ignore
-          .catch(err => {
+          .then(checkForLastCall(timeStart, _resolve, _reject) as (value: ReturnType<T>) => ReturnType<T>)
+          .catch((err: unknown) => {
             console.error(err)
-            return checkForLastCall(timeStart, _resolve, _reject)(err)
-          })
+            return checkForLastCall(timeStart, _resolve, _reject)(err as ReturnType<T>)
+          }) as Promise<ReturnType<T>>
 
       return funcResult
-  } else {
+    } else {
       return lastCall
     }
   }
 }
 
-// todo: reimplement this into a ReadableByteStream https://web.dev/streams/ once Safari gets support
-export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
-  new ReadableStream<Uint8Array>({
+interface ChunkSizeStreamState {
+  reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  leftOverData: Uint8Array | undefined
+}
+
+// TODO: reimplement as ReadableByteStream (https://web.dev/streams/) once Safari gets support
+export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream<Uint8Array>) => {
+  const state: ChunkSizeStreamState = {
     reader: undefined,
     leftOverData: undefined,
+  }
+
+  return new ReadableStream<Uint8Array>({
     start() {
-      this.reader = stream.getReader()
+      state.reader = stream.getReader()
     },
     async pull(controller) {
-      const { leftOverData }: { leftOverData: Uint8Array | undefined } = this
-
       const accumulate = async ({ buffer = new Uint8Array(SIZE), currentSize = 0 } = {}): Promise<{ buffer?: Uint8Array, currentSize?: number, done: boolean }> => {
-        const { value: newBuffer, done } = await this.reader!.read()
-        if (currentSize === 0 && leftOverData) {
-          buffer.set(leftOverData)
-          currentSize += leftOverData.byteLength
-          this.leftOverData = undefined
+        const { value: newBuffer, done } = await state.reader!.read()
+        if (currentSize === 0 && state.leftOverData) {
+          buffer.set(state.leftOverData)
+          currentSize += state.leftOverData.byteLength
+          state.leftOverData = undefined
         }
-  
+
         if (done) {
-          const finalResult = { buffer: buffer.slice(0, currentSize), currentSize, done }
-          this.reader = undefined
-          this.leftOverData = undefined
-          return finalResult
+          state.reader = undefined
+          state.leftOverData = undefined
+          return { buffer: buffer.slice(0, currentSize), currentSize, done }
         }
-  
-        let newSize
+
         const slicedBuffer = newBuffer.slice(0, SIZE - currentSize)
-        newSize = currentSize + slicedBuffer.byteLength
+        const newSize = currentSize + slicedBuffer.byteLength
         buffer.set(slicedBuffer, currentSize)
-  
+
         if (newSize === SIZE) {
-          this.leftOverData = newBuffer.slice(SIZE - currentSize)
+          state.leftOverData = newBuffer.slice(SIZE - currentSize)
           return { buffer, currentSize: newSize, done: false }
         }
-        
+
         return accumulate({ buffer, currentSize: newSize })
       }
+
       const { buffer, done } = await accumulate()
       if (buffer?.byteLength) controller.enqueue(buffer)
       if (done) controller.close()
     },
     cancel() {
-      this.reader?.cancel()
-      this.leftOverData = undefined
+      state.reader?.cancel()
+      state.leftOverData = undefined
     }
-  } as UnderlyingDefaultSource<Uint8Array> & {
-    reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-    leftOverData: Uint8Array | undefined
   })
+}
 
-export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
-  new ReadableStream<Uint8Array>({
+interface BufferedStreamState {
+  buffers: Uint8Array[]
+  currentPullPromise: Promise<ReadableStreamReadResult<Uint8Array>> | undefined
+  reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+}
+
+export const toBufferedStream = (SIZE: number) => (stream: ReadableStream<Uint8Array>) => {
+  const state: BufferedStreamState = {
     buffers: [],
     currentPullPromise: undefined,
     reader: undefined,
-    leftOverData: undefined,
+  }
+
+  return new ReadableStream<Uint8Array>({
     start() {
-      this.reader = stream.getReader()
+      state.reader = stream.getReader()
     },
     async pull(controller) {
       const pull = async () => {
-        if (this.buffers.length >= SIZE) return
-        this.currentPullPromise = this.reader!.read()
-        const { value: newBuffer, done } = await this.currentPullPromise
-        this.currentPullPromise = undefined
+        if (state.buffers.length >= SIZE) return
+        state.currentPullPromise = state.reader!.read()
+        const { value: newBuffer, done } = await state.currentPullPromise
+        state.currentPullPromise = undefined
         if (done) {
-          try {
-            for (const buffer of this.buffers) controller.enqueue(buffer)
-            controller.close()
-          } catch (err) {
-            // console.error(err)
-          }
+          for (const buffer of state.buffers) controller.enqueue(buffer)
+          controller.close()
           return
         }
-        this.buffers.push(newBuffer)
+        state.buffers.push(newBuffer)
         return newBuffer
       }
 
       const tryToBuffer = async (): Promise<void> => {
-        if (this.buffers.length >= SIZE) return
-        
-        if (this.buffers.length === 0) {
+        if (state.buffers.length >= SIZE) return
+
+        if (state.buffers.length === 0) {
           const buffer = await pull()
           if (!buffer) return
           return tryToBuffer()
@@ -204,26 +202,21 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
       }
 
       await tryToBuffer()
-      try {
-        controller.enqueue(this.buffers.shift())
-        tryToBuffer()
-      } catch(err) {
-        if (!(
-          err instanceof TypeError && (
-            err.message === 'ReadableStreamDefaultController.enqueue: Cannot enqueue into a stream that has already been requested to close.' ||
-            err.message === `Failed to execute 'enqueue' on 'ReadableStreamDefaultController': Cannot enqueue a chunk into a readable stream that is closed or has been requested to be closed`
-          )
-        )) {
-          throw err
+      const chunk = state.buffers.shift()
+      if (chunk) {
+        try {
+          controller.enqueue(chunk)
+        } catch (err) {
+          // Stream may have been closed between the check and enqueue
+          if (!(err instanceof TypeError && err.message.includes('enqueue'))) {
+            throw err
+          }
         }
       }
+      tryToBuffer()
     },
     cancel() {
-      this.reader!.cancel()
+      state.reader?.cancel()
     }
-  } as UnderlyingDefaultSource<Uint8Array> & {
-    reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-    leftOverData: Uint8Array | undefined
-    buffers: Uint8Array[]
-    currentPullPromise: Promise<ReadableStreamReadResult<Uint8Array>> | undefined
   })
+}
