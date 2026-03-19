@@ -67,7 +67,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const workerUrl = URL.createObjectURL(blob)
 
     const remuxer = await makeRemuxer({
-      publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
+      publicPath: new URL('/libav/', new URL(import.meta.url).origin).toString(),
       workerUrl,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
@@ -261,7 +261,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         const workerUrl = URL.createObjectURL(blob)
 
         const remuxer = await makeRemuxer({
-          publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
+          publicPath: new URL('/libav/', new URL(import.meta.url).origin).toString(),
           workerUrl,
           bufferSize: BUFFER_SIZE,
           length: contentLength,

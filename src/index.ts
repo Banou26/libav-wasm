@@ -6,7 +6,7 @@ import { expose } from 'osra'
 export * from './utils'
 
 export type MakeTransmuxerOptions = {
-  /** Path that will be used to locate the .wasm file imported from the worker */
+  /** Base path where libav.js WASM files are served (e.g. the contents of @libav.js/variant-webcodecs/dist/) */
   publicPath: string
   /** Path that will be used to locate the javascript worker file */
   workerUrl: string
