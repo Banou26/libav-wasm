@@ -12,7 +12,7 @@ export default defineConfig((env) => ({
       formats: ['es']
     },
     rollupOptions: {
-      external: ['buffer', 'mp4box', 'osra']
+      external: ['buffer', 'mp4box', 'osra', 'libav.js', 'libav.js/webcodecs']
     }
   },
   plugins: [
@@ -26,6 +26,8 @@ export default defineConfig((env) => ({
       configureServer: (server) => {
         server.middlewares.use((_req, res, next) => {
           res.setHeader('Cache-Control', 'no-store')
+          res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
           next()
         })
       }

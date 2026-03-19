@@ -10,6 +10,9 @@ export default defineConfig((env) => ({
       fileName: 'worker',
       entry: 'src/worker/index.ts',
       formats: ['es']
+    },
+    rollupOptions: {
+      external: ['libav.js', 'libav.js/webcodecs']
     }
   },
   plugins: [

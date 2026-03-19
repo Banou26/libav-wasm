@@ -2,56 +2,8 @@ import PQueue from 'p-queue'
 import { queuedThrottleWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
 import { makeRemuxer } from '.'
 
-const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
 const VIDEO_URL = '../video2.mkv'
-// const VIDEO_URL = '../spidey.mkv'
-
-export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
-  return new Promise((resolve, reject) => {
-    const dataView = new DataView(plaintext);
-    const blob = new Blob([dataView], { type: fileType });
-
-    // @ts-ignore
-    if (navigator.msSaveBlob) {
-    // @ts-ignore
-      navigator.msSaveBlob(blob, fileName);
-    // @ts-ignore
-      return resolve();
-    } else if (/iPhone|fxios/i.test(navigator.userAgent)) {
-      // This method is much slower but createObjectURL
-      // is buggy on iOS
-      const reader = new FileReader();
-      reader.addEventListener('loadend', () => {
-        if (reader.error) {
-          return reject(reader.error);
-        }
-        if (reader.result) {
-          const a = document.createElement('a');
-          // @ts-ignore
-          a.href = reader.result;
-          a.download = fileName;
-          document.body.appendChild(a);
-          a.click();
-        }
-        // @ts-ignore
-        resolve();
-      });
-      reader.readAsDataURL(blob);
-    } else {
-      const downloadUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(downloadUrl);
-      setTimeout(resolve, 100);
-    }
-  });
-}
-
-
 
 fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
   .then(async ({ headers, body }) => {
@@ -62,13 +14,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
 
-    const _workerUrl = new URL('../build/worker.js', import.meta.url).toString()
-    const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
-    const workerUrl = URL.createObjectURL(blob)
+    const workerUrl = new URL('../build/worker.js', import.meta.url).toString()
 
     const remuxer = await makeRemuxer({
-      publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
+      publicPath: new URL('/node_modules/libav.js/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
+      workerOptions: { type: 'module' },
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       read: (offset, size) => {
@@ -247,6 +198,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       (await remuxer.read()).data
     )
 
+    // Thumbnail generation
     fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       .then(async ({ headers, body }) => {
         if (!body) throw new Error('no body')
@@ -256,13 +208,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             ? Number(contentRangeContentLength)
             : Number(headers.get('Content-Length'))
 
-        const _workerUrl = new URL('../build/worker.js', import.meta.url).toString()
-        const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
-        const workerUrl = URL.createObjectURL(blob)
+        const workerUrl = new URL('../build/worker.js', import.meta.url).toString()
 
         const remuxer = await makeRemuxer({
-          publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
+          publicPath: new URL('/node_modules/libav.js/dist/', new URL(import.meta.url).origin).toString(),
           workerUrl,
+          workerOptions: { type: 'module' },
           bufferSize: BUFFER_SIZE,
           length: contentLength,
           read: (offset, size) => {
@@ -282,16 +233,13 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         thumbnailContainer.style.flexWrap = 'wrap'
         thumbnailContainer.style.gap = '10px'
 
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d')
-        if (!context) throw new Error('OffscreenCanvas not supported')
-
-        const thumbnails = []
+        const thumbnails: HTMLImageElement[] = []
         const createNewThumbnail = async (index: number) => {
           const currentIndex = header.indexes.at(index)
           if (!currentIndex) return
 
-          const arrayBuffer = await remuxer.readKeyframe(currentIndex.timestamp)
+          const result = await remuxer.readKeyframe(currentIndex.timestamp)
+          const arrayBuffer = result instanceof ArrayBuffer ? result : (result as any).data
           const thumbnailBlob = new Blob([arrayBuffer], { type: 'image/png' })
 
           const img = document.createElement('img')
