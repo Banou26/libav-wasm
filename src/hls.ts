@@ -146,9 +146,9 @@ export const makeHlsRemuxer = async (options: HlsRemuxerOptions): Promise<HlsRem
     const url = URL.createObjectURL(blob)
     blobUrls.push(url)
 
-    // Duration comes from the remuxer in microseconds, convert to seconds
-    const durationSecs = result.duration / 1_000_000
-    const ptsSecs = result.pts / 1_000_000
+    // Duration and pts come from the remuxer in seconds
+    const durationSecs = result.duration
+    const ptsSecs = result.pts
 
     const segment: HlsSegment = {
       index: segmentIndex++,
