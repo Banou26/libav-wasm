@@ -1,85 +1,70 @@
 import type { MakeTransmuxerOptions } from './index'
 import { makeRemuxer } from './index'
 
-export type HlsSegment = {
+export type HlsSegmentInfo = {
   index: number
+  /** Segment duration in seconds */
   duration: number
-  pts: number
-  url: string
-  data: ArrayBuffer
+  /** Segment start time in seconds */
+  timestamp: number
 }
 
-export type HlsPlaylist = {
-  /** The current m3u8 playlist content as a string */
-  content: string
-  /** Blob URL for the m3u8 playlist, usable by video.js / hls.js */
-  url: string
+export type HlsInitResult = {
+  /** Media info (codecs, duration, etc.) */
+  info: {
+    input: { audioMimeType: string; duration: number; formatName: string; mimeType: string; videoMimeType: string }
+    output: { audioMimeType: string; duration: number; formatName: string; mimeType: string; videoMimeType: string }
+  }
+  /** fMP4 init segment (moov box) as ArrayBuffer */
+  initSegment: ArrayBuffer
+  /** Complete m3u8 playlist content */
+  playlist: string
+  /** Playlist as a blob URL, ready to pass to video.js / hls.js */
+  playlistUrl: string
+  /** Segment info derived from keyframe index */
+  segments: HlsSegmentInfo[]
+  /** Attachments (fonts, etc.) */
+  attachments: { filename: string; mimetype: string; data: ArrayBuffer }[]
+  /** Subtitle headers */
+  subtitles: any[]
+  /** Chapter list */
+  chapters: { index: number; start: number; end: number; title: string }[]
+  /**
+   * Custom hls.js fragment loader class.
+   * Pass this to hls.js config to enable lazy segment loading:
+   * ```js
+   * new Hls({ fLoader: initResult.fragLoader })
+   * ```
+   */
+  fragLoader: new (config: any) => any
 }
 
 export type HlsRemuxerOptions = MakeTransmuxerOptions & {
   /**
-   * Target segment duration in seconds. Segments are cut at keyframes,
-   * so actual duration may vary. Default: 6
+   * Base path used in the m3u8 playlist for segment URLs.
+   * Segments are referenced as `${segmentBasePath}segment-{index}.m4s`
+   * Default: "" (relative URLs)
    */
-  targetSegmentDuration?: number
+  segmentBasePath?: string
 }
 
 export type HlsRemuxer = {
   /**
-   * Initialize the remuxer — probes the input, returns metadata
-   * and prepares the HLS init segment.
+   * Initialize the remuxer — probes the input, builds the complete
+   * m3u8 playlist from the keyframe index, and returns a custom hls.js
+   * loader for lazy segment fetching.
    */
-  init: () => Promise<{
-    /** Media info (codecs, duration, etc.) */
-    info: {
-      input: { audioMimeType: string; duration: number; formatName: string; mimeType: string; videoMimeType: string }
-      output: { audioMimeType: string; duration: number; formatName: string; mimeType: string; videoMimeType: string }
-    }
-    /** Blob URL for the fMP4 init segment */
-    initSegmentUrl: string
-    /** Raw init segment data */
-    initSegmentData: ArrayBuffer
-    /** Attachments (fonts, etc.) */
-    attachments: { filename: string; mimetype: string; data: ArrayBuffer }[]
-    /** Subtitle headers */
-    subtitles: any[]
-    /** Chapter list */
-    chapters: { index: number; start: number; end: number; title: string }[]
-    /** Keyframe index */
-    indexes: { index: number; timestamp: number; pos: number }[]
-  }>
+  init: () => Promise<HlsInitResult>
 
   /**
-   * Read the next segment from the stream. Returns null when finished.
-   * Call this in a loop to lazily process the entire file.
+   * Fetch a specific segment by index. Called automatically by the
+   * custom hls.js loader, but can also be called manually.
+   * Returns the fMP4 segment data (moof+mdat).
    */
-  readNextSegment: () => Promise<HlsSegment | null>
+  fetchSegment: (index: number) => Promise<ArrayBuffer>
 
   /**
-   * Seek to a timestamp (seconds) and read the segment at that position.
-   */
-  seekToSegment: (timestamp: number) => Promise<HlsSegment | null>
-
-  /**
-   * Get the current HLS playlist. The playlist grows as segments are read.
-   * For live/event mode, call this after each readNextSegment().
-   * For VOD mode, call after all segments have been read.
-   */
-  getPlaylist: (opts?: { ended?: boolean }) => HlsPlaylist
-
-  /**
-   * Get a complete VOD playlist by reading all remaining segments.
-   * This processes the entire file lazily but sequentially.
-   */
-  generateVodPlaylist: () => Promise<HlsPlaylist>
-
-  /**
-   * Get all segments read so far.
-   */
-  getSegments: () => HlsSegment[]
-
-  /**
-   * Clean up all blob URLs and destroy the underlying remuxer.
+   * Clean up and destroy the underlying remuxer.
    */
   destroy: () => Promise<void>
 }
@@ -87,214 +72,252 @@ export type HlsRemuxer = {
 /**
  * Creates an HLS remuxer that wraps the existing fMP4 remuxer.
  *
- * The underlying remuxer already produces fragmented MP4 with
- * `empty_moov+frag_keyframe+default_base_moof` — which is exactly
- * what HLS with fMP4 segments (RFC 8216bis) requires.
+ * On init(), the complete m3u8 playlist is generated from the keyframe
+ * index — no need to read all segments first. A custom hls.js fragment
+ * loader lazily fetches segments via seek() when the player requests them.
  *
- * This wrapper:
- * - Exposes each read() chunk as a numbered HLS segment with a blob URL
- * - Generates m3u8 playlists (EVENT or VOD) referencing those segments
- * - Preserves the lazy/streaming architecture — segments are produced on demand
- *
- * Usage with video.js:
+ * Usage with hls.js:
  * ```js
- * const hls = await makeHlsRemuxer({ ...options })
- * const { initSegmentUrl, info } = await hls.init()
+ * const hlsRemuxer = await makeHlsRemuxer({ ...options })
+ * const { playlistUrl, initSegment, fragLoader } = await hlsRemuxer.init()
  *
- * // Option A: Read all segments upfront (small files)
- * const { url } = await hls.generateVodPlaylist()
- * videojs(el, { sources: [{ src: url, type: 'application/x-mpegURL' }] })
+ * const hls = new Hls({ fLoader: fragLoader })
+ * hls.loadSource(playlistUrl)
+ * hls.attachMedia(videoElement)
+ * ```
  *
- * // Option B: Stream segments lazily (large files)
- * while (true) {
- *   const segment = await hls.readNextSegment()
- *   if (!segment) break
- *   const { url } = hls.getPlaylist({ ended: false })
- *   // Update player source or use hls.js programmatic API
- * }
+ * Usage with video.js (via videojs-http-streaming which uses hls.js):
+ * ```js
+ * const hlsRemuxer = await makeHlsRemuxer({ ...options })
+ * const { playlistUrl, fragLoader } = await hlsRemuxer.init()
+ *
+ * const player = videojs(el, {
+ *   html5: {
+ *     vhs: { overrideNative: true },
+ *     hlsjsConfig: { fLoader: fragLoader }
+ *   }
+ * })
+ * player.src({ src: playlistUrl, type: 'application/x-mpegURL' })
  * ```
  */
 export const makeHlsRemuxer = async (options: HlsRemuxerOptions): Promise<HlsRemuxer> => {
-  const { targetSegmentDuration = 6, ...remuxerOptions } = options
+  const { segmentBasePath = '', ...remuxerOptions } = options
   const remuxer = await makeRemuxer(remuxerOptions)
 
-  const segments: HlsSegment[] = []
-  const blobUrls: string[] = []
-  let initSegmentUrl: string | null = null
+  let segmentInfos: HlsSegmentInfo[] = []
   let initSegmentData: ArrayBuffer | null = null
   let playlistBlobUrl: string | null = null
-  let finished = false
-  let segmentIndex = 0
-  let totalDuration = 0
-  let maxSegmentDuration = 0
+  let initSegmentBlobUrl: string | null = null
 
-  const createSegmentFromResult = (result: {
-    data: ArrayBuffer
-    pts: number
-    duration: number
-    finished: boolean
-  }): HlsSegment | null => {
-    if (result.finished) {
-      finished = true
-    }
+  // Cache fetched segments so repeated requests don't re-seek
+  const segmentCache = new Map<number, ArrayBuffer>()
 
-    if (!result.data || result.data.byteLength === 0) {
-      return null
-    }
-
-    const blob = new Blob([result.data], { type: 'video/mp4' })
-    const url = URL.createObjectURL(blob)
-    blobUrls.push(url)
-
-    // Duration and pts come from the remuxer in seconds
-    const durationSecs = result.duration
-    const ptsSecs = result.pts
-
-    const segment: HlsSegment = {
-      index: segmentIndex++,
-      duration: durationSecs,
-      pts: ptsSecs,
-      url,
-      data: result.data
-    }
-
-    segments.push(segment)
-    totalDuration += durationSecs
-    if (durationSecs > maxSegmentDuration) {
-      maxSegmentDuration = durationSecs
-    }
-
-    return segment
-  }
-
-  const buildPlaylist = (ended: boolean): string => {
-    // Target duration must be an integer >= max segment duration
-    const targetDuration = Math.max(
-      Math.ceil(maxSegmentDuration),
-      targetSegmentDuration
+  const buildPlaylist = (
+    segments: HlsSegmentInfo[],
+    initSegUrl: string
+  ): string => {
+    const maxDuration = Math.ceil(
+      segments.reduce((max, s) => Math.max(max, s.duration), 0)
     )
 
     let m3u8 = '#EXTM3U\n'
-    m3u8 += `#EXT-X-VERSION:7\n` // Version 7 required for fMP4
-    m3u8 += `#EXT-X-TARGETDURATION:${targetDuration}\n`
-    m3u8 += `#EXT-X-MEDIA-SEQUENCE:0\n`
-
-    if (!ended) {
-      m3u8 += `#EXT-X-PLAYLIST-TYPE:EVENT\n`
-    } else {
-      m3u8 += `#EXT-X-PLAYLIST-TYPE:VOD\n`
-    }
-
-    // fMP4 init segment
-    if (initSegmentUrl) {
-      m3u8 += `#EXT-X-MAP:URI="${initSegmentUrl}"\n`
-    }
+    m3u8 += '#EXT-X-VERSION:7\n'
+    m3u8 += `#EXT-X-TARGETDURATION:${Math.max(maxDuration, 1)}\n`
+    m3u8 += '#EXT-X-MEDIA-SEQUENCE:0\n'
+    m3u8 += '#EXT-X-PLAYLIST-TYPE:VOD\n'
+    m3u8 += `#EXT-X-MAP:URI="${initSegUrl}"\n`
 
     for (const segment of segments) {
       m3u8 += `#EXTINF:${segment.duration.toFixed(6)},\n`
-      m3u8 += `${segment.url}\n`
+      m3u8 += `${segmentBasePath}segment-${segment.index}.m4s\n`
     }
 
-    if (ended) {
-      m3u8 += '#EXT-X-ENDLIST\n'
-    }
-
+    m3u8 += '#EXT-X-ENDLIST\n'
     return m3u8
+  }
+
+  const fetchSegment = async (index: number): Promise<ArrayBuffer> => {
+    const cached = segmentCache.get(index)
+    if (cached) return cached
+
+    const segmentInfo = segmentInfos[index]
+    if (!segmentInfo) {
+      throw new Error(`Segment ${index} not found`)
+    }
+
+    // Use seek() to jump to this segment's timestamp and get the fMP4 data
+    const result = await remuxer.seek(segmentInfo.timestamp)
+    segmentCache.set(index, result.data)
+    return result.data
   }
 
   return {
     init: async () => {
       const result = await remuxer.init()
-
-      // The init() data is the fMP4 init segment (moov box)
-      const blob = new Blob([result.data], { type: 'video/mp4' })
-      initSegmentUrl = URL.createObjectURL(blob)
       initSegmentData = result.data
-      blobUrls.push(initSegmentUrl)
+
+      // Build segment list from keyframe indexes
+      const indexes = result.indexes
+      const totalDuration = result.info.input.duration
+
+      segmentInfos = indexes.map((kf, i) => {
+        const nextTimestamp = i < indexes.length - 1
+          ? indexes[i + 1].timestamp
+          : totalDuration
+        return {
+          index: i,
+          duration: nextTimestamp - kf.timestamp,
+          timestamp: kf.timestamp
+        }
+      })
+
+      // Create blob URL for init segment so the playlist can reference it
+      const initBlob = new Blob([initSegmentData], { type: 'video/mp4' })
+      initSegmentBlobUrl = URL.createObjectURL(initBlob)
+
+      // Build the complete playlist upfront
+      const playlist = buildPlaylist(segmentInfos, initSegmentBlobUrl)
+      const playlistBlob = new Blob([playlist], { type: 'application/x-mpegURL' })
+      playlistBlobUrl = URL.createObjectURL(playlistBlob)
+
+      // Build custom hls.js fLoader that intercepts segment requests
+      // and fetches them lazily via our remuxer
+      const remuxerFetchSegment = fetchSegment
+      const segmentInfosRef = segmentInfos
+
+      class FragLoader {
+        private context: any
+        private config: any
+        private callbacks: any
+        private stats: any
+
+        constructor(config: any) {
+          this.config = config
+          this.context = null
+          this.callbacks = null
+          this.stats = {
+            aborted: false,
+            loaded: 0,
+            total: 0,
+            loading: { start: 0, first: 0, end: 0 },
+            parsing: { start: 0, end: 0 },
+            buffering: { start: 0, first: 0, end: 0 }
+          }
+        }
+
+        load(context: any, _config: any, callbacks: any) {
+          this.context = context
+          this.callbacks = callbacks
+
+          const url = context.url as string
+
+          // Parse segment index from the URL pattern "segment-{index}.m4s"
+          const match = url.match(/segment-(\d+)\.m4s/)
+          if (!match) {
+            // Not a segment URL (could be the init segment) — fall through to fetch
+            this.loadViaFetch(context, callbacks)
+            return
+          }
+
+          const segmentIndex = parseInt(match[1], 10)
+          if (segmentIndex < 0 || segmentIndex >= segmentInfosRef.length) {
+            callbacks.onError(
+              { code: 404, text: `Segment ${segmentIndex} out of range` },
+              context,
+              null,
+              this.stats
+            )
+            return
+          }
+
+          this.stats.loading.start = performance.now()
+
+          remuxerFetchSegment(segmentIndex)
+            .then((data) => {
+              this.stats.loaded = data.byteLength
+              this.stats.total = data.byteLength
+              this.stats.loading.first = performance.now()
+              this.stats.loading.end = performance.now()
+
+              callbacks.onSuccess(
+                {
+                  url: context.url,
+                  data
+                },
+                this.stats,
+                context,
+                null
+              )
+            })
+            .catch((err) => {
+              callbacks.onError(
+                { code: 0, text: err?.message ?? 'Segment fetch failed' },
+                context,
+                null,
+                this.stats
+              )
+            })
+        }
+
+        // Fallback for non-segment URLs (e.g., init segment blob URL)
+        private loadViaFetch(context: any, callbacks: any) {
+          this.stats.loading.start = performance.now()
+
+          fetch(context.url)
+            .then(res => res.arrayBuffer())
+            .then((data) => {
+              this.stats.loaded = data.byteLength
+              this.stats.total = data.byteLength
+              this.stats.loading.first = performance.now()
+              this.stats.loading.end = performance.now()
+
+              callbacks.onSuccess(
+                { url: context.url, data },
+                this.stats,
+                context,
+                null
+              )
+            })
+            .catch((err) => {
+              callbacks.onError(
+                { code: 0, text: err?.message ?? 'Fetch failed' },
+                context,
+                null,
+                this.stats
+              )
+            })
+        }
+
+        abort() {
+          this.stats.aborted = true
+        }
+
+        destroy() {}
+      }
 
       return {
         info: result.info,
-        initSegmentUrl,
-        initSegmentData,
+        initSegment: initSegmentData,
+        playlist,
+        playlistUrl: playlistBlobUrl,
+        segments: segmentInfos,
         attachments: result.attachments,
         subtitles: result.subtitles,
         chapters: result.chapters,
-        indexes: result.indexes
+        fragLoader: FragLoader as any
       }
     },
 
-    readNextSegment: async () => {
-      if (finished) return null
-
-      try {
-        const result = await remuxer.read()
-        return createSegmentFromResult(result)
-      } catch (err: any) {
-        if (err?.message === 'Cancelled') return null
-        throw err
-      }
-    },
-
-    seekToSegment: async (timestamp: number) => {
-      try {
-        const result = await remuxer.seek(timestamp)
-        finished = false // Reset finished state after seek
-        return createSegmentFromResult(result)
-      } catch (err: any) {
-        if (err?.message === 'Cancelled') return null
-        throw err
-      }
-    },
-
-    getPlaylist: (opts?: { ended?: boolean }) => {
-      const ended = opts?.ended ?? finished
-
-      // Revoke previous playlist blob URL
-      if (playlistBlobUrl) {
-        URL.revokeObjectURL(playlistBlobUrl)
-      }
-
-      const content = buildPlaylist(ended)
-      const blob = new Blob([content], { type: 'application/x-mpegURL' })
-      playlistBlobUrl = URL.createObjectURL(blob)
-
-      return { content, url: playlistBlobUrl }
-    },
-
-    generateVodPlaylist: async () => {
-      while (!finished) {
-        const segment = await remuxer.read()
-        createSegmentFromResult(segment)
-      }
-
-      if (playlistBlobUrl) {
-        URL.revokeObjectURL(playlistBlobUrl)
-      }
-
-      const content = buildPlaylist(true)
-      const blob = new Blob([content], { type: 'application/x-mpegURL' })
-      playlistBlobUrl = URL.createObjectURL(blob)
-
-      return { content, url: playlistBlobUrl }
-    },
-
-    getSegments: () => [...segments],
+    fetchSegment,
 
     destroy: async () => {
-      // Revoke all blob URLs
-      for (const url of blobUrls) {
-        URL.revokeObjectURL(url)
-      }
-      if (playlistBlobUrl) {
-        URL.revokeObjectURL(playlistBlobUrl)
-      }
-      blobUrls.length = 0
-      segments.length = 0
+      if (playlistBlobUrl) URL.revokeObjectURL(playlistBlobUrl)
+      if (initSegmentBlobUrl) URL.revokeObjectURL(initSegmentBlobUrl)
       playlistBlobUrl = null
-      initSegmentUrl = null
+      initSegmentBlobUrl = null
       initSegmentData = null
-      finished = true
-
+      segmentInfos = []
+      segmentCache.clear()
       await remuxer.destroy()
     }
   }
