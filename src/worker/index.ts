@@ -1,14 +1,4 @@
 import { expose } from 'osra'
-import {
-  Output,
-  Mp4OutputFormat,
-  StreamTarget,
-  VideoSampleSource,
-  EncodedAudioPacketSource,
-  VideoSample,
-  EncodedPacket
-} from 'mediabunny'
-import type { StreamTargetChunk } from 'mediabunny'
 
 // @ts-ignore
 import WASMModule from 'libav'
@@ -193,6 +183,18 @@ export interface RemuxerInstance {
   readTranscode: (read: WASMReadFunction) => Promise<TranscodeUnit>;
   seekTranscode: (read: WASMReadFunction, timestamp: number) => Promise<TranscodeUnit>;
   readKeyframeTranscode: (read: WASMReadFunction, timestamp: number) => Promise<TranscodeUnit>;
+  initTranscodeMux: (
+    videoExtradata: Uint8Array,
+    width: number,
+    height: number,
+    hasAudio: boolean,
+    audioExtradata: Uint8Array,
+    sampleRate: number,
+    channels: number
+  ) => Uint8Array;
+  writeTranscodeVideo: (data: Uint8Array, pts: number, dts: number, duration: number, keyframe: boolean) => Uint8Array;
+  writeTranscodeAudio: (data: Uint8Array, pts: number, duration: number) => Uint8Array;
+  flushTranscodeMux: () => Uint8Array;
 }
 
 export type Remuxer = {
@@ -251,6 +253,19 @@ export type Remuxer = {
   readTranscode: (read: WASMReadFunction) => Promise<TranscodeUnit>
   seekTranscode: (read: WASMReadFunction, timestamp: number) => Promise<TranscodeUnit>
   readKeyframeTranscode: (read: WASMReadFunction, timestamp: number) => Promise<TranscodeUnit>
+  // Mux sink (synchronous; each returns the fMP4 bytes produced during the call, copied out of the heap)
+  initTranscodeMux: (
+    videoExtradata: Uint8Array,
+    width: number,
+    height: number,
+    hasAudio: boolean,
+    audioExtradata: Uint8Array,
+    sampleRate: number,
+    channels: number
+  ) => Uint8Array
+  writeTranscodeVideo: (data: Uint8Array, pts: number, dts: number, duration: number, keyframe: boolean) => Uint8Array
+  writeTranscodeAudio: (data: Uint8Array, pts: number, duration: number) => Uint8Array
+  flushTranscodeMux: () => Uint8Array
 }
 
 // JS-friendly init result for transcode mode (WASMVectors converted to arrays).
@@ -289,6 +304,13 @@ const vectorToArray = <T>(vector: WASMVector<T>) =>
   Array(vector.size())
     .fill(undefined)
     .map((_, index) => vector.get(index))
+
+// Copy bytes out of a view into the WASM heap (the heap may move/be overwritten on the next call).
+const copyBytes = (view: Uint8Array): Uint8Array => {
+  const out = new Uint8Array(view.byteLength)
+  out.set(view)
+  return out
+}
 
 // Copy a TranscodeUnit out of the WASM heap (its `data` is a view into HEAPU8).
 // `data` is undefined for eof/cancelled units.
@@ -486,7 +508,14 @@ const resolvers = {
       })) as Promise<TranscodeInit>,
       readTranscode: (read) => _remuxer.readTranscode(read).then(unitToJs),
       seekTranscode: (read, timestamp) => _remuxer.seekTranscode(read, timestamp * 1000).then(unitToJs),
-      readKeyframeTranscode: (read, timestamp) => _remuxer.readKeyframeTranscode(read, timestamp).then(unitToJs)
+      readKeyframeTranscode: (read, timestamp) => _remuxer.readKeyframeTranscode(read, timestamp).then(unitToJs),
+      initTranscodeMux: (videoExtradata, width, height, hasAudio, audioExtradata, sampleRate, channels) =>
+        copyBytes(_remuxer.initTranscodeMux(videoExtradata, width, height, hasAudio, audioExtradata, sampleRate, channels)),
+      writeTranscodeVideo: (data, pts, dts, duration, keyframe) =>
+        copyBytes(_remuxer.writeTranscodeVideo(data, pts, dts, duration, keyframe)),
+      writeTranscodeAudio: (data, pts, duration) =>
+        copyBytes(_remuxer.writeTranscodeAudio(data, pts, duration)),
+      flushTranscodeMux: () => copyBytes(_remuxer.flushTranscodeMux())
     } as Remuxer
 
     const readToWasmRead = (read: ReadFunction) => (offset: number, size: number) =>
@@ -515,129 +544,172 @@ const resolvers = {
     const estimateBitrate = (w: number, h: number): number =>
       Math.min(Math.max(Math.round(w * h * 4), 1_000_000), 20_000_000)
 
+    // A best-guess AVC codec string to configure the encoder with (High profile, level by
+    // resolution). The encoder reports the *actual* avc1.PPCCLL string in its first chunk's
+    // decoderConfig.codec, which is what we hand to the SourceBuffer.
+    const pickAvcCodec = (w: number, h: number): string => {
+      let level: number
+      if (w <= 1280 && h <= 720) level = 0x1f      // 3.1
+      else if (w <= 1920 && h <= 1088) level = 0x28 // 4.0
+      else if (w <= 2560 && h <= 1440) level = 0x32 // 5.0
+      else level = 0x33                              // 5.1
+      return `avc1.6400${level.toString(16).padStart(2, '0')}`
+    }
+
+    const toUint8 = (b: AllowSharedBufferSource): Uint8Array =>
+      b instanceof ArrayBuffer
+        ? new Uint8Array(b)
+        : new Uint8Array(b.buffer, b.byteOffset, b.byteLength)
+
     type TranscodeOutChunk = { data: ArrayBuffer; pts: number; duration: number; finished: boolean }
 
-    // Builds the JS-side encode+mux pipeline that turns WASM-decoded I420 frames + passthrough
-    // AAC into a fragmented MP4 stream consumable by MSE.
+    // Drives the fallback pipeline: WASM decodes HEVC -> I420 (read_transcode), the browser's
+    // WebCodecs VideoEncoder encodes I420 -> H264, and the encoded packets (+ passthrough AAC)
+    // are pushed back into the WASM mp4 muxer, which emits the same fragmented MP4 the passthrough
+    // path produces. No external dependency — only native WebCodecs + the existing ffmpeg muxer.
     const createTranscodePipeline = async (init: TranscodeInit, read: ReadFunction) => {
-      let pendingOutput: Uint8Array[] = []
-      let output!: Output
-      let videoSource!: VideoSampleSource
-      let audioSource: EncodedAudioPacketSource | undefined
-      let audioConfigSent = false
-      let finished = false
+      const width = init.videoWidth
+      const height = init.videoHeight
+      const framerate = init.videoFpsDen ? init.videoFpsNum / init.videoFpsDen : 30
 
-      const drainOutput = (): ArrayBuffer => {
-        const total = pendingOutput.reduce((n, c) => n + c.byteLength, 0)
+      const encoderConfig: VideoEncoderConfig = {
+        codec: pickAvcCodec(width, height),
+        width,
+        height,
+        framerate,
+        bitrate: estimateBitrate(width, height),
+        latencyMode: 'realtime', // disables B-frames, so pts == dts and the muxer never reorders
+        avc: { format: 'avc' }   // length-prefixed NAL units + avcC in decoderConfig.description
+      }
+
+      let muxInited = false
+      let finished = false
+      let videoMimeType = encoderConfig.codec
+      const audioMimeType = init.info.output.audioMimeType
+      const outputChunks: Uint8Array[] = []
+      const pendingAudio: TranscodeUnit[] = []           // audio seen before the muxer exists
+      const encoded: { chunk: EncodedVideoChunk; meta?: EncodedVideoChunkMetadata }[] = []
+      let encoderError: unknown
+
+      const videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => { encoded.push({ chunk, meta }) },
+        error: (e) => { encoderError = e }
+      })
+      videoEncoder.configure(encoderConfig)
+
+      const collect = (): ArrayBuffer => {
+        const total = outputChunks.reduce((n, c) => n + c.byteLength, 0)
         const out = new Uint8Array(total)
         let off = 0
-        for (const c of pendingOutput) { out.set(c, off); off += c.byteLength }
-        pendingOutput = []
+        for (const c of outputChunks) { out.set(c, off); off += c.byteLength }
+        outputChunks.length = 0
         return out.buffer
       }
 
-      const buildOutput = async () => {
-        pendingOutput = []
-        audioConfigSent = false
-        finished = false
-        const writable = new WritableStream<StreamTargetChunk>({
-          write: (chunk) => { pendingOutput.push(chunk.data) }
-        })
-        output = new Output({
-          format: new Mp4OutputFormat({ fastStart: 'fragmented' }),
-          target: new StreamTarget(writable)
-        })
-        videoSource = new VideoSampleSource({
-          codec: 'avc',
-          bitrate: estimateBitrate(init.videoWidth, init.videoHeight)
-        })
-        output.addVideoTrack(videoSource)
-        if (init.hasAudio) {
-          audioSource = new EncodedAudioPacketSource('aac')
-          output.addAudioTrack(audioSource)
+      // The muxer can only be created once the encoder reports the H264 avcC (first chunk).
+      const ensureMux = (meta?: EncodedVideoChunkMetadata) => {
+        if (muxInited) return
+        const cfg = meta?.decoderConfig
+        if (cfg?.codec) videoMimeType = cfg.codec
+        const avcC = cfg?.description ? toUint8(cfg.description) : new Uint8Array(0)
+        const initSeg = remuxer.initTranscodeMux(
+          avcC, width, height, init.hasAudio, init.audioExtradata, init.audioSampleRate, init.audioChannels
+        )
+        outputChunks.push(initSeg)
+        muxInited = true
+        for (const a of pendingAudio) {
+          const out = remuxer.writeTranscodeAudio(a.data, Math.round(a.pts * 1e6), Math.round(a.duration * 1e6))
+          if (out.byteLength) outputChunks.push(out)
         }
-        await output.start()
+        pendingAudio.length = 0
       }
 
-      const feedUnit = async (unit: TranscodeUnit) => {
-        if (unit.type === 'video') {
-          const sample = new VideoSample(unit.data, {
-            format: 'I420',
-            codedWidth: unit.width,
-            codedHeight: unit.height,
-            timestamp: unit.pts,
-            duration: unit.duration
-          })
-          await videoSource.add(sample, { keyFrame: unit.key })
-          sample.close()
-        } else if (unit.type === 'audio' && audioSource) {
-          const packet = new EncodedPacket(unit.data, 'key', unit.pts, unit.duration)
-          if (!audioConfigSent) {
-            await audioSource.add(packet, {
-              decoderConfig: {
-                codec: 'mp4a.40.2',
-                numberOfChannels: init.audioChannels,
-                sampleRate: init.audioSampleRate,
-                ...(init.audioExtradata.byteLength ? { description: init.audioExtradata } : {})
-              }
-            })
-            audioConfigSent = true
-          } else {
-            await audioSource.add(packet)
-          }
+      const drainEncoded = () => {
+        while (encoded.length) {
+          const { chunk, meta } = encoded.shift()!
+          ensureMux(meta)
+          const data = new Uint8Array(chunk.byteLength)
+          chunk.copyTo(data)
+          const out = remuxer.writeTranscodeVideo(
+            data, chunk.timestamp, chunk.timestamp, chunk.duration ?? 0, chunk.type === 'key'
+          )
+          if (out.byteLength) outputChunks.push(out)
         }
       }
 
-      // Pull WASM units and feed the muxer until at least one fragment is flushed, or EOF.
+      const encodeFrame = (unit: TranscodeUnit, forceKey: boolean) => {
+        const frame = new VideoFrame(unit.data, {
+          format: 'I420',
+          codedWidth: unit.width,
+          codedHeight: unit.height,
+          timestamp: Math.round(unit.pts * 1e6),
+          duration: Math.round(unit.duration * 1e6)
+        })
+        videoEncoder.encode(frame, { keyFrame: forceKey || unit.key })
+        frame.close()
+      }
+
+      // Pull/encode/mux until at least one fragment's worth of bytes is available (or EOF).
       const pump = async (read: ReadFunction): Promise<TranscodeOutChunk> => {
         if (finished) return { data: new Uint8Array(0).buffer, pts: 0, duration: 0, finished: true }
         let firstPts = 0
         let haveFirstPts = false
-        while (pendingOutput.length === 0) {
+        while (outputChunks.length === 0 || !muxInited) {
+          if (encoderError) throw encoderError
           const unit = await remuxer.readTranscode(readToWasmRead(read))
           if (unit.cancelled) throw new Error('Cancelled')
           if (unit.type === 'eof') {
-            await output.finalize()
+            await videoEncoder.flush()
+            drainEncoded()
+            if (muxInited) {
+              const tail = remuxer.flushTranscodeMux()
+              if (tail.byteLength) outputChunks.push(tail)
+            }
             finished = true
             break
           }
-          if (!haveFirstPts && unit.type === 'video') { firstPts = unit.pts; haveFirstPts = true }
-          await feedUnit(unit)
+          if (unit.type === 'video') {
+            if (!haveFirstPts) { firstPts = unit.pts; haveFirstPts = true }
+            encodeFrame(unit, false)
+            drainEncoded()
+          } else if (unit.type === 'audio') {
+            if (muxInited) {
+              const out = remuxer.writeTranscodeAudio(unit.data, Math.round(unit.pts * 1e6), Math.round(unit.duration * 1e6))
+              if (out.byteLength) outputChunks.push(out)
+            } else {
+              pendingAudio.push(unit)
+            }
+          }
         }
-        return { data: drainOutput(), pts: firstPts, duration: 0, finished }
+        return { data: collect(), pts: firstPts, duration: 0, finished }
       }
 
-      // In fragmented mode the moov is only emitted once the first frame has been encoded (so the
-      // exact avc profile/level is known), so pump the first bytes here: they contain ftyp+moov
-      // plus the first fragment and serve as the MSE init segment.
-      await buildOutput()
+      // First pump produces the init segment (ftyp+moov) plus the first fragment.
       const initChunk = await pump(read)
 
-      // Resolve the precise codec string mediabunny actually produced (avc1.PPCCLL + mp4a.*),
-      // which is what the SourceBuffer must be created with.
-      let videoMimeType = `avc1.640028`
-      let audioMimeType = init.info.output.audioMimeType
-      try {
-        const fullMime = await output.getMimeType()
-        const codecs = /codecs="([^"]+)"/.exec(fullMime)?.[1]?.split(',').map(s => s.trim()) ?? []
-        const v = codecs.find(c => /^(avc1|avc3|hev1|hvc1)\./.test(c))
-        const a = codecs.find(c => /^mp4a\./.test(c))
-        if (v) videoMimeType = v
-        if (a) audioMimeType = a
-      } catch {}
-
       return {
-        videoMimeType,
+        get videoMimeType() { return videoMimeType },
         audioMimeType,
         initSegment: initChunk.data,
         read: (read: ReadFunction) => pump(read),
         seek: async (read: ReadFunction, timestamp: number): Promise<TranscodeOutChunk> => {
           const seekUnit = await remuxer.seekTranscode(readToWasmRead(read), timestamp)
           if (seekUnit.cancelled) throw new Error('Cancelled')
-          // Timestamps jump on seek, so start a fresh fragmented stream. pump() then yields a new
-          // ftyp+moov (re-initialization segment) followed by the first fragment.
-          await buildOutput()
-          if (seekUnit.type !== 'eof') await feedUnit(seekUnit)
+          // Restart the encoder and muxer so the seek produces a fresh IDR + re-init segment.
+          try { await videoEncoder.flush() } catch {}
+          encoded.length = 0
+          pendingAudio.length = 0
+          outputChunks.length = 0
+          muxInited = false
+          finished = false
+          videoEncoder.reset()
+          videoEncoder.configure(encoderConfig)
+          if (seekUnit.type === 'video') {
+            encodeFrame(seekUnit, true)
+            drainEncoded()
+          } else if (seekUnit.type === 'audio') {
+            pendingAudio.push(seekUnit)
+          }
           const frag = await pump(read)
           return { data: frag.data, pts: seekUnit.pts, duration: 0, finished: frag.finished }
         },
@@ -654,7 +726,9 @@ const resolvers = {
           frame.close()
           return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
         },
-        destroy: async () => { try { await output?.finalize() } catch {} }
+        destroy: async () => {
+          try { videoEncoder.close() } catch {}
+        }
       }
     }
 
@@ -698,8 +772,8 @@ const resolvers = {
         }
 
         // Unsupported (e.g. HEVC on Chrome/Firefox): re-init in transcode mode and build the
-        // WASM-decode -> WebCodecs-encode -> mediabunny-mux pipeline. The returned shape matches
-        // the passthrough init so the public API and consumers are unchanged.
+        // WASM-decode -> WebCodecs-encode -> WASM-mux pipeline. The returned shape matches the
+        // passthrough init so the public API and consumers are unchanged.
         const trInit = await remuxer.initTranscode(readToWasmRead(read))
         transcode = await createTranscodePipeline(trInit, read)
         return {
