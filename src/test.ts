@@ -5,7 +5,7 @@ import { makeRemuxer } from '.'
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
 const VIDEO_URL = '../video2.mkv'
-// const VIDEO_URL = '../spidey.mkv'
+// const VIDEO_URL = '../hevc.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
   return new Promise((resolve, reject) => {
@@ -62,17 +62,17 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         ? Number(contentRangeContentLength)
         : Number(headers.get('Content-Length'))
 
-    const _workerUrl = new URL('../build/worker.js', import.meta.url).toString()
-    const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
-    const workerUrl = URL.createObjectURL(blob)
+    const workerUrl = new URL('../build/worker.js', import.meta.url).toString()
 
     const origin = new URL(import.meta.url).origin
     const remuxer = await makeRemuxer({
       workerUrl,
+      workerOptions: { type: 'module' },
       moduleUrl: new URL('/dist/libav.js', origin).toString(),
       wasmUrl: new URL('/dist/libav.wasm', origin).toString(),
       threadedModuleUrl: new URL('/dist/libav-mt.js', origin).toString(),
       threadedWasmUrl: new URL('/dist/libav-mt.wasm', origin).toString(),
+      threadCount: 0,
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       read: (offset, size) => {
@@ -260,17 +260,17 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
             ? Number(contentRangeContentLength)
             : Number(headers.get('Content-Length'))
 
-        const _workerUrl = new URL('../build/worker.js', import.meta.url).toString()
-        const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
-        const workerUrl = URL.createObjectURL(blob)
+        const workerUrl = new URL('../build/worker.js', import.meta.url).toString()
 
         const origin = new URL(import.meta.url).origin
         const remuxer = await makeRemuxer({
           workerUrl,
+          workerOptions: { type: 'module' },
           moduleUrl: new URL('/dist/libav.js', origin).toString(),
           wasmUrl: new URL('/dist/libav.wasm', origin).toString(),
           threadedModuleUrl: new URL('/dist/libav-mt.js', origin).toString(),
           threadedWasmUrl: new URL('/dist/libav-mt.wasm', origin).toString(),
+          threadCount: 0,
           bufferSize: BUFFER_SIZE,
           length: contentLength,
           read: (offset, size) => {

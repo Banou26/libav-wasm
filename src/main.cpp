@@ -236,6 +236,9 @@ public:
 
   bool initializing = false;
   bool first_initialization_done = false;
+  // Set after av_write_trailer() so subsequent read() calls return empty/finished without
+  // re-flushing the muxer (which would write garbage bytes and break MSE).
+  bool finalized = false;
   int init_buffer_count = 0;
   std::vector<std::string> init_vector;
   std::vector<uint8_t> write_vector;
@@ -807,6 +810,12 @@ public:
     clear_transcode_buffers();
     video_mime_type.clear();
     audio_mime_type.clear();
+    // Bypass the cached-bytes path in avio_read: this re-init reads fresh from JS, which also
+    // ensures the call suspends (ASYNCIFY) so the JS wrapper sees a real Promise to .then on.
+    first_initialization_done = false;
+    init_vector.clear();
+    init_buffer_count = 0;
+    finalized = false;
 
     video_transcode = true;
     needs_audio_transcoding = false;
@@ -1600,6 +1609,7 @@ public:
 
   InitResult init(emscripten::val read_function) {
     read_data_function = read_function;
+    finalized = false;
 
     reset_fragment();
     write_vector.clear();
@@ -1702,27 +1712,34 @@ public:
     write_vector.clear();
     subtitles.clear();
 
+    // Already wrote the trailer; further reads must NOT call av_write_trailer again (would
+    // emit garbage moov/mfra that MSE rejects with "timescale must not be 0").
+    if (finalized) {
+      ReadResult done;
+      done.finished = true;
+      done.data = emscripten::val(emscripten::typed_memory_view(write_vector.size(), write_vector.data()));
+      read_data_function = val::undefined();
+      return done;
+    }
+
     bool finished = false;
 
     while (true) {
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
-      // printf("READ FRAME read error | %s \n", av_err2str(ret));
       if (ret < 0) {
-        // read_data_function = val::undefined();
         if (ret == AVERROR_EXIT) {
           ReadResult cancelled_result;
           cancelled_result.cancelled = true;
           read_data_function = val::undefined();
           return cancelled_result;
         }
-        // if ret == AVERROR_EOF, we finalize
         if (ret == AVERROR_EOF) {
-          // flush + trailer
           avio_flush(output_format_context->pb);
           av_write_trailer(output_format_context);
           av_packet_free(&packet);
           finished = true;
+          finalized = true;
           break;
         }
         av_packet_free(&packet);
@@ -1906,6 +1923,7 @@ public:
     write_vector.clear();
     subtitles.clear();
     wrote = false;
+    finalized = false;
 
     // Reset audio transcoding buffer
     if (needs_audio_transcoding) {

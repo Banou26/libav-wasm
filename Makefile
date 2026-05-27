@@ -16,6 +16,7 @@ COMMON := --bind \
 	-gsource-map \
 	--source-map-base http://localhost:1234/dist/ \
 	-s ASSERTIONS=2 \
+	-fexceptions \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-7.1/ \
