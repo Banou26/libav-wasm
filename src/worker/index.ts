@@ -378,8 +378,18 @@ const resolvers = {
         : 'threadedModuleUrl/threadedWasmUrl were not provided'
       log(true, `libav-wasm: multi-threaded decode requested but ${reason}; using the single-threaded build.`)
     }
-    const effectiveThreadCount = useThreads ? (threadCount ?? 1) : 1
-    log(false, `libav-wasm: loaded ${useThreads ? 'multi-threaded' : 'single-threaded'} build (thread_count=${effectiveThreadCount}, hardwareConcurrency=${(globalThis as any).navigator?.hardwareConcurrency ?? '?'})`)
+    // Cap thread auto-detect (threadCount=0) at 8. Past ~8 threads, HEVC frame threading
+    // on high-resolution content (1440p+) regresses badly — per-thread frame buffers blow
+    // out caches and the synchronization overhead exceeds the parallelism win. Measured
+    // on a 16-core box: 8 threads gave 0.68× realtime at 4K, 16 threads collapsed to
+    // 0.00× (couldn't even produce a second fragment in 127s). Users can still pass an
+    // explicit threadCount > 8 if they really want it.
+    const hwConcurrency = (globalThis as any).navigator?.hardwareConcurrency ?? 4
+    const requested = threadCount ?? 1
+    const effectiveThreadCount = useThreads
+      ? (requested === 0 ? Math.min(hwConcurrency, 8) : requested)
+      : 1
+    log(false, `libav-wasm: loaded ${useThreads ? 'multi-threaded' : 'single-threaded'} build (thread_count=${effectiveThreadCount}, hardwareConcurrency=${hwConcurrency})`)
 
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
     const module = await makeModule({ moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl }, useThreads, log)
