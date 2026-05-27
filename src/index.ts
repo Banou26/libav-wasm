@@ -6,19 +6,26 @@ import { expose } from 'osra'
 export * from './utils'
 
 export type MakeTransmuxerOptions = {
-  /** Path that will be used to locate the .wasm file imported from the worker */
-  publicPath: string
-  /** Path that will be used to locate the javascript worker file */
+  /** URL of the javascript worker file */
   workerUrl: string
   workerOptions?: WorkerOptions
+  /** URL of the single-threaded wasm binary (libav.wasm) */
+  wasmUrl: string | URL
+  /**
+   * URLs of the multi-threaded build: the ES module glue (libav-mt.js) and its wasm binary
+   * (libav-mt.wasm). Provide both to allow `threadCount` > 1. Multi-threading additionally
+   * requires the page to be cross-origin isolated (COOP/COEP) so SharedArrayBuffer is available;
+   * when either condition is missing, the single-threaded build is used instead.
+   */
+  threadedModuleUrl?: string | URL
+  threadedWasmUrl?: string | URL
   read: (offset: number, size: number) => Promise<ArrayBuffer>
   length: number
   bufferSize: number
   /**
    * Decoder threads for the HEVC transcode fallback: 1 = single-threaded (default),
-   * 0 = auto (use all cores), N = explicit count. Multi-threading only takes effect when the
-   * wasm is built with pthreads, which also requires the page to be cross-origin isolated
-   * (COOP/COEP) so SharedArrayBuffer is available.
+   * 0 = auto (use all cores), N = explicit count. Requires the multi-threaded build URLs above
+   * and a cross-origin-isolated page; otherwise it falls back to single-threaded.
    */
   threadCount?: number
 }
@@ -34,9 +41,11 @@ const abortSignalToPromise = (abortSignal: AbortSignal) =>
   })
 
 export const makeRemuxer = async ({
-  publicPath,
   workerUrl,
   workerOptions,
+  wasmUrl,
+  threadedModuleUrl,
+  threadedWasmUrl,
   read,
   length,
   bufferSize = 2_500_000,
@@ -50,7 +59,9 @@ export const makeRemuxer = async ({
   let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
 
   const remuxer = await makeRemuxer({
-    publicPath,
+    wasmUrl: String(wasmUrl),
+    threadedModuleUrl: threadedModuleUrl != null ? String(threadedModuleUrl) : undefined,
+    threadedWasmUrl: threadedWasmUrl != null ? String(threadedWasmUrl) : undefined,
     length,
     bufferSize,
     threadCount,

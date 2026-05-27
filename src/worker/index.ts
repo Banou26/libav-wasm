@@ -294,22 +294,27 @@ const canUseThreads = (): boolean =>
   typeof SharedArrayBuffer !== 'undefined' && (globalThis as any).crossOriginIsolated === true
 
 const makeModule = async (
-  publicPath: string,
+  urls: { wasmUrl: string; threadedModuleUrl?: string; threadedWasmUrl?: string },
   useThreads: boolean,
   log: (isError: boolean, text: string) => void
 ) => {
-  const options = {
-    locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
-    print: (text: string) => console.log(text),
-    printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
-  }
+  const print = (text: string) => console.log(text)
+  const printErr = (text: string) => text.includes('Read error at pos') ? undefined : console.error(text)
   if (useThreads) {
     // The multi-threaded build is loaded as a real module file (not bundled) so emscripten can
     // spawn its pthread workers from the module's own URL. It is an ES module (EXPORT_ES6).
-    const mt = await import(/* @vite-ignore */ `${publicPath}libav-mt.js`)
-    return (mt.default ?? mt)(options) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
+    const mt = await import(/* @vite-ignore */ urls.threadedModuleUrl!)
+    return (mt.default ?? mt)({
+      locateFile: (path: string) => path.endsWith('.wasm') ? urls.threadedWasmUrl! : path,
+      print,
+      printErr,
+    }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
   }
-  return WASMModule(options) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
+  return WASMModule({
+    locateFile: (path: string) => path.endsWith('.wasm') ? urls.wasmUrl : path,
+    print,
+    printErr,
+  }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
 }
 
 type WASMVector<T> = {
@@ -353,26 +358,33 @@ const unitToJs = (result: TranscodeUnit): TranscodeUnit => {
 
 const resolvers = {
   makeRemuxer: async (
-    { publicPath, length, bufferSize, threadCount, log }:
+    { wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, log }:
     {
-      publicPath: string
+      wasmUrl: string
+      threadedModuleUrl?: string
+      threadedWasmUrl?: string
       length: number
       bufferSize: number
       threadCount?: number
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
-    // Pick the build: multi-threaded only when threads are requested AND the page is cross-origin
-    // isolated (otherwise the pthreads build can't even instantiate, so fall back to single-threaded).
+    // Pick the build: multi-threaded only when threads are requested, the mt build URLs were
+    // provided, AND the page is cross-origin isolated (otherwise the pthreads build can't even
+    // instantiate). Fall back to single-threaded in every other case.
     const wantThreads = (threadCount ?? 1) !== 1
-    const useThreads = wantThreads && canUseThreads()
+    const haveThreadUrls = !!threadedModuleUrl && !!threadedWasmUrl
+    const useThreads = wantThreads && haveThreadUrls && canUseThreads()
     if (wantThreads && !useThreads) {
-      log(true, 'libav-wasm: multi-threaded decode requested but the page is not cross-origin isolated (no SharedArrayBuffer); using the single-threaded build.')
+      const reason = !canUseThreads()
+        ? 'the page is not cross-origin isolated (no SharedArrayBuffer)'
+        : 'threadedModuleUrl/threadedWasmUrl were not provided'
+      log(true, `libav-wasm: multi-threaded decode requested but ${reason}; using the single-threaded build.`)
     }
     const effectiveThreadCount = useThreads ? (threadCount ?? 1) : 1
 
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
-    const module = await makeModule(publicPath, useThreads, log)
+    const module = await makeModule({ wasmUrl, threadedModuleUrl, threadedWasmUrl }, useThreads, log)
     const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, threadCount: effectiveThreadCount })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {

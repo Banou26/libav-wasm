@@ -66,9 +66,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
     const workerUrl = URL.createObjectURL(blob)
 
+    const origin = new URL(import.meta.url).origin
     const remuxer = await makeRemuxer({
-      publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
       workerUrl,
+      wasmUrl: new URL('/dist/libav.wasm', origin).toString(),
+      threadedModuleUrl: new URL('/dist/libav-mt.js', origin).toString(),
+      threadedWasmUrl: new URL('/dist/libav-mt.wasm', origin).toString(),
       bufferSize: BUFFER_SIZE,
       length: contentLength,
       read: (offset, size) => {
@@ -260,9 +263,12 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         const blob = new Blob([`importScripts(${JSON.stringify(_workerUrl)})`], { type: 'application/javascript' })
         const workerUrl = URL.createObjectURL(blob)
 
+        const origin = new URL(import.meta.url).origin
         const remuxer = await makeRemuxer({
-          publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
           workerUrl,
+          wasmUrl: new URL('/dist/libav.wasm', origin).toString(),
+          threadedModuleUrl: new URL('/dist/libav-mt.js', origin).toString(),
+          threadedWasmUrl: new URL('/dist/libav-mt.wasm', origin).toString(),
           bufferSize: BUFFER_SIZE,
           length: contentLength,
           read: (offset, size) => {

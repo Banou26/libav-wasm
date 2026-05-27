@@ -8,10 +8,16 @@ Contains a full example of a MKV video player
 Basic usage
 ```ts
 const remuxer = await makeRemuxer({
-  // the path at which the wasm file is getting served
-  publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
   // url of the worker file of libavWASM
   workerUrl: new URL('../build/worker.js', import.meta.url).toString(),
+  // url of the single-threaded wasm binary
+  wasmUrl: new URL('/dist/libav.wasm', new URL(import.meta.url).origin).toString(),
+  // OPTIONAL: urls of the multi-threaded build, to enable threadCount > 1.
+  // Also requires a cross-origin-isolated page (COOP/COEP) for SharedArrayBuffer.
+  threadedModuleUrl: new URL('/dist/libav-mt.js', new URL(import.meta.url).origin).toString(),
+  threadedWasmUrl: new URL('/dist/libav-mt.wasm', new URL(import.meta.url).origin).toString(),
+  // OPTIONAL: HEVC-fallback decoder threads. 1 = single (default), 0 = auto (all cores), N = explicit
+  threadCount: 1,
   // reads will be done in 2.5mb chunks
   bufferSize: 2_500_000,
   // byte length of the video file
