@@ -7,7 +7,10 @@ ARG FFMPEG_VERSION=7.1
 ARG PREFIX=/opt/ffmpeg
 ARG MAKEFLAGS="-j4"
 
-RUN apt-get update && apt-get install -y autoconf libtool build-essential
+RUN apt-get update && apt-get install -y autoconf libtool build-essential pkg-config
+
+ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig \
+    EM_PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig
 
 # Make sure Emscripten's tools are used instead of 'llvm-*'.
 ENV CC=emcc \
@@ -47,6 +50,7 @@ ARG CACHE_BUST
 # Note: We need to be careful with --disable-all flag
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   emconfigure ./configure \
+  --pkg-config-flags=--static \
   --prefix=${PREFIX} \
   --target-os=none \
   --arch=x86_32 \
@@ -60,6 +64,8 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --disable-autodetect \
   --disable-network \
   --enable-small \
+  --enable-gpl \
+  --enable-libx264 \
   --enable-avcodec \
   --enable-avformat \
   --enable-avfilter \
@@ -71,7 +77,7 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-demuxer=matroska,mov \
   --enable-muxer=mp4,mov \
   --enable-decoder=h264,hevc,aac,mp3,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,eac3,ac3 \
-  --enable-encoder=aac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le \
+  --enable-encoder=aac,libx264,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le \
   --enable-parser=aac,h264,hevc,ac3 \
   --enable-filter=aresample,aformat,anull,atempo,volume \
   --enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb \
