@@ -1738,6 +1738,13 @@ public:
           avio_flush(output_format_context->pb);
           av_write_trailer(output_format_context);
           av_packet_free(&packet);
+          // The trailer flushes the in-progress fragment, so it becomes the returned chunk.
+          // prev_* tracks "what to return"; without this, a seek that lands in the last
+          // fragment returns the previous fragment's pts (often 0 after a seek reset) and
+          // the consumer offsets the buffer by 0 instead of the real start time.
+          prev_pts = pts;
+          prev_pos = pos;
+          prev_duration = duration;
           finished = true;
           finalized = true;
           break;
