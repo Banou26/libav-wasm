@@ -23,7 +23,8 @@
     "copy-wasm": "copyfiles -u 1 dist/*.wasm dist/libav.js dist/libav-mt.js build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
     "preview": "vite preview",
     "test": "./scripts/with-browser-env.sh npx vitest run",
-    "test:watch": "./scripts/with-browser-env.sh npx vitest"
+    "test:watch": "./scripts/with-browser-env.sh npx vitest",
+    "test:perf": "./scripts/with-browser-env.sh npx vitest run --config vitest.perf.config.ts"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^24.0.1",
