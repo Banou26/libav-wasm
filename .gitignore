@@ -20,5 +20,6 @@ video12.mkv
 hevc.mkv
 sample-h264.mkv
 sample-hevc.mkv
+test-files/
 tests/__screenshots__/
 .vitest-attachments/
