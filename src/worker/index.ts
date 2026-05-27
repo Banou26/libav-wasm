@@ -557,8 +557,17 @@ const resolvers = {
         )
 
     // Whether this browser can play the given video codec via MSE. MediaSource is the
-    // authoritative gate; fall back to WebCodecs decode support when MSE isn't exposed in
-    // the worker (e.g. Firefox), which is fine because those browsers lack HEVC anyway.
+    // authoritative gate when exposed; fall back to WebCodecs decode support when it isn't.
+    //
+    // The two-tier check matters: MediaSource.isTypeSupported is honest in worker scope
+    // (e.g. Chromium worker returns false for HEVC), but it's a false-positive prone
+    // capability claim in *window* scope (Firefox 150 on Linux returns true for hev1 but
+    // then errors when its SourceBuffer is fed real bytes). Firefox in particular doesn't
+    // expose MediaSource in workers at all, so we land on the VideoDecoder fallback there,
+    // which honestly reports HEVC as unsupported. Don't collapse these two arms — without
+    // the fallback, Firefox would silently break, and replacing MSE with VideoDecoder on
+    // browsers where MSE works fine would lose codecs WebCodecs can't decode (e.g. AV1 on
+    // some platforms) even though they'd play via MSE.
     const isVideoCodecSupported = async (videoMimeType: string): Promise<boolean> => {
       const type = `video/mp4; codecs="${videoMimeType}"`
       if (typeof MediaSource !== 'undefined' && typeof MediaSource.isTypeSupported === 'function') {
