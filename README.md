@@ -10,7 +10,8 @@ Basic usage
 const remuxer = await makeRemuxer({
   // url of the worker file of libavWASM
   workerUrl: new URL('../build/worker.js', import.meta.url).toString(),
-  // url of the single-threaded wasm binary
+  // url of the single-threaded ES module glue + its wasm binary
+  moduleUrl: new URL('/dist/libav.js', new URL(import.meta.url).origin).toString(),
   wasmUrl: new URL('/dist/libav.wasm', new URL(import.meta.url).origin).toString(),
   // OPTIONAL: urls of the multi-threaded build, to enable threadCount > 1.
   // Also requires a cross-origin-isolated page (COOP/COEP) for SharedArrayBuffer.

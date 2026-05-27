@@ -69,6 +69,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
     const origin = new URL(import.meta.url).origin
     const remuxer = await makeRemuxer({
       workerUrl,
+      moduleUrl: new URL('/dist/libav.js', origin).toString(),
       wasmUrl: new URL('/dist/libav.wasm', origin).toString(),
       threadedModuleUrl: new URL('/dist/libav-mt.js', origin).toString(),
       threadedWasmUrl: new URL('/dist/libav-mt.wasm', origin).toString(),
@@ -266,6 +267,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
         const origin = new URL(import.meta.url).origin
         const remuxer = await makeRemuxer({
           workerUrl,
+          moduleUrl: new URL('/dist/libav.js', origin).toString(),
           wasmUrl: new URL('/dist/libav.wasm', origin).toString(),
           threadedModuleUrl: new URL('/dist/libav-mt.js', origin).toString(),
           threadedWasmUrl: new URL('/dist/libav-mt.wasm', origin).toString(),

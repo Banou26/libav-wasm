@@ -9,6 +9,8 @@ export type MakeTransmuxerOptions = {
   /** URL of the javascript worker file */
   workerUrl: string
   workerOptions?: WorkerOptions
+  /** URL of the single-threaded ES module glue (libav.js) */
+  moduleUrl: string | URL
   /** URL of the single-threaded wasm binary (libav.wasm) */
   wasmUrl: string | URL
   /**
@@ -43,6 +45,7 @@ const abortSignalToPromise = (abortSignal: AbortSignal) =>
 export const makeRemuxer = async ({
   workerUrl,
   workerOptions,
+  moduleUrl,
   wasmUrl,
   threadedModuleUrl,
   threadedWasmUrl,
@@ -59,6 +62,7 @@ export const makeRemuxer = async ({
   let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
 
   const remuxer = await makeRemuxer({
+    moduleUrl: String(moduleUrl),
     wasmUrl: String(wasmUrl),
     threadedModuleUrl: threadedModuleUrl != null ? String(threadedModuleUrl) : undefined,
     threadedWasmUrl: threadedWasmUrl != null ? String(threadedWasmUrl) : undefined,

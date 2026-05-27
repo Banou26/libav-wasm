@@ -1,8 +1,5 @@
 import { expose } from 'osra'
 
-// @ts-ignore
-import WASMModule from 'libav'
-
 export type RemuxerInstanceSubtitleFragment =
   | {
     isHeader: true
@@ -293,27 +290,21 @@ export type TranscodeInit = {
 const canUseThreads = (): boolean =>
   typeof SharedArrayBuffer !== 'undefined' && (globalThis as any).crossOriginIsolated === true
 
+// Both builds are ES modules (EXPORT_ES6) loaded by URL at runtime — nothing is bundled into the
+// worker. The multi-threaded build in particular must be a real file so emscripten can spawn its
+// pthread workers from the module's own URL.
 const makeModule = async (
-  urls: { wasmUrl: string; threadedModuleUrl?: string; threadedWasmUrl?: string },
+  urls: { moduleUrl: string; wasmUrl: string; threadedModuleUrl?: string; threadedWasmUrl?: string },
   useThreads: boolean,
   log: (isError: boolean, text: string) => void
 ) => {
-  const print = (text: string) => console.log(text)
-  const printErr = (text: string) => text.includes('Read error at pos') ? undefined : console.error(text)
-  if (useThreads) {
-    // The multi-threaded build is loaded as a real module file (not bundled) so emscripten can
-    // spawn its pthread workers from the module's own URL. It is an ES module (EXPORT_ES6).
-    const mt = await import(/* @vite-ignore */ urls.threadedModuleUrl!)
-    return (mt.default ?? mt)({
-      locateFile: (path: string) => path.endsWith('.wasm') ? urls.threadedWasmUrl! : path,
-      print,
-      printErr,
-    }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
-  }
-  return WASMModule({
-    locateFile: (path: string) => path.endsWith('.wasm') ? urls.wasmUrl : path,
-    print,
-    printErr,
+  const moduleUrl = useThreads ? urls.threadedModuleUrl! : urls.moduleUrl
+  const wasmUrl = useThreads ? urls.threadedWasmUrl! : urls.wasmUrl
+  const mod = await import(/* @vite-ignore */ moduleUrl)
+  return (mod.default ?? mod)({
+    locateFile: (path: string) => path.endsWith('.wasm') ? wasmUrl : path,
+    print: (text: string) => console.log(text),
+    printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
   }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
 }
 
@@ -358,8 +349,9 @@ const unitToJs = (result: TranscodeUnit): TranscodeUnit => {
 
 const resolvers = {
   makeRemuxer: async (
-    { wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, log }:
+    { moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, log }:
     {
+      moduleUrl: string
       wasmUrl: string
       threadedModuleUrl?: string
       threadedWasmUrl?: string
@@ -384,7 +376,7 @@ const resolvers = {
     const effectiveThreadCount = useThreads ? (threadCount ?? 1) : 1
 
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
-    const module = await makeModule({ wasmUrl, threadedModuleUrl, threadedWasmUrl }, useThreads, log)
+    const module = await makeModule({ moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl }, useThreads, log)
     const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, threadCount: effectiveThreadCount })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {

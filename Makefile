@@ -31,7 +31,8 @@ all: dist/libav.js dist/libav-mt.js
 dist/libav.js:
 	mkdir -p dist && \
 	$(EMCC) $(COMMON) \
-	-s ENVIRONMENT=web \
+	-s EXPORT_ES6=1 \
+	-s ENVIRONMENT=web,worker \
 	-s INITIAL_MEMORY=150mb \
 	-s TOTAL_MEMORY=125mb \
 	-s STACK_SIZE=50mb \
