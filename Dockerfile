@@ -38,7 +38,7 @@ RUN cd /tmp/ && \
   wget http://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz && \
   tar zxf ffmpeg-${FFMPEG_VERSION}.tar.gz && rm ffmpeg-${FFMPEG_VERSION}.tar.gz
 
-ARG CFLAGS="-s USE_PTHREADS=1 -O3 -I${PREFIX}/include"
+ARG CFLAGS="-s USE_PTHREADS=1 -O3 -msimd128 -I${PREFIX}/include"
 ARG LDFLAGS="$CFLAGS -L${PREFIX}/lib -s INITIAL_MEMORY=1GB"
 
 ARG CACHE_BUST

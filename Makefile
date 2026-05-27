@@ -17,7 +17,8 @@
 dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
-	-Oz \
+	-O3 \
+	-msimd128 \
 	-g \
 	-gsource-map \
 	--source-map-base http://localhost:1234/dist/ \
