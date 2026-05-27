@@ -121,6 +121,9 @@ export type RemuxerInstanceOptions = {
   resolvedPromise: Promise<void>
   length: number
   bufferSize: number
+  // Decoder threads for the HEVC transcode fallback: 1 = single (default), 0 = auto (all cores),
+  // N = explicit. Only effective when the wasm is built with pthreads.
+  threadCount?: number
 }
 
 type ReadFunction = (offset: number, size: number) => Promise<{
@@ -336,17 +339,18 @@ const unitToJs = (result: TranscodeUnit): TranscodeUnit => {
 
 const resolvers = {
   makeRemuxer: async (
-    { publicPath, length, bufferSize, log }:
+    { publicPath, length, bufferSize, threadCount, log }:
     {
       publicPath: string
       length: number
       bufferSize: number
+      threadCount?: number
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
     const module = await makeModule(publicPath, log)
-    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
+    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, threadCount })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)

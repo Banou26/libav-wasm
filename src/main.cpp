@@ -186,6 +186,10 @@ public:
   const AVCodec *video_decoder_avc = nullptr;
   AVCodecContext *video_decoder_avcc = nullptr;
   AVFrame *video_decode_frame = nullptr;
+  // Decoder thread count: 1 = single-threaded (default), 0 = auto (uses all cores), N = explicit.
+  // Only has an effect when the module is built with pthreads (-pthread); otherwise libavcodec
+  // stays single-threaded regardless of this value.
+  int video_thread_count = 1;
   SwsContext *sws_ctx = nullptr;
   int sws_src_w = 0;
   int sws_src_h = 0;
@@ -248,6 +252,9 @@ public:
     resolved_promise = options["resolvedPromise"];
     input_length = options["length"].as<float>();
     buffer_size = options["bufferSize"].as<int>();
+    if (!options["threadCount"].isUndefined()) {
+      video_thread_count = options["threadCount"].as<int>();
+    }
     needs_audio_transcoding = false;
     next_audio_pts = 0;
     audio_pts_initialized = false;
@@ -649,6 +656,11 @@ public:
     if (!video_decoder_avcc) { printf("failed to alloc video decoder ctx\n"); return -1; }
     if (avcodec_parameters_to_context(video_decoder_avcc, vs->codecpar) < 0) {
       printf("failed to fill video decoder ctx\n"); return -1;
+    }
+    // Multi-threaded decode (no-op unless built with pthreads). thread_count 0 = auto-detect.
+    if (video_thread_count != 1) {
+      video_decoder_avcc->thread_count = video_thread_count;
+      video_decoder_avcc->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
     }
     if (avcodec_open2(video_decoder_avcc, video_decoder_avc, NULL) < 0) {
       printf("failed to open video decoder\n"); return -1;

@@ -14,6 +14,13 @@ export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<ArrayBuffer>
   length: number
   bufferSize: number
+  /**
+   * Decoder threads for the HEVC transcode fallback: 1 = single-threaded (default),
+   * 0 = auto (use all cores), N = explicit count. Multi-threading only takes effect when the
+   * wasm is built with pthreads, which also requires the page to be cross-origin isolated
+   * (COOP/COEP) so SharedArrayBuffer is available.
+   */
+  threadCount?: number
 }
 
 const abortSignalToPromise = (abortSignal: AbortSignal) =>
@@ -32,7 +39,8 @@ export const makeRemuxer = async ({
   workerOptions,
   read,
   length,
-  bufferSize = 2_500_000
+  bufferSize = 2_500_000,
+  threadCount = 1
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
 
@@ -45,6 +53,7 @@ export const makeRemuxer = async ({
     publicPath,
     length,
     bufferSize,
+    threadCount,
     log: async (isError, text) => {
       if (isError) console.error(text)
       else console.log(text)
