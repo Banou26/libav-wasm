@@ -664,11 +664,23 @@ const resolvers = {
         pendingAudio.length = 0
       }
 
-      // WebCodecs emits chunks in *decode* order; chunk.timestamp is the *presentation*
-      // timestamp. Firefox produces B-frames even with latencyMode 'realtime', so pts is not
-      // monotonic across consecutive chunks. The mp4 muxer requires monotonically-increasing
-      // dts. Track our own monotonic dts.
-      let lastDts = -Infinity
+      // Firefox produces B-frames even with `latencyMode: 'realtime'`, so chunk.timestamp
+      // (presentation time) is not monotonic across the encoder's output callbacks (which
+      // arrive in decode/coding order). The fragmented MP4 muxer needs DTS to be strictly
+      // monotonic AND ≤ PTS for every frame, which our previous `dts = max(pts, lastDts+1)`
+      // hack broke for B-frames — the muxer rejected them and the dropped frames showed up
+      // as stutters on playback.
+      //
+      // Strategy: assign DTS in coding order with a fixed back-offset so DTS lands before
+      // the corresponding PTS by enough to absorb the encoder's max reorder distance. The
+      // first chunk's DTS is set to `pts - REORDER_OFFSET_US`; each subsequent chunk's DTS
+      // is `firstDts + codingIndex * frameDurationUs`. As long as REORDER_OFFSET_US is at
+      // least max(pts_seen_so_far - current_pts) across the stream, every frame satisfies
+      // dts ≤ pts.
+      const frameDurationUs = Math.max(1, Math.round(1_000_000 / framerate))
+      const REORDER_OFFSET_US = frameDurationUs * 8  // tolerate up to 8 frames of B-reorder
+      let firstDts = -Infinity
+      let codingIndex = 0
       const drainEncoded = () => {
         while (encoded.length) {
           const { chunk, meta } = encoded.shift()!
@@ -676,10 +688,11 @@ const resolvers = {
           const data = new Uint8Array(chunk.byteLength)
           chunk.copyTo(data)
           const pts = chunk.timestamp
-          const dts = lastDts === -Infinity ? pts : Math.max(pts, lastDts + 1)
-          lastDts = dts
+          if (firstDts === -Infinity) firstDts = pts - REORDER_OFFSET_US
+          const dts = firstDts + codingIndex * frameDurationUs
+          codingIndex++
           const out = remuxer.writeTranscodeVideo(
-            data, pts, dts, chunk.duration ?? 0, chunk.type === 'key'
+            data, pts, dts, chunk.duration ?? frameDurationUs, chunk.type === 'key'
           )
           if (out.byteLength) outputChunks.push(out)
         }
@@ -696,6 +709,17 @@ const resolvers = {
         videoEncoder.encode(frame, { keyFrame: forceKey || unit.key })
         frame.close()
       }
+
+      // WebCodecs VideoEncoder.output is dispatched as a macrotask, so the pump loop must
+      // yield to macrotasks for the encoder to actually deliver encoded chunks. Without this
+      // yield, pump runs decode → encode → drainEncoded (sees nothing) in a tight microtask
+      // loop, builds up the entire encoder queue, and only gets output on the final EOF flush.
+      // The MessageChannel trick is ~0.5ms per yield vs ~4ms for setTimeout(0).
+      const yieldMacrotask = () => new Promise<void>((resolve) => {
+        const ch = new MessageChannel()
+        ch.port1.onmessage = () => resolve()
+        ch.port2.postMessage(null)
+      })
 
       // Pull/encode/mux until at least one fragment's worth of bytes is available (or EOF).
       const pump = async (read: ReadFunction): Promise<TranscodeOutChunk> => {
@@ -719,6 +743,10 @@ const resolvers = {
           if (unit.type === 'video') {
             if (!haveFirstPts) { firstPts = unit.pts; haveFirstPts = true }
             encodeFrame(unit, false)
+            // Give the encoder's output callback (macrotask) a chance to run and deliver any
+            // ready chunks before we feed it the next frame. Otherwise the encoder queue grows
+            // unboundedly and we don't get output until flush.
+            await yieldMacrotask()
             drainEncoded()
           } else if (unit.type === 'audio') {
             if (muxInited) {
@@ -750,7 +778,8 @@ const resolvers = {
           outputChunks.length = 0
           muxInited = false
           finished = false
-          lastDts = -Infinity
+          firstDts = -Infinity
+          codingIndex = 0
           videoEncoder.reset()
           videoEncoder.configure(encoderConfig)
           if (seekUnit.type === 'video') {
