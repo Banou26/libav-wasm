@@ -7,13 +7,12 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './tests',
   testMatch: /.*\.spec\.ts$/,
-  fullyParallel: false, // wasm + media → one browser at a time keeps CPU sane
+  fullyParallel: false, // WebCodecs hardware encoders contend across parallel browsers
   forbidOnly: !!process.env.CI,
-  // 1 retry locally to absorb the rare osra handshake race after several tests in a row.
-  retries: process.env.CI ? 2 : 1,
+  retries: 1, // wasm warmup + WebCodecs rate-limiting cause occasional cold-start flakes
   workers: 1,
   reporter: process.env.CI ? 'list' : [['list'], ['html', { open: 'never' }]],
-  timeout: 120_000,
+  timeout: 45_000,
   use: {
     baseURL: 'http://localhost:1234',
     trace: 'retain-on-failure',

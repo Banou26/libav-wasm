@@ -56,6 +56,9 @@ export default defineConfig((env) => ({
               : 'application/octet-stream'
             res.setHeader('Content-Type', type)
             res.setHeader('Content-Length', String(stat.size))
+            // Allow browsers to cache these heavy artifacts. The earlier no-store middleware
+            // makes Playwright tests refetch ~17MB of wasm on every page load.
+            res.setHeader('Cache-Control', 'public, max-age=300')
             createReadStream(filePath).pipe(res)
           } catch { next() }
         }
