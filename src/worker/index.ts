@@ -1,10 +1,4 @@
-import { expose } from 'osra'
-
-// Tell the main thread we're alive and listening. Firefox (unlike Chromium and WebKit) drops
-// messages posted to a module worker before its onmessage handler is attached, so the consumer
-// must wait for this signal before starting the osra handshake. Sent BEFORE osra takes over so
-// osra's own listener doesn't intercept it (osra ignores messages without its magic key).
-globalThis.postMessage({ type: '__libav_worker_ready__' })
+import { expose, transfer } from 'osra'
 
 export type RemuxerInstanceSubtitleFragment =
   | {
@@ -814,7 +808,12 @@ const resolvers = {
               description: initResult.videoExtradata,
             })
           }
-          return initResult
+          return {
+            ...initResult,
+            data: transfer(initResult.data),
+            videoExtradata: transfer(initResult.videoExtradata),
+            attachments: initResult.attachments.map(a => ({ ...a, data: transfer(a.data) })),
+          }
         }
 
         // Unsupported (e.g. HEVC on Chrome/Firefox): re-init in transcode mode and build the
@@ -823,9 +822,9 @@ const resolvers = {
         const trInit = await remuxer.initTranscode(readToWasmRead(read))
         transcode = await createTranscodePipeline(trInit, read)
         return {
-          data: transcode.initSegment,
-          videoExtradata: new Uint8Array(0).buffer,
-          attachments: trInit.attachments,
+          data: transfer(transcode.initSegment),
+          videoExtradata: transfer(new ArrayBuffer(0)),
+          attachments: trInit.attachments.map(a => ({ ...a, data: transfer(a.data) })),
           subtitles: trInit.subtitles,
           indexes: trInit.indexes,
           chapters: trInit.chapters,
@@ -841,14 +840,14 @@ const resolvers = {
       },
       seek: (read: ReadFunction, timestamp: number) =>
         transcode
-          ? transcode.seek(read, timestamp).then(res => ({ ...res, subtitles: [], offset: 0, cancelled: false }))
-          : remuxer.seek(readToWasmRead(read), timestamp),
+          ? transcode.seek(read, timestamp).then(res => ({ ...res, data: transfer(res.data), subtitles: [], offset: 0, cancelled: false }))
+          : remuxer.seek(readToWasmRead(read), timestamp).then(res => ({ ...res, data: transfer(res.data) })),
       read: (read: ReadFunction) =>
         transcode
-          ? transcode.read(read).then(res => ({ ...res, subtitles: [], offset: 0, cancelled: false }))
-          : remuxer.read(readToWasmRead(read)),
+          ? transcode.read(read).then(res => ({ ...res, data: transfer(res.data), subtitles: [], offset: 0, cancelled: false }))
+          : remuxer.read(readToWasmRead(read)).then(res => ({ ...res, data: transfer(res.data) })),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
-        if (transcode) return transcode.readKeyframe(read, timestamp)
+        if (transcode) return transfer(await transcode.readKeyframe(read, timestamp))
         const videoFramePromise = new Promise<VideoFrame>((resolve, reject) => {
           videoFrameResolve = resolve
           videoFrameReject = reject
@@ -864,7 +863,7 @@ const resolvers = {
         const videoFrame = await videoFramePromise
         offscreenContext.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
         videoFrame.close()
-        return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
+        return offscreen.convertToBlob().then(blob => blob.arrayBuffer()).then(transfer)
       }
     }
   }

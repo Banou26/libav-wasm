@@ -2,7 +2,7 @@ import PQueue from 'p-queue'
 import type { Resolvers } from './worker'
 import type { SubtitleFragment } from './worker'
 
-import { expose } from 'osra'
+import { expose, transfer } from 'osra'
 export * from './utils'
 
 export type MakeTransmuxerOptions = {
@@ -55,20 +55,6 @@ export const makeRemuxer = async ({
   threadCount = 1
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
-
-  // Wait for the worker to signal its message handler is attached. Firefox loses messages
-  // posted to a module worker before its handler is up, so we cannot kick off the osra
-  // handshake until the worker tells us it is listening.
-  await new Promise<void>((resolve) => {
-    const onReady = (ev: MessageEvent) => {
-      if (ev.data?.type === '__libav_worker_ready__') {
-        worker.removeEventListener('message', onReady)
-        resolve()
-      }
-    }
-    worker.addEventListener('message', onReady)
-  })
-
   const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
   let currentStream: ReadableStream<Uint8Array> | undefined
   let currentStreamOffset: number | undefined
@@ -91,17 +77,17 @@ export const makeRemuxer = async ({
   const queue = new PQueue({ concurrency: 1 })
 
   const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
-    if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0).buffer, rejected: true })
+    if (abortController.signal.aborted) return Promise.resolve({ resolved: transfer(new ArrayBuffer(0)), rejected: true })
     return Promise.race([
       read(Number(offset), Number(size))
         .then(
-          buffer => ({ resolved: new Uint8Array(buffer).buffer, rejected: false }),
-          () => ({ resolved: new Uint8Array(0).buffer, rejected: true })
+          buffer => ({ resolved: transfer(buffer), rejected: false }),
+          () => ({ resolved: transfer(new ArrayBuffer(0)), rejected: true })
         ),
       abortSignalToPromise(abortController.signal)
         .then(
-          () => ({ resolved: new Uint8Array(0).buffer, rejected: true }),
-          () => ({ resolved: new Uint8Array(0).buffer, rejected: true })
+          () => ({ resolved: transfer(new ArrayBuffer(0)), rejected: true }),
+          () => ({ resolved: transfer(new ArrayBuffer(0)), rejected: true })
         )
     ])
   }
