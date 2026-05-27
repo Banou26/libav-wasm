@@ -168,7 +168,7 @@ describe.skipIf(playsHevcNatively)('HEVC fallback', () => {
     expect(ctx.info.input.videoMimeType).toMatch(/^hev1\./)
     expect(ctx.info.output.videoMimeType).toMatch(/^avc1\./)
     await ctx.video.play()
-    await waitFor(() => ctx!.video.currentTime > 0.5, 80_000)
+    await waitFor(() => ctx!.video.currentTime > 0.5, 15_000)
     expect(ctx.video.error).toBeNull()
   })
 
@@ -177,7 +177,7 @@ describe.skipIf(playsHevcNatively)('HEVC fallback', () => {
     async () => {
       ctx = await mount('sample-hevc.mkv', 0)
       await ctx.video.play()
-      await waitFor(() => ctx!.video.currentTime > 0.5, 80_000)
+      await waitFor(() => ctx!.video.currentTime > 0.5, 15_000)
       expect(ctx.video.error).toBeNull()
     },
   )
@@ -185,9 +185,9 @@ describe.skipIf(playsHevcNatively)('HEVC fallback', () => {
   test('seeks', async () => {
     ctx = await mount('sample-hevc.mkv', 1)
     await ctx.video.play()
-    await waitFor(() => ctx!.video.buffered.length > 0, 80_000)
+    await waitFor(() => ctx!.video.buffered.length > 0, 15_000)
     ctx.video.currentTime = 15
-    await waitFor(() => ctx!.video.currentTime >= 14, 60_000)
+    await waitFor(() => ctx!.video.currentTime >= 14, 20_000)
     expect(ctx.video.error).toBeNull()
     expect(ctx.video.currentTime).toBeGreaterThanOrEqual(14)
   })

@@ -37,10 +37,10 @@ export default defineConfig({
   ],
   test: {
     include: ['tests/**/*.spec.ts'],
-    // Firefox single-threaded HEVC decode (especially at 1080p+) is CPU-bound in WASM and
-    // can take a while to produce the first fragment. Give every test enough headroom to
-    // actually complete the worst case.
-    testTimeout: 90_000,
+    // Firefox HEVC fallback at 1080p is CPU-bound in WASM but with frag_duration the
+    // first fragment is small and cold start is ~5s. 30s gives enough headroom for the
+    // slow worst case (1440p single-threaded, ~8s cold + ~10s playback).
+    testTimeout: 30_000,
     browser: {
       enabled: true,
       provider: playwright(),

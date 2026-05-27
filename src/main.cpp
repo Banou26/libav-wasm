@@ -211,6 +211,13 @@ public:
   int transcode_video_out_index = -1;
   int transcode_audio_out_index = -1;
 
+  // Set true when writing the transcode mux header so write_header() enables frag_duration.
+  // Passthrough must not enable it — small mid-GOP fragments don't start with a keyframe and
+  // the resulting stream isn't decodable. For transcode, we control the encoder and
+  // WebCodecs `latencyMode: 'realtime'` keeps every frame independently decodable enough
+  // for browsers to handle 500ms-fragmented output without choking.
+  bool transcode_mux_mode = false;
+
   uint8_t* input_avio_buffer = nullptr;
   uint8_t* output_avio_buffer = nullptr;
 
@@ -1185,7 +1192,9 @@ public:
     }
 
     write_vector.clear();
+    transcode_mux_mode = true;
     write_header();
+    transcode_mux_mode = false;
     return emscripten::val(emscripten::typed_memory_view(write_vector.size(), write_vector.data()));
   }
 
@@ -1472,13 +1481,19 @@ public:
   }
 
   void write_header() {
-    // Step E: set fragmentation flags
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "strict", "experimental", 0);
     av_dict_set(&opts, "c", "copy", 0);
+    // frag_keyframe ends a fragment at every keyframe (the natural fMP4 boundary).
+    // frag_duration also forces a fragment after N microseconds even if no keyframe yet.
+    // Only enable frag_duration for the transcode mux: it cuts cold start ~5-9× by not
+    // making the player wait for the whole encoded GOP before the first playable chunk.
+    // For passthrough, mid-GOP fragments would start on a non-keyframe and break decode.
     av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+    if (transcode_mux_mode) {
+      av_dict_set(&opts, "frag_duration", "500000", 0);
+    }
 
-    // Step F: write the MP4 header (this triggers avio_write => data -> data)
     int ret = avformat_write_header(output_format_context, &opts);
     if (ret < 0) {
       throw std::runtime_error(
