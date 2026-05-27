@@ -1,22 +1,15 @@
-	# -pthread \
-	# -s EXPORTED_FUNCTIONS="['_main', '_demux', '_initTransmux']" \
-	# -g4 --source-map-base http://localhost:1234/ \
-	# -s EXTRA_EXPORTED_RUNTIME_METHODS="[cwrap, ccall, getValue, setValue, writeAsciiToMemory]" \
+# Two build variants, selected at runtime by the worker:
+#   dist/libav.js     - single-threaded, no SharedArrayBuffer required (works everywhere)
+#   dist/libav-mt.js  - pthreads build for multi-threaded HEVC decode. Built with -pthread, so its
+#                       wasm memory is shared (SharedArrayBuffer-backed) and it can ONLY be
+#                       instantiated on a cross-origin-isolated page (COOP/COEP). Emitted as an ES
+#                       module (EXPORT_ES6) and loaded as a real file so emscripten can spawn its
+#                       pthread workers from the module's own URL.
 
-	# -pthread \
-	# -s PROXY_TO_PTHREAD \
-	# -s PTHREAD_POOL_SIZE=1 \
-	# -sEXPORT_NAME=worker \
+EMCC := emcc
 
-	# disable for build
-	# -g \
-	# -gsource-map \
-	# --source-map-base http://localhost:1234/dist/ \
-	# -s ASSERTIONS=2 \
-
-dist/libav-wasm.js:
-	mkdir -p dist && \
-	emcc --bind \
+# Flags shared by both variants.
+COMMON := --bind \
 	-O3 \
 	-msimd128 \
 	-g \
@@ -27,13 +20,35 @@ dist/libav-wasm.js:
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-7.1/ \
 	-s FILESYSTEM=0 \
+	-s ALLOW_MEMORY_GROWTH=1 \
+	-s ASYNCIFY \
+	-s MODULARIZE=1
+
+LIBS := -lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264
+
+all: dist/libav.js dist/libav-mt.js
+
+dist/libav.js:
+	mkdir -p dist && \
+	$(EMCC) $(COMMON) \
 	-s ENVIRONMENT=web \
 	-s INITIAL_MEMORY=150mb \
 	-s TOTAL_MEMORY=125mb \
 	-s STACK_SIZE=50mb \
-	-s ALLOW_MEMORY_GROWTH=1 \
-	-s ASYNCIFY \
-	-s MODULARIZE=1 \
-	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
+	$(LIBS) \
 	-o dist/libav.js \
+	src/main.cpp
+
+dist/libav-mt.js:
+	mkdir -p dist && \
+	$(EMCC) $(COMMON) \
+	-pthread \
+	-s EXPORT_ES6=1 \
+	-s PTHREAD_POOL_SIZE='navigator.hardwareConcurrency' \
+	-s ENVIRONMENT=web,worker \
+	-s INITIAL_MEMORY=150mb \
+	-s MAXIMUM_MEMORY=2gb \
+	-s STACK_SIZE=50mb \
+	$(LIBS) \
+	-o dist/libav-mt.js \
 	src/main.cpp

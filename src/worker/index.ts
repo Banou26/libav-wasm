@@ -289,14 +289,28 @@ export type TranscodeInit = {
   cancelled: boolean
 }
 
-const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
-  WASMModule({
+// pthreads need shared memory, which requires SharedArrayBuffer (i.e. a cross-origin-isolated page).
+const canUseThreads = (): boolean =>
+  typeof SharedArrayBuffer !== 'undefined' && (globalThis as any).crossOriginIsolated === true
+
+const makeModule = async (
+  publicPath: string,
+  useThreads: boolean,
+  log: (isError: boolean, text: string) => void
+) => {
+  const options = {
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     print: (text: string) => console.log(text),
     printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
-    // print: (text: string) => log(false, text),
-    // printErr: (text: string) => log(true, text),
-  }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
+  }
+  if (useThreads) {
+    // The multi-threaded build is loaded as a real module file (not bundled) so emscripten can
+    // spawn its pthread workers from the module's own URL. It is an ES module (EXPORT_ES6).
+    const mt = await import(/* @vite-ignore */ `${publicPath}libav-mt.js`)
+    return (mt.default ?? mt)(options) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
+  }
+  return WASMModule(options) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
+}
 
 type WASMVector<T> = {
   size: () => number
@@ -348,9 +362,18 @@ const resolvers = {
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
+    // Pick the build: multi-threaded only when threads are requested AND the page is cross-origin
+    // isolated (otherwise the pthreads build can't even instantiate, so fall back to single-threaded).
+    const wantThreads = (threadCount ?? 1) !== 1
+    const useThreads = wantThreads && canUseThreads()
+    if (wantThreads && !useThreads) {
+      log(true, 'libav-wasm: multi-threaded decode requested but the page is not cross-origin isolated (no SharedArrayBuffer); using the single-threaded build.')
+    }
+    const effectiveThreadCount = useThreads ? (threadCount ?? 1) : 1
+
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
-    const module = await makeModule(publicPath, log)
-    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, threadCount })
+    const module = await makeModule(publicPath, useThreads, log)
+    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, threadCount: effectiveThreadCount })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)
