@@ -301,10 +301,15 @@ const makeModule = async (
   const moduleUrl = useThreads ? urls.threadedModuleUrl! : urls.moduleUrl
   const wasmUrl = useThreads ? urls.threadedWasmUrl! : urls.wasmUrl
   const mod = await import(/* @vite-ignore */ moduleUrl)
+  // Filter out noisy-but-harmless ffmpeg log lines. "Read error at pos" fires on every
+  // EOF probe. "Unknown profile bitstream" is emitted by the HEVC parser on every
+  // profile_tier_level NAL because our build uses --enable-small, which compiles out the
+  // profile-name lookup table (mainline ffmpeg shows it too on -enable-small builds).
+  const NOISE = /Read error at pos|Unknown profile bitstream/
   return (mod.default ?? mod)({
     locateFile: (path: string) => path.endsWith('.wasm') ? wasmUrl : path,
     print: (text: string) => console.log(text),
-    printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
+    printErr: (text: string) => NOISE.test(text) ? undefined : console.error(text),
   }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
 }
 
@@ -374,6 +379,7 @@ const resolvers = {
       log(true, `libav-wasm: multi-threaded decode requested but ${reason}; using the single-threaded build.`)
     }
     const effectiveThreadCount = useThreads ? (threadCount ?? 1) : 1
+    log(false, `libav-wasm: loaded ${useThreads ? 'multi-threaded' : 'single-threaded'} build (thread_count=${effectiveThreadCount}, hardwareConcurrency=${(globalThis as any).navigator?.hardwareConcurrency ?? '?'})`)
 
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
     const module = await makeModule({ moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl }, useThreads, log)
@@ -743,11 +749,20 @@ const resolvers = {
           if (unit.type === 'video') {
             if (!haveFirstPts) { firstPts = unit.pts; haveFirstPts = true }
             encodeFrame(unit, false)
-            // Give the encoder's output callback (macrotask) a chance to run and deliver any
-            // ready chunks before we feed it the next frame. Otherwise the encoder queue grows
-            // unboundedly and we don't get output until flush.
+            // Apply backpressure: don't queue more frames if the encoder is far behind.
+            // The encoder's output callback is a macrotask, so we yield until the queue
+            // depth drops (or we hit a cap, just in case the encoder hangs). Without this,
+            // a fast decoder (e.g. the multi-threaded build at any resolution, or the
+            // single-threaded build on small frames) outruns the encoder by the entire
+            // file's worth of frames before any output arrives, and pump returns one giant
+            // fragment containing everything.
             await yieldMacrotask()
             drainEncoded()
+            let guard = 0
+            while (videoEncoder.encodeQueueSize > 8 && guard++ < 1_000) {
+              await yieldMacrotask()
+              drainEncoded()
+            }
           } else if (unit.type === 'audio') {
             if (muxInited) {
               const out = remuxer.writeTranscodeAudio(unit.data, Math.round(unit.pts * 1e6), Math.round(unit.duration * 1e6))
