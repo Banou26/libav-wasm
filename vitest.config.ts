@@ -37,9 +37,10 @@ export default defineConfig({
   ],
   test: {
     include: ['tests/**/*.spec.ts'],
-    // Firefox single-threaded HEVC decode in wasm is ~3× slower than Chromium and overruns
-    // the default 5s; give every test enough headroom to actually complete the worst case.
-    testTimeout: 30_000,
+    // Firefox single-threaded HEVC decode (especially at 1080p+) is CPU-bound in WASM and
+    // can take a while to produce the first fragment. Give every test enough headroom to
+    // actually complete the worst case.
+    testTimeout: 90_000,
     browser: {
       enabled: true,
       provider: playwright(),
