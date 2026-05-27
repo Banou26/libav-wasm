@@ -20,6 +20,5 @@ video12.mkv
 hevc.mkv
 sample-h264.mkv
 sample-hevc.mkv
-playwright-report/
-test-results/
-.playwright-mcp/
+tests/__screenshots__/
+.vitest-attachments/
