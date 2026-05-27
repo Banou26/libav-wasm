@@ -1,5 +1,11 @@
 import { expose } from 'osra'
 
+// Tell the main thread we're alive and listening. Firefox (unlike Chromium and WebKit) drops
+// messages posted to a module worker before its onmessage handler is attached, so the consumer
+// must wait for this signal before starting the osra handshake. Sent BEFORE osra takes over so
+// osra's own listener doesn't intercept it (osra ignores messages without its magic key).
+globalThis.postMessage({ type: '__libav_worker_ready__' })
+
 export type RemuxerInstanceSubtitleFragment =
   | {
     isHeader: true
@@ -655,14 +661,22 @@ const resolvers = {
         pendingAudio.length = 0
       }
 
+      // WebCodecs emits chunks in *decode* order; chunk.timestamp is the *presentation*
+      // timestamp. Firefox produces B-frames even with latencyMode 'realtime', so pts is not
+      // monotonic across consecutive chunks. The mp4 muxer requires monotonically-increasing
+      // dts. Track our own monotonic dts.
+      let lastDts = -Infinity
       const drainEncoded = () => {
         while (encoded.length) {
           const { chunk, meta } = encoded.shift()!
           ensureMux(meta)
           const data = new Uint8Array(chunk.byteLength)
           chunk.copyTo(data)
+          const pts = chunk.timestamp
+          const dts = lastDts === -Infinity ? pts : Math.max(pts, lastDts + 1)
+          lastDts = dts
           const out = remuxer.writeTranscodeVideo(
-            data, chunk.timestamp, chunk.timestamp, chunk.duration ?? 0, chunk.type === 'key'
+            data, pts, dts, chunk.duration ?? 0, chunk.type === 'key'
           )
           if (out.byteLength) outputChunks.push(out)
         }
@@ -733,6 +747,7 @@ const resolvers = {
           outputChunks.length = 0
           muxInited = false
           finished = false
+          lastDts = -Infinity
           videoEncoder.reset()
           videoEncoder.configure(encoderConfig)
           if (seekUnit.type === 'video') {

@@ -21,9 +21,14 @@
     "build": "npm run make-docker && vite build && npm run build-worker && npm run types && npm run copy-wasm",
     "types": "tsc",
     "copy-wasm": "copyfiles -u 1 dist/*.wasm dist/libav.js dist/libav-mt.js build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "./scripts/with-browser-env.sh npx playwright test",
+    "test:ui": "./scripts/with-browser-env.sh npx playwright test --ui",
+    "test:chromium": "./scripts/with-browser-env.sh npx playwright test --project=chromium",
+    "test:firefox": "./scripts/with-browser-env.sh npx playwright test --project=firefox"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@rollup/plugin-commonjs": "^24.0.1",
     "concurrently": "^7.6.0",
     "copyfiles": "^2.4.1",

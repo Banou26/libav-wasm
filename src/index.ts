@@ -56,6 +56,19 @@ export const makeRemuxer = async ({
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
 
+  // Wait for the worker to signal its message handler is attached. Firefox loses messages
+  // posted to a module worker before its handler is up, so we cannot kick off the osra
+  // handshake until the worker tells us it is listening.
+  await new Promise<void>((resolve) => {
+    const onReady = (ev: MessageEvent) => {
+      if (ev.data?.type === '__libav_worker_ready__') {
+        worker.removeEventListener('message', onReady)
+        resolve()
+      }
+    }
+    worker.addEventListener('message', onReady)
+  })
+
   const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
   let currentStream: ReadableStream<Uint8Array> | undefined
   let currentStreamOffset: number | undefined

@@ -36,12 +36,16 @@ export default defineConfig((env) => ({
       }
     },
     {
-      // Serve /dist/* (the wasm glue + binaries) as raw static, bypassing vite's transforms.
-      // The emscripten glue contains dynamic Worker(...) calls vite's static analyzer can't parse.
-      name: 'serve-dist-raw',
+      // Serve /dist/* and /build/* as raw static, bypassing vite's source transforms. Both
+      // contain prebuilt outputs that must not be HMR-rewritten:
+      //  - /dist/libav*.js: emscripten glue with dynamic Worker(...) calls vite can't analyze
+      //  - /build/worker.js: bundled worker; vite-dev injects a top-level `import "/@vite/client"`
+      //    when it sees dynamic import(), which is illegal in classic workers AND breaks module
+      //    workers in Firefox (client expects DOM APIs).
+      name: 'serve-prebuilt-raw',
       configureServer: (server) => {
-        server.middlewares.use('/dist', (req, res, next) => {
-          const filePath = join(process.cwd(), 'dist', (req.url || '/').split('?')[0])
+        const serveRaw = (rootDir: string) => (req: any, res: any, next: any) => {
+          const filePath = join(process.cwd(), rootDir, (req.url || '/').split('?')[0])
           try {
             const stat = statSync(filePath)
             if (!stat.isFile()) return next()
@@ -54,7 +58,9 @@ export default defineConfig((env) => ({
             res.setHeader('Content-Length', String(stat.size))
             createReadStream(filePath).pipe(res)
           } catch { next() }
-        })
+        }
+        server.middlewares.use('/dist', serveRaw('dist'))
+        server.middlewares.use('/build', serveRaw('build'))
       }
     }
   ],
