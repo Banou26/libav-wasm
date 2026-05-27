@@ -150,13 +150,19 @@ describe('H264 passthrough', () => {
   })
 })
 
-// Skip the fallback suite only on browsers that actually play HEVC end-to-end (Safari/WebKit).
-// Firefox 150 on Linux returns true from MediaSource.isTypeSupported for hev1 but then errors
-// when fed real HEVC bytes into a SourceBuffer, so we can't trust the capability check as a
-// skip gate.
-const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+// Skip the fallback suite on browsers that actually play HEVC natively — there's no fallback
+// to exercise there. Firefox is the exception: its window-context isTypeSupported is a
+// false-positive prone capability claim (reports true for hev1 on Linux but the SourceBuffer
+// errors when fed real bytes), AND Firefox doesn't expose MediaSource in workers anyway, so
+// the worker's codec gate falls through to VideoDecoder.isConfigSupported which honestly
+// reports HEVC unsupported and triggers the fallback. So on Firefox the fallback always runs.
+const isFirefox = navigator.userAgent.includes('Firefox')
+const playsHevcNatively =
+  !isFirefox
+  && typeof MediaSource !== 'undefined'
+  && MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')
 
-describe.skipIf(isSafari)('HEVC fallback', () => {
+describe.skipIf(playsHevcNatively)('HEVC fallback', () => {
   test('single-threaded decode plays', async () => {
     ctx = await mount('sample-hevc.mkv', 1)
     expect(ctx.info.input.videoMimeType).toMatch(/^hev1\./)
