@@ -26,7 +26,9 @@ export default defineConfig({
               : 'application/octet-stream'
             res.setHeader('Content-Type', type)
             res.setHeader('Content-Length', String(stat.size))
-            res.setHeader('Cache-Control', 'public, max-age=300')
+            // no-store: never serve a stale wasm/glue from the browser cache across rebuilds
+            // (a stale glue/wasm pairing surfaces as "indirect call signature mismatch").
+            res.setHeader('Cache-Control', 'no-store')
             createReadStream(filePath).pipe(res)
           } catch { next() }
         }

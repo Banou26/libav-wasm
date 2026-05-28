@@ -61,6 +61,16 @@ for res in 720p 1440p 2160p; do
   gen libx265 "$res" "$(echo "${SPECS[$res]}" | awk '{print $3}')" "sample-hevc-${res}.mkv"
 done
 
+# Short HEVC + AAC sample for the decode-render fallback test — it needs an audio track to
+# exercise the audio-only fMP4 timeline (the other samples are video-only). 5s is plenty.
+echo "==> sample-hevc-audio.mkv (libx265 1280x720 + aac, 5s)"
+docker run --rm --user "$(id -u):$(id -g)" -v "$OUTDIR:/work" "$IMAGE" -y \
+  -f lavfi -i "testsrc2=size=1280x720:rate=${FPS}:duration=5" \
+  -f lavfi -i "sine=frequency=440:duration=5" \
+  -c:v libx265 -b:v 2M -pix_fmt yuv420p \
+  -c:a aac -b:a 128k -shortest \
+  "/work/sample-hevc-audio.mkv"
+
 echo
 echo "Generated under: ${OUTDIR}"
 ls -lh "${OUTDIR}"/sample-*.mkv
