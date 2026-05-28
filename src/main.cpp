@@ -183,6 +183,8 @@ public:
   // H264 with WebCodecs and pushes the encoded packets back via the init/write_transcode_mux
   // methods, which mux everything into fragmented MP4 using the same muxer as the passthrough path.
   bool video_transcode = false;
+  // When true, read_transcode demuxes audio but drops video packets undecoded (cheap audio extract).
+  bool skip_video_decode = false;
   const AVCodec *video_decoder_avc = nullptr;
   AVCodecContext *video_decoder_avcc = nullptr;
   AVFrame *video_decode_frame = nullptr;
@@ -679,6 +681,13 @@ public:
     return video_decode_frame ? 0 : -1;
   }
 
+  // Drop B-frames at decode (AVDISCARD_NONREF) to cut cost when the decoder can't keep realtime (4K).
+  void set_video_decode_skip_nonref(bool on) {
+    if (video_decoder_avcc) video_decoder_avcc->skip_frame = on ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
+  }
+
+  void set_skip_video_decode(bool on) { skip_video_decode = on; }
+
   // AAC encoder for EAC3/AC3 -> AAC in transcode mode, without an output muxer stream.
   int prepare_audio_encoder_no_mux() {
     audio_avc = avcodec_find_encoder_by_name("aac");
@@ -991,8 +1000,10 @@ public:
           return r;
         }
         // EOF: flush video decoder and audio encoder, then drain pending.
-        avcodec_send_packet(video_decoder_avcc, nullptr);
-        drain_video_decoder();
+        if (!skip_video_decode) {
+          avcodec_send_packet(video_decoder_avcc, nullptr);
+          drain_video_decoder();
+        }
         if (capture_audio && audio_avcc) {
           flush_audio_buffer(nullptr);
           send_audio_frame_to_encoder(nullptr, nullptr);
@@ -1019,6 +1030,7 @@ public:
       }
 
       if (packet->stream_index == video_stream_index) {
+        if (skip_video_decode) { av_packet_free(&packet); continue; } // audio-extract: drop video undecoded
         int sret = avcodec_send_packet(video_decoder_avcc, packet);
         av_packet_free(&packet);
         if (sret < 0) continue;
@@ -1190,6 +1202,41 @@ public:
       ast->time_base = (AVRational){1, 1000000};
       transcode_audio_out_index = ast->index;
     }
+
+    write_vector.clear();
+    transcode_mux_mode = true;
+    write_header();
+    transcode_mux_mode = false;
+    return emscripten::val(emscripten::typed_memory_view(write_vector.size(), write_vector.data()));
+  }
+
+  // Audio-only fMP4 sink for decode-render: video goes to a canvas, so only audio is muxed here to
+  // feed the MSE timeline. Reuses write_transcode_audio / flush_transcode_mux.
+  emscripten::val init_audio_only_mux(
+    emscripten::val audio_extradata, // AudioSpecificConfig (may be empty)
+    int sample_rate,
+    int channels
+  ) {
+    destroy_output();
+    init_output();
+
+    std::string aexd = audio_extradata.as<std::string>();
+    AVStream* ast = avformat_new_stream(output_format_context, nullptr);
+    if (!ast) throw std::runtime_error("Could not allocate audio output stream");
+    ast->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+    ast->codecpar->codec_id = AV_CODEC_ID_AAC;
+    ast->codecpar->sample_rate = sample_rate;
+    av_channel_layout_default(&ast->codecpar->ch_layout, channels);
+    ast->codecpar->codec_tag = 0;
+    ast->codecpar->frame_size = aac_frame_size;
+    if (!aexd.empty()) {
+      ast->codecpar->extradata = (uint8_t*)av_mallocz(aexd.size() + AV_INPUT_BUFFER_PADDING_SIZE);
+      memcpy(ast->codecpar->extradata, aexd.data(), aexd.size());
+      ast->codecpar->extradata_size = (int)aexd.size();
+    }
+    ast->time_base = (AVRational){1, 1000000};
+    transcode_video_out_index = -1;
+    transcode_audio_out_index = ast->index;
 
     write_vector.clear();
     transcode_mux_mode = true;
@@ -2213,6 +2260,9 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .function("seekTranscode",        &Remuxer::seek_transcode)
     .function("readKeyframeTranscode", &Remuxer::read_keyframe_transcode)
     .function("initTranscodeMux",     &Remuxer::init_transcode_mux)
+    .function("initAudioOnlyMux",     &Remuxer::init_audio_only_mux)
+    .function("setVideoDecodeSkipNonref", &Remuxer::set_video_decode_skip_nonref)
+    .function("setSkipVideoDecode",   &Remuxer::set_skip_video_decode)
     .function("writeTranscodeVideo",  &Remuxer::write_transcode_video)
     .function("writeTranscodeAudio",  &Remuxer::write_transcode_audio)
     .function("flushTranscodeMux",    &Remuxer::flush_transcode_mux);

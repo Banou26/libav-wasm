@@ -4,6 +4,8 @@ import type { SubtitleFragment } from './worker'
 
 import { expose, transfer } from 'osra'
 export * from './utils'
+export { createDecodeRenderMedia } from './videojs'
+export type { DecodeRenderMedia, DecodeRenderMediaOptions } from './videojs'
 
 export type MakeTransmuxerOptions = {
   /** URL of the javascript worker file */
@@ -30,6 +32,12 @@ export type MakeTransmuxerOptions = {
    * and a cross-origin-isolated page; otherwise it falls back to single-threaded.
    */
   threadCount?: number
+  /**
+   * OffscreenCanvas (via `transferControlToOffscreen()`) for the HEVC fallback to draw decoded
+   * frames onto — init() then reports `renderMode: 'canvas'` and playback runs via `renderFrame`.
+   * Omitted: the fallback re-encodes to H264 for MSE (`renderMode: 'mse'`).
+   */
+  renderCanvas?: OffscreenCanvas
 }
 
 const abortSignalToPromise = (abortSignal: AbortSignal) =>
@@ -52,7 +60,8 @@ export const makeRemuxer = async ({
   read,
   length,
   bufferSize = 2_500_000,
-  threadCount = 1
+  threadCount = 1,
+  renderCanvas
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
   const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
@@ -68,6 +77,8 @@ export const makeRemuxer = async ({
     length,
     bufferSize,
     threadCount,
+    // transfer() so osra moves the canvas into the worker rather than copying it.
+    renderCanvas: renderCanvas ? transfer(renderCanvas) : undefined,
     log: async (isError, text) => {
       if (isError) console.error(text)
       else console.log(text)
@@ -133,6 +144,12 @@ export const makeRemuxer = async ({
     },
     seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
     read: () => addTask((abortController) => remuxer.read(wasmRead(abortController))),
-    readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp))
+    readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp)),
+    // Decode-render mode (renderCanvas set): the app drives these from its render loop / clock.
+    renderFrame: (time: number) => addTask((abortController) => (remuxer as any).renderFrame(wasmRead(abortController), time)),
+    extractAudio: (): Promise<ArrayBuffer> => addTask((abortController) => (remuxer as any).extractAudio(wasmRead(abortController))),
+    captureRenderedFrame: (width: number, height: number): Promise<Uint8Array> => (remuxer as any).captureRenderedFrame(width, height),
+    setSkipVideoDecode: (on: boolean): Promise<void> => (remuxer as any).setSkipVideoDecode(on),
+    setVideoDecodeSkipNonref: (on: boolean): Promise<void> => (remuxer as any).setVideoDecodeSkipNonref(on)
   }
 }

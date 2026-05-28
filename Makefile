@@ -29,7 +29,7 @@ LIBS := -lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavut
 
 all: dist/libav.js dist/libav-mt.js
 
-dist/libav.js:
+dist/libav.js: src/main.cpp
 	mkdir -p dist && \
 	$(EMCC) $(COMMON) \
 	-s EXPORT_ES6=1 \
@@ -41,7 +41,7 @@ dist/libav.js:
 	-o dist/libav.js \
 	src/main.cpp
 
-dist/libav-mt.js:
+dist/libav-mt.js: src/main.cpp
 	mkdir -p dist && \
 	$(EMCC) $(COMMON) \
 	-pthread \

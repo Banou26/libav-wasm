@@ -192,6 +192,9 @@ export interface RemuxerInstance {
     sampleRate: number,
     channels: number
   ) => Uint8Array;
+  initAudioOnlyMux: (audioExtradata: Uint8Array, sampleRate: number, channels: number) => Uint8Array;
+  setVideoDecodeSkipNonref: (on: boolean) => void;
+  setSkipVideoDecode: (on: boolean) => void;
   writeTranscodeVideo: (data: Uint8Array, pts: number, dts: number, duration: number, keyframe: boolean) => Uint8Array;
   writeTranscodeAudio: (data: Uint8Array, pts: number, duration: number) => Uint8Array;
   flushTranscodeMux: () => Uint8Array;
@@ -263,6 +266,9 @@ export type Remuxer = {
     sampleRate: number,
     channels: number
   ) => Uint8Array
+  initAudioOnlyMux: (audioExtradata: Uint8Array, sampleRate: number, channels: number) => Uint8Array
+  setVideoDecodeSkipNonref: (on: boolean) => void
+  setSkipVideoDecode: (on: boolean) => void
   writeTranscodeVideo: (data: Uint8Array, pts: number, dts: number, duration: number, keyframe: boolean) => Uint8Array
   writeTranscodeAudio: (data: Uint8Array, pts: number, duration: number) => Uint8Array
   flushTranscodeMux: () => Uint8Array
@@ -354,7 +360,7 @@ const unitToJs = (result: TranscodeUnit): TranscodeUnit => {
 
 const resolvers = {
   makeRemuxer: async (
-    { moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, log }:
+    { moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, renderCanvas, log }:
     {
       moduleUrl: string
       wasmUrl: string
@@ -363,9 +369,12 @@ const resolvers = {
       length: number
       bufferSize: number
       threadCount?: number
+      renderCanvas?: OffscreenCanvas
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
+    // renderCanvas (transferred via osra, when set): the HEVC fallback draws decoded frames onto it;
+    // the app drives it via renderFrame(time).
     // Pick the build: multi-threaded only when threads are requested, the mt build URLs were
     // provided, AND the page is cross-origin isolated (otherwise the pthreads build can't even
     // instantiate). Fall back to single-threaded in every other case.
@@ -558,6 +567,10 @@ const resolvers = {
       readKeyframeTranscode: (read, timestamp) => _remuxer.readKeyframeTranscode(read, timestamp).then(unitToJs),
       initTranscodeMux: (videoExtradata, width, height, hasAudio, audioExtradata, sampleRate, channels) =>
         copyBytes(_remuxer.initTranscodeMux(videoExtradata, width, height, hasAudio, audioExtradata, sampleRate, channels)),
+      initAudioOnlyMux: (audioExtradata, sampleRate, channels) =>
+        copyBytes(_remuxer.initAudioOnlyMux(audioExtradata, sampleRate, channels)),
+      setVideoDecodeSkipNonref: (on) => _remuxer.setVideoDecodeSkipNonref(on),
+      setSkipVideoDecode: (on) => _remuxer.setSkipVideoDecode(on),
       writeTranscodeVideo: (data, pts, dts, duration, keyframe) =>
         copyBytes(_remuxer.writeTranscodeVideo(data, pts, dts, duration, keyframe)),
       writeTranscodeAudio: (data, pts, duration) =>
@@ -835,7 +848,137 @@ const resolvers = {
       }
     }
 
+    // Decode-render fallback: decode HEVC -> I420 and draw frames onto the canvas (no re-encode/MSE).
+    // The app drives it via renderFrame(time) against its own clock; superseded frames count skipped.
+    const createDecodeRenderPipeline = async (init: TranscodeInit, canvas: OffscreenCanvas) => {
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('render canvas: 2d context unavailable')
+
+      // Set up the audio-only fMP4 sink (the app feeds it to MSE as the seekable timeline + clock).
+      const initAudioMux = (): Uint8Array =>
+        init.hasAudio
+          ? remuxer.initAudioOnlyMux(init.audioExtradata, init.audioSampleRate, init.audioChannels)
+          : new Uint8Array(0)
+      let audioInitSegment = initAudioMux()
+
+      let pendingUnit: TranscodeUnit | undefined // decoded frame whose pts overshot the last target
+      let finished = false
+      let totalDecoded = 0
+      let totalSkipped = 0
+      let lastPresentedPts = -1
+      let skipNonref = false // whether we've told the decoder to drop B-frames to catch up
+      const audioChunks: Uint8Array[] = []
+
+      const draw = (unit: TranscodeUnit) => {
+        const frame = new VideoFrame(unit.data, {
+          format: 'I420', codedWidth: unit.width, codedHeight: unit.height, timestamp: Math.round(unit.pts * 1e6),
+        })
+        ctx.drawImage(frame, 0, 0, canvas.width, canvas.height)
+        frame.close()
+        lastPresentedPts = unit.pts
+      }
+
+      const muxAudio = (unit: TranscodeUnit) => {
+        const out = remuxer.writeTranscodeAudio(unit.data, Math.round(unit.pts * 1e6), Math.round(unit.duration * 1e6))
+        if (out.byteLength) audioChunks.push(out)
+      }
+
+      const collectAudio = (): ArrayBuffer => {
+        if (!audioChunks.length) return new Uint8Array(0).buffer
+        const total = audioChunks.reduce((n, c) => n + c.byteLength, 0)
+        const out = new Uint8Array(total)
+        let off = 0
+        for (const c of audioChunks) { out.set(c, off); off += c.byteLength }
+        audioChunks.length = 0
+        return out.buffer
+      }
+
+      // Advance decoding to `time` (seconds) and draw the frame with the largest pts <= time;
+      // an earlier frame superseded before display counts as skipped.
+      const renderFrame = async (read: ReadFunction, time: number) => {
+        let toShow: TranscodeUnit | undefined
+        let decoded = 0
+        let skipped = 0
+        if (pendingUnit && pendingUnit.pts <= time) { toShow = pendingUnit; pendingUnit = undefined }
+        while (!finished && !pendingUnit) {
+          const unit = await remuxer.readTranscode(readToWasmRead(read))
+          if (unit.cancelled) throw new Error('Cancelled')
+          if (unit.type === 'eof') { finished = true; break }
+          if (unit.type !== 'video') continue // audio is handled separately by extractAudio()
+          decoded++
+          if (unit.pts <= time) {
+            if (toShow) skipped++
+            toShow = unit
+          } else {
+            pendingUnit = unit // overshot the target; hold for a later renderFrame
+          }
+        }
+        totalDecoded += decoded
+        totalSkipped += skipped
+        if (toShow) draw(toShow)
+        // Adaptive catch-up: decoding many frames per call means the clock outran the decoder (4K) —
+        // drop B-frames to cut cost, restore once caught up. Hysteresis (6/2) avoids flapping.
+        if (!skipNonref && decoded >= 6) { skipNonref = true; remuxer.setVideoDecodeSkipNonref(true) }
+        else if (skipNonref && decoded <= 2) { skipNonref = false; remuxer.setVideoDecodeSkipNonref(false) }
+        return { decoded, skipped, totalDecoded, totalSkipped, presentedPts: lastPresentedPts, finished, skippingNonref: skipNonref }
+      }
+
+      // Extract the whole audio track to fMP4 without decoding video, then rewind for video.
+      // Returns all fragments concatenated — append after the audio init segment.
+      const extractAudio = async (read: ReadFunction): Promise<ArrayBuffer> => {
+        remuxer.setSkipVideoDecode(true)
+        audioChunks.length = 0
+        try {
+          for (;;) {
+            const unit = await remuxer.readTranscode(readToWasmRead(read))
+            if (unit.cancelled) throw new Error('Cancelled')
+            if (unit.type === 'eof') break
+            if (unit.type === 'audio') muxAudio(unit)
+          }
+        } finally {
+          remuxer.setSkipVideoDecode(false)
+        }
+        const all = collectAudio()
+        const su = await remuxer.seekTranscode(readToWasmRead(read), 0) // rewind for video playback
+        if (su.cancelled) throw new Error('Cancelled')
+        finished = false
+        pendingUnit = undefined
+        return all
+      }
+
+      // Read the presented frame back as RGBA at w×h (visual tests) — exact, no screenshot needed.
+      const captureFrame = (w: number, h: number): Uint8Array => {
+        const rc = new OffscreenCanvas(w, h)
+        const rctx = rc.getContext('2d', { willReadFrequently: true })!
+        rctx.drawImage(canvas, 0, 0, w, h)
+        return new Uint8Array(rctx.getImageData(0, 0, w, h).data.buffer)
+      }
+
+      return {
+        videoWidth: init.videoWidth,
+        videoHeight: init.videoHeight,
+        framerate: init.videoFpsDen ? init.videoFpsNum / init.videoFpsDen : 30,
+        hasAudio: init.hasAudio,
+        audioMimeType: init.info.output.audioMimeType,
+        get audioInitSegment() { return audioInitSegment },
+        renderFrame,
+        extractAudio,
+        captureFrame,
+        // Video-only seek (the app seeks the audio MSE timeline itself); presents the keyframe.
+        seek: async (read: ReadFunction, time: number) => {
+          const seekUnit = await remuxer.seekTranscode(readToWasmRead(read), time)
+          if (seekUnit.cancelled) throw new Error('Cancelled')
+          finished = false
+          pendingUnit = undefined
+          if (seekUnit.type === 'video') draw(seekUnit)
+          return { data: new ArrayBuffer(0), subtitles: [] as SubtitleFragment[], offset: 0, pts: seekUnit.pts, duration: 0, cancelled: false, finished: false }
+        },
+        destroy: async () => {},
+      }
+    }
+
     let transcode: Awaited<ReturnType<typeof createTranscodePipeline>> | undefined
+    let decodeRender: Awaited<ReturnType<typeof createDecodeRenderPipeline>> | undefined
 
     let videoFrameResolve: ((value: VideoFrame) => void) | undefined
     let videoFrameReject: ((reason?: any) => void) | undefined
@@ -858,8 +1001,20 @@ const resolvers = {
     return {
       destroy: async () => {
         await transcode?.destroy()
+        await decodeRender?.destroy()
         return remuxer.destroy()
       },
+      // Decode-render mode only (decodeRender set); reject / no-op otherwise.
+      renderFrame: (read: ReadFunction, time: number) =>
+        decodeRender
+          ? decodeRender.renderFrame(read, time)
+          : Promise.reject(new Error('renderFrame: not in decode-render mode (no renderCanvas)')),
+      extractAudio: (read: ReadFunction) =>
+        decodeRender ? decodeRender.extractAudio(read).then((buf) => transfer(buf)) : Promise.resolve(transfer(new ArrayBuffer(0))),
+      captureRenderedFrame: (w: number, h: number) =>
+        decodeRender ? transfer(decodeRender.captureFrame(w, h)) : new Uint8Array(0),
+      setSkipVideoDecode: (on: boolean) => remuxer.setSkipVideoDecode(on),
+      setVideoDecodeSkipNonref: (on: boolean) => remuxer.setVideoDecodeSkipNonref(on),
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
 
@@ -883,8 +1038,36 @@ const resolvers = {
         // WASM-decode -> WebCodecs-encode -> WASM-mux pipeline. The returned shape matches the
         // passthrough init so the public API and consumers are unchanged.
         const trInit = await remuxer.initTranscode(readToWasmRead(read))
+
+        // Preferred fallback: decode + render directly to the canvas (no re-encode).
+        if (renderCanvas) {
+          log(false, 'libav-wasm: HEVC fallback via decode-render (canvas)')
+          decodeRender = await createDecodeRenderPipeline(trInit, renderCanvas)
+          return {
+            renderMode: 'canvas' as const,
+            // Video goes to the canvas; `data` empty for shape parity. Feed audioInitSegment +
+            // extractAudio() to an MSE SourceBuffer for the timeline.
+            data: transfer(new ArrayBuffer(0)),
+            videoExtradata: transfer(new ArrayBuffer(0)),
+            videoWidth: decodeRender.videoWidth,
+            videoHeight: decodeRender.videoHeight,
+            framerate: decodeRender.framerate,
+            hasAudio: decodeRender.hasAudio,
+            audioMimeType: decodeRender.audioMimeType,
+            audioInitSegment: transfer(decodeRender.audioInitSegment.slice().buffer),
+            attachments: trInit.attachments.map(a => ({ ...a, data: transfer(a.data) })),
+            subtitles: trInit.subtitles,
+            indexes: trInit.indexes,
+            chapters: trInit.chapters,
+            info: trInit.info,
+          }
+        }
+
+        // Safety-net fallback: WASM-decode -> WebCodecs-encode -> WASM-mux into MSE fMP4.
+        log(false, 'libav-wasm: HEVC fallback via WebCodecs re-encode (no render canvas)')
         transcode = await createTranscodePipeline(trInit, read)
         return {
+          renderMode: 'mse' as const,
           data: transfer(transcode.initSegment),
           videoExtradata: transfer(new ArrayBuffer(0)),
           attachments: trInit.attachments.map(a => ({ ...a, data: transfer(a.data) })),
@@ -902,13 +1085,18 @@ const resolvers = {
         }
       },
       seek: (read: ReadFunction, timestamp: number) =>
-        transcode
-          ? transcode.seek(read, timestamp).then(res => ({ ...res, data: transfer(res.data), subtitles: [], offset: 0, cancelled: false }))
-          : remuxer.seek(readToWasmRead(read), timestamp).then(res => ({ ...res, data: transfer(res.data) })),
+        decodeRender
+          ? decodeRender.seek(read, timestamp)
+          : transcode
+            ? transcode.seek(read, timestamp).then(res => ({ ...res, data: transfer(res.data), subtitles: [], offset: 0, cancelled: false }))
+            : remuxer.seek(readToWasmRead(read), timestamp).then(res => ({ ...res, data: transfer(res.data) })),
       read: (read: ReadFunction) =>
-        transcode
-          ? transcode.read(read).then(res => ({ ...res, data: transfer(res.data), subtitles: [], offset: 0, cancelled: false }))
-          : remuxer.read(readToWasmRead(read)).then(res => ({ ...res, data: transfer(res.data) })),
+        decodeRender
+          // Decode-render delivers video via renderFrame; read() is a no-op.
+          ? Promise.resolve({ data: transfer(new ArrayBuffer(0)), subtitles: [], offset: 0, pts: 0, duration: 0, cancelled: false, finished: false })
+          : transcode
+            ? transcode.read(read).then(res => ({ ...res, data: transfer(res.data), subtitles: [], offset: 0, cancelled: false }))
+            : remuxer.read(readToWasmRead(read)).then(res => ({ ...res, data: transfer(res.data) })),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
         if (transcode) return transfer(await transcode.readKeyframe(read, timestamp))
         const videoFramePromise = new Promise<VideoFrame>((resolve, reject) => {
