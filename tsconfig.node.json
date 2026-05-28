@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ESNext"],
+    "types": ["node"],
+    "moduleResolution": "Bundler",
+    "outDir": "build/.tsnode"
+  },
+  "include": ["vite.config.ts", "vite-worker.config.ts", "vitest.config.ts", "vitest.perf.config.ts"]
+}
