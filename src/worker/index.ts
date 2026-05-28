@@ -360,7 +360,7 @@ const unitToJs = (result: TranscodeUnit): TranscodeUnit => {
 
 const resolvers = {
   makeRemuxer: async (
-    { moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, renderCanvas, log }:
+    { moduleUrl, wasmUrl, threadedModuleUrl, threadedWasmUrl, length, bufferSize, threadCount, renderCanvas, forceTranscode, log }:
     {
       moduleUrl: string
       wasmUrl: string
@@ -370,6 +370,7 @@ const resolvers = {
       bufferSize: number
       threadCount?: number
       renderCanvas?: OffscreenCanvas
+      forceTranscode?: boolean
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
@@ -851,6 +852,10 @@ const resolvers = {
     // Decode-render fallback: decode HEVC -> I420 and draw frames onto the canvas (no re-encode/MSE).
     // The app drives it via renderFrame(time) against its own clock; superseded frames count skipped.
     const createDecodeRenderPipeline = async (init: TranscodeInit, canvas: OffscreenCanvas) => {
+      // The worker owns the OffscreenCanvas, so size its bitmap to the video here — the caller can't
+      // (setting width/height throws once a canvas is transferred). CSS scales it for display.
+      canvas.width = init.videoWidth
+      canvas.height = init.videoHeight
       const ctx = canvas.getContext('2d')
       if (!ctx) throw new Error('render canvas: 2d context unavailable')
 
@@ -1019,7 +1024,8 @@ const resolvers = {
         const initResult = await remuxer.init(readToWasmRead(read))
 
         // If the browser can play the input video codec via MSE, keep the fast passthrough remux.
-        if (await isVideoCodecSupported(initResult.info.input.videoMimeType)) {
+        // forceTranscode skips this so the transcode/decode-render path engages regardless.
+        if (!forceTranscode && await isVideoCodecSupported(initResult.info.input.videoMimeType)) {
           if (videoDecoder.state === 'unconfigured') {
             videoDecoder.configure({
               codec: initResult.info.input.videoMimeType,

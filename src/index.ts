@@ -38,6 +38,12 @@ export type MakeTransmuxerOptions = {
    * Omitted: the fallback re-encodes to H264 for MSE (`renderMode: 'mse'`).
    */
   renderCanvas?: OffscreenCanvas
+  /**
+   * Force the HEVC-fallback transcode path even when the browser can play the input codec natively
+   * (otherwise that path only engages for unsupported codecs). `createDecodeRenderMedia` sets this,
+   * since calling it means opting into the canvas decode-render path regardless of native support.
+   */
+  forceTranscode?: boolean
 }
 
 const abortSignalToPromise = (abortSignal: AbortSignal) =>
@@ -61,7 +67,8 @@ export const makeRemuxer = async ({
   length,
   bufferSize = 2_500_000,
   threadCount = 1,
-  renderCanvas
+  renderCanvas,
+  forceTranscode
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
   const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
@@ -79,6 +86,7 @@ export const makeRemuxer = async ({
     threadCount,
     // transfer() so osra moves the canvas into the worker rather than copying it.
     renderCanvas: renderCanvas ? transfer(renderCanvas) : undefined,
+    forceTranscode,
     log: async (isError, text) => {
       if (isError) console.error(text)
       else console.log(text)

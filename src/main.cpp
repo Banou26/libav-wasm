@@ -1089,7 +1089,12 @@ public:
       audio_pts_initialized = false;
     }
 
-    int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
+    // `timestamp` arrives in milliseconds, but av_seek_frame wants the stream's own time_base —
+    // which isn't always 1/1000 (e.g. these libx265 MKVs use ~1/3000), so feeding raw ms seeks to
+    // the wrong place (a 25s target landed at ~8.3s). Rescale ms -> the video stream's time_base.
+    AVStream* seek_vs = input_format_context->streams[video_stream_index];
+    int64_t seek_target = av_rescale_q(timestamp, (AVRational){1, 1000}, seek_vs->time_base);
+    int ret = av_seek_frame(input_format_context, video_stream_index, seek_target, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
       TranscodeReadResult r;
       r.type = "cancelled";
@@ -1273,6 +1278,11 @@ public:
     pkt->dts = (int64_t)pts;
     pkt->duration = (int64_t)duration;
     pkt->flags |= AV_PKT_FLAG_KEY;
+    // JS passes timestamps in microseconds, but the mov muxer forces the audio track timescale to the
+    // sample rate — so rescale µs -> the stream's actual timebase, else the duration inflates ~22x
+    // (1e6 / sample_rate) and drives the whole MSE timeline (and the re-encode mux) to the wrong length.
+    AVRational us = (AVRational){1, 1000000};
+    av_packet_rescale_ts(pkt, us, output_format_context->streams[transcode_audio_out_index]->time_base);
     int ret = av_interleaved_write_frame(output_format_context, pkt);
     if (ret < 0) printf("write transcode audio error: %s\n", av_err2str(ret));
     av_packet_free(&pkt);
