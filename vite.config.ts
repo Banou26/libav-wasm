@@ -12,7 +12,7 @@ export default defineConfig((env) => ({
       formats: ['es']
     },
     rollupOptions: {
-      external: ['buffer', 'mp4box', 'osra']
+      external: ['buffer', 'mp4box']
     }
   },
   plugins: [
