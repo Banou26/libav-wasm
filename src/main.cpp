@@ -53,6 +53,12 @@ typedef struct SubtitleFragment {
   long end;
 } SubtitleFragment;
 
+typedef struct AudioStream {
+  int streamIndex;
+  std::string language;
+  std::string title;
+} AudioStream;
+
 typedef struct Index {
   int index;
   float timestamp;
@@ -70,6 +76,7 @@ typedef struct InitResult {
   emscripten::val data;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
+  std::vector<AudioStream> audio_streams;
   IOInfo info;
   std::vector<uint8_t> attachments_data;
   std::vector<Index> indexes;
@@ -158,6 +165,8 @@ public:
   std::vector<uint8_t> write_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
+  std::vector<AudioStream> audio_streams;
+  int selected_audio_index = -1;
 
   emscripten::val resolved_promise = val::undefined();
   emscripten::val read_data_function = val::undefined();
@@ -169,6 +178,7 @@ public:
     resolved_promise = options["resolvedPromise"];
     input_length = options["length"].as<float>();
     buffer_size = options["bufferSize"].as<int>();
+    selected_audio_index = options["audioStreamIndex"].isUndefined() ? -1 : options["audioStreamIndex"].as<int>();
     needs_audio_transcoding = false;
     next_audio_pts = 0;
     audio_pts_initialized = false;
@@ -519,33 +529,48 @@ public:
   }
 
   int prepare_decoder() {
-    for (int i = 0; i < input_format_context->nb_streams; i++) {
-        if (input_format_context->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-            audio_avs = input_format_context->streams[i];
-            audio_index = i;
+    if (audio_index < 0) return 0;
+    audio_avs = input_format_context->streams[audio_index];
 
-            // Set up decoder for transcoding if needed
-            if (needs_audio_transcoding) {
-                if (fill_stream_info(audio_avs, &audio_decoder_avc, &audio_decoder_avcc))
-                    return -1;
+    // Set up decoder for transcoding if needed
+    if (needs_audio_transcoding) {
+        if (fill_stream_info(audio_avs, &audio_decoder_avc, &audio_decoder_avcc))
+            return -1;
 
-                audio_input_frame = av_frame_alloc();
-                if (!audio_input_frame) {
-                    printf("Could not allocate audio input frame\n");
-                    return -1;
-                }
+        audio_input_frame = av_frame_alloc();
+        if (!audio_input_frame) {
+            printf("Could not allocate audio input frame\n");
+            return -1;
+        }
 
-                audio_output_frame = av_frame_alloc();
-                if (!audio_output_frame) {
-                    printf("Could not allocate audio output frame\n");
-                    return -1;
-                }
-            }
-        } else {
-            // printf("skipping streams other than audio\n");
+        audio_output_frame = av_frame_alloc();
+        if (!audio_output_frame) {
+            printf("Could not allocate audio output frame\n");
+            return -1;
         }
     }
     return 0;
+  }
+
+  // Collect the input's audio streams and pick the one to mux: the requested
+  // audioStreamIndex when valid, else the first audio stream.
+  int collect_audio_streams() {
+    audio_streams.clear();
+    audio_index = -1;
+    int first_audio = -1;
+    bool selected_valid = false;
+    for (int i = 0; i < input_format_context->nb_streams; i++) {
+      AVStream* in_stream = input_format_context->streams[i];
+      if (in_stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+      if (first_audio < 0) first_audio = i;
+      if (i == selected_audio_index) selected_valid = true;
+      AudioStream audio_stream;
+      audio_stream.streamIndex = i;
+      if (auto lang = av_dict_get(in_stream->metadata, "language", NULL, 0)) audio_stream.language = lang->value;
+      if (auto title = av_dict_get(in_stream->metadata, "title", NULL, 0)) audio_stream.title = title->value;
+      audio_streams.push_back(audio_stream);
+    }
+    return selected_valid ? selected_audio_index : first_audio;
   }
 
   void init_input(bool skip = false) {
@@ -641,6 +666,8 @@ public:
         throw std::runtime_error("Could not allocate streams_list");
       }
 
+      const int effective_audio = collect_audio_streams();
+
       int out_index = 0;
       for (int i = 0; i < number_of_streams; i++) {
         AVStream* in_stream = input_format_context->streams[i];
@@ -649,15 +676,22 @@ public:
           in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
           in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
         )) {
+          streams_list[i] = -1;
           continue;
         }
 
-        // Check if this is EAC3 audio that needs transcoding
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
-            in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
-          needs_audio_transcoding = true;
-          audio_mime_type = "mp4a.40.2"; // AAC-LC output
+        // Mux only the selected audio stream
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO && i != effective_audio) {
+          streams_list[i] = -1;
+          continue;
+        }
+
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
           audio_index = i;
+          if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+            needs_audio_transcoding = true;
+            audio_mime_type = "mp4a.40.2"; // AAC-LC output
+          }
         }
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -696,6 +730,8 @@ public:
     if (!streams_list) {
       throw std::runtime_error("Could not allocate streams_list");
     }
+
+    const int effective_audio = collect_audio_streams();
 
     int out_index = 0;
     for (int i = 0; i < number_of_streams; i++) {
@@ -747,6 +783,12 @@ public:
         continue;
       }
 
+      // Mux only the selected audio stream
+      if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO && i != effective_audio) {
+        streams_list[i] = -1;
+        continue;
+      }
+
       // Otherwise, we consider video or audio
       if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         video_stream_index = i;
@@ -757,6 +799,7 @@ public:
         }
       }
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        audio_index = i;
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
         } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
@@ -969,6 +1012,7 @@ public:
     result.data = js_write_vector;
     result.attachments = attachments;
     result.subtitles = subtitles;
+    result.audio_streams = audio_streams;
     result.info = infoObj;
 
     // loop through the chapters
@@ -1374,6 +1418,7 @@ private:
 EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
   emscripten::register_vector<Attachment>("VectorAttachment");
   emscripten::register_vector<SubtitleFragment>("VectorSubtitleFragment");
+  emscripten::register_vector<AudioStream>("VectorAudioStream");
   emscripten::register_vector<Index>("VectorIndex");
   emscripten::register_vector<Chapter>("VectorChapter");
   emscripten::register_vector<uint8_t>("VectorUInt8");
@@ -1393,6 +1438,11 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("title",       &SubtitleFragment::title)
     .field("start",       &SubtitleFragment::start)
     .field("end",         &SubtitleFragment::end);
+
+  emscripten::value_object<AudioStream>("AudioStream")
+    .field("streamIndex", &AudioStream::streamIndex)
+    .field("language",    &AudioStream::language)
+    .field("title",       &AudioStream::title);
 
   emscripten::value_object<Chapter>("Chapter")
     .field("index",  &Chapter::index)
@@ -1420,6 +1470,7 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("data",        &InitResult::data)
     .field("attachments", &InitResult::attachments)
     .field("subtitles",   &InitResult::subtitles)
+    .field("audioStreams", &InitResult::audio_streams)
     .field("chapters",    &InitResult::chapters)
     .field("indexes",     &InitResult::indexes)
     .field("info",        &InitResult::info)

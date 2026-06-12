@@ -70,10 +70,17 @@ export type Attachment = {
   data: ArrayBuffer
 }
 
+export type AudioStream = {
+  streamIndex: number
+  language: string
+  title: string
+}
+
 export type RemuxerInstanceOptions = {
   resolvedPromise: Promise<void>
   length: number
   bufferSize: number
+  audioStreamIndex?: number
 }
 
 type ReadFunction = (offset: number, size: number) => Promise<{
@@ -92,6 +99,7 @@ export interface RemuxerInstance {
     data: Uint8Array
     attachments: WASMVector<RemuxerInstanceAttachment>
     subtitles: WASMVector<RemuxerInstanceSubtitleFragment>
+    audioStreams: WASMVector<AudioStream>
     indexes: WASMVector<Index>
     chapters: WASMVector<Chapter>
     info: {
@@ -140,6 +148,7 @@ export type Remuxer = {
     data: ArrayBuffer
     attachments: Attachment[]
     subtitles: SubtitleFragment[]
+    audioStreams: AudioStream[]
     info: {
       input: {
         audioMimeType: string
@@ -209,17 +218,18 @@ const vectorToArray = <T>(vector: WASMVector<T>) =>
 
 const resolvers = {
   makeRemuxer: async (
-    { publicPath, length, bufferSize, log }:
+    { publicPath, length, bufferSize, audioStreamIndex, log }:
     {
       publicPath: string
       length: number
       bufferSize: number
+      audioStreamIndex?: number
       log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
     const module = await makeModule(publicPath, log)
-    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize })
+    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, audioStreamIndex })
     const remuxer = {
       init: (read) => _remuxer.init(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)
@@ -245,6 +255,11 @@ const resolvers = {
               content: data
             }
           }),
+          audioStreams: vectorToArray(result.audioStreams).map(({ streamIndex, language, title }) => ({
+            streamIndex,
+            language,
+            title
+          })),
           indexes: vectorToArray(result.indexes).map(({ index, timestamp, pos }) => ({
             index,
             timestamp,

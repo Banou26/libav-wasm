@@ -14,6 +14,8 @@ export type MakeTransmuxerOptions = {
   read: (offset: number, size: number) => Promise<ArrayBuffer>
   length: number
   bufferSize: number
+  /** Input stream index of the audio track to mux; defaults to the first audio stream */
+  audioStreamIndex?: number
 }
 
 const abortSignalToPromise = (abortSignal: AbortSignal) =>
@@ -32,7 +34,8 @@ export const makeRemuxer = async ({
   workerOptions,
   read,
   length,
-  bufferSize = 2_500_000
+  bufferSize = 2_500_000,
+  audioStreamIndex
 }: MakeTransmuxerOptions) => {
   const worker = new Worker(workerUrl, workerOptions)
 
@@ -45,6 +48,7 @@ export const makeRemuxer = async ({
     publicPath,
     length,
     bufferSize,
+    audioStreamIndex,
     log: async (isError, text) => {
       if (isError) console.error(text)
       else console.log(text)
