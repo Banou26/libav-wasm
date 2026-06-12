@@ -387,6 +387,11 @@ const resolvers = {
         decoderConfig = {
           codec: initResult.info.input.videoMimeType,
           description: initResult.videoExtradata,
+          // Hardware decoders return frames that all rasterize as the FIRST
+          // decoded frame under this one-keyframe-per-flush pattern (verified
+          // on Chrome/NVIDIA); software decode is correct and plenty for
+          // thumbnail-sized output.
+          hardwareAcceleration: 'prefer-software',
         }
         if (videoDecoder.state === 'unconfigured') videoDecoder.configure(decoderConfig)
         return initResult
