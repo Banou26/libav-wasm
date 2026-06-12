@@ -947,6 +947,14 @@ public:
 
     ThumbnailReadResult result;
 
+    // The loop can exit at EOF/error with the packet freed; without this guard
+    // the assign below dereferences a dangling pointer and traps the module.
+    if (!packet || !packet->data || packet->size <= 0) {
+      result.cancelled = true;
+      read_data_function = val::undefined();
+      return result;
+    }
+
     write_vector.assign(packet->data, packet->data + packet->size);
 
     emscripten::val js_write_vector = emscripten::val(

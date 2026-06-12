@@ -359,9 +359,13 @@ const resolvers = {
 
     let videoFrameResolve: ((value: VideoFrame) => void) | undefined
     let videoFrameReject: ((reason?: any) => void) | undefined
-    const videoDecoder = new VideoDecoder({
+    let decoderConfig: VideoDecoderConfig | undefined
+    // An output with no waiter must still be closed: leaked frames exhaust a
+    // hardware decoder's output pool, after which it silently stops emitting.
+    const makeDecoder = () => new VideoDecoder({
       output: (output) => {
-        videoFrameResolve?.(output)
+        if (videoFrameResolve) videoFrameResolve(output)
+        else output.close()
         videoFrameResolve = undefined
         videoFrameReject = undefined
       },
@@ -371,6 +375,7 @@ const resolvers = {
         videoFrameReject = undefined
       }
     })
+    let videoDecoder = makeDecoder()
     const offscreen = new OffscreenCanvas(200 * 16/9, 200)
     const offscreenContext = offscreen.getContext('2d')
     if (!offscreenContext) throw new Error('OffscreenCanvas not supported')
@@ -379,30 +384,37 @@ const resolvers = {
       destroy: async () => remuxer.destroy(),
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
-        if (videoDecoder.state === 'unconfigured') {
-          videoDecoder.configure({
-            codec: initResult.info.input.videoMimeType,
-            description: initResult.videoExtradata,
-          })
+        decoderConfig = {
+          codec: initResult.info.input.videoMimeType,
+          description: initResult.videoExtradata,
         }
+        if (videoDecoder.state === 'unconfigured') videoDecoder.configure(decoderConfig)
         return initResult
       },
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
+        const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
+        if (readResult.cancelled || !readResult.data?.byteLength) throw new Error('keyframe read cancelled')
+        // A decode error closes the decoder; recover instead of failing every
+        // later call. The resolver is installed only after the wasm read and
+        // flush() is awaited, so an output can never leak into the next call.
+        if (videoDecoder.state === 'closed') videoDecoder = makeDecoder()
+        if (videoDecoder.state === 'unconfigured') {
+          if (!decoderConfig) throw new Error('decoder not configured')
+          videoDecoder.configure(decoderConfig)
+        }
         const videoFramePromise = new Promise<VideoFrame>((resolve, reject) => {
           videoFrameResolve = resolve
           videoFrameReject = reject
         })
-        const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
         videoDecoder.decode(new EncodedVideoChunk({
           type: "key",
           timestamp: readResult.pts,
           duration: readResult.duration,
           data: readResult.data
         }))
-        videoDecoder.flush()
-        const videoFrame = await videoFramePromise
+        const [videoFrame] = await Promise.all([videoFramePromise, videoDecoder.flush()])
         offscreenContext.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
         videoFrame.close()
         return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
