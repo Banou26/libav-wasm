@@ -114,6 +114,8 @@ export const makeRemuxer = async ({
     },
     seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
     read: () => addTask((abortController) => remuxer.read(wasmRead(abortController))),
-    readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp))
+    readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp)),
+    /** Takes effect on the next seek */
+    setAudioStreamIndex: (index: number) => remuxer.setAudioStreamIndex(index)
   }
 }

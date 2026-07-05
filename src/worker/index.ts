@@ -139,7 +139,8 @@ export interface RemuxerInstance {
     cancelled: boolean
     finished: boolean
   }>
-  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>;
+  readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>
+  setAudioStreamIndex: (index: number) => void
 }
 
 export type Remuxer = {
@@ -195,6 +196,7 @@ export type Remuxer = {
     offset: number
     cancelled: boolean
   }>
+  setAudioStreamIndex: (index: number) => void
 }
 
 const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
@@ -347,7 +349,8 @@ const resolvers = {
               offset: result.offset,
               cancelled: result.cancelled
             }
-          })
+          }),
+      setAudioStreamIndex: (index) => _remuxer.setAudioStreamIndex(index)
     } as Remuxer
 
     const readToWasmRead = (read: ReadFunction) => (offset: number, size: number) =>
@@ -398,6 +401,7 @@ const resolvers = {
       },
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
+      setAudioStreamIndex: async (index: number) => remuxer.setAudioStreamIndex(index),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
         const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
         if (readResult.cancelled || !readResult.data?.byteLength) throw new Error('keyframe read cancelled')

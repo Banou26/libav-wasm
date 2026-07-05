@@ -188,6 +188,11 @@ public:
     destroy();
   }
 
+  // Takes effect on the next seek, which rebuilds the stream mapping.
+  void set_audio_stream_index(int index) {
+    selected_audio_index = index;
+  }
+
   auto decimalToHex(int d, int padding) {
     std::string hex = std::to_string(d);
     while (hex.length() < padding) {
@@ -1506,5 +1511,6 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .function("read",    &Remuxer::read)
     .function("seek",    &Remuxer::seek)
     .function("destroy", &Remuxer::destroy)
-    .function("readKeyframe", &Remuxer::read_keyframe);
+    .function("readKeyframe", &Remuxer::read_keyframe)
+    .function("setAudioStreamIndex", &Remuxer::set_audio_stream_index);
 }
