@@ -387,15 +387,14 @@ const resolvers = {
       destroy: async () => remuxer.destroy(),
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
-        decoderConfig = {
+        const baseConfig: VideoDecoderConfig = {
           codec: initResult.info.input.videoMimeType,
           description: initResult.videoExtradata,
-          // Hardware decoders return frames that all rasterize as the FIRST
-          // decoded frame under this one-keyframe-per-flush pattern (verified
-          // on Chrome/NVIDIA); software decode is correct and plenty for
-          // thumbnail-sized output.
-          hardwareAcceleration: 'prefer-software',
         }
+        // hw decoders repeat the first frame under this one-keyframe-per-flush pattern
+        const swConfig: VideoDecoderConfig = { ...baseConfig, hardwareAcceleration: 'prefer-software' }
+        const swSupported = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported, () => false)
+        decoderConfig = swSupported ? swConfig : baseConfig
         if (videoDecoder.state === 'unconfigured') videoDecoder.configure(decoderConfig)
         return initResult
       },
@@ -404,10 +403,8 @@ const resolvers = {
       setAudioStreamIndex: async (index: number) => remuxer.setAudioStreamIndex(index),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
         const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
-        if (readResult.cancelled || !readResult.data?.byteLength) throw new Error('keyframe read cancelled')
-        // A decode error closes the decoder; recover instead of failing every
-        // later call. The resolver is installed only after the wasm read and
-        // flush() is awaited, so an output can never leak into the next call.
+        if (!readResult.data?.byteLength) throw new Error('empty keyframe data')
+        // a decode error closes the decoder, recover instead of failing every later call
         if (videoDecoder.state === 'closed') videoDecoder = makeDecoder()
         if (videoDecoder.state === 'unconfigured') {
           if (!decoderConfig) throw new Error('decoder not configured')
