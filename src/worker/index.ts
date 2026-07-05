@@ -363,8 +363,7 @@ const resolvers = {
     let videoFrameResolve: ((value: VideoFrame) => void) | undefined
     let videoFrameReject: ((reason?: any) => void) | undefined
     let decoderConfig: VideoDecoderConfig | undefined
-    // An output with no waiter must still be closed: leaked frames exhaust a
-    // hardware decoder's output pool, after which it silently stops emitting.
+    // an output with no waiter must be closed or the hw decoder's output pool exhausts
     const makeDecoder = () => new VideoDecoder({
       output: (output) => {
         if (videoFrameResolve) videoFrameResolve(output)

@@ -557,8 +557,7 @@ public:
     return 0;
   }
 
-  // Collect the input's audio streams and pick the one to mux: the requested
-  // audioStreamIndex when valid, else the first audio stream.
+  // Returns the requested audioStreamIndex when valid, else the first audio stream.
   int collect_audio_streams() {
     audio_streams.clear();
     audio_index = -1;
@@ -952,8 +951,7 @@ public:
 
     ThumbnailReadResult result;
 
-    // The loop can exit at EOF/error with the packet freed; without this guard
-    // the assign below dereferences a dangling pointer and traps the module.
+    // The loop can exit at EOF/error with the packet already freed.
     if (!packet || !packet->data || packet->size <= 0) {
       result.cancelled = true;
       read_data_function = val::undefined();
