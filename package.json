@@ -11,18 +11,18 @@
     "dev": "npm i ./dist && concurrently \"npm run dev-wasm-cmd\" \"npm run dev-web\" \"npm run worker-build-dev\"",
     "dev-wasm-cmd": "nodemon -e cpp --exec \"npm run make-docker\"",
     "dev-wasm": "concurrently \"nodemon -e cpp --exec \\\"npm run make-docker\\\"\"",
-    "build-worker": "vite build --config vite-worker.config.ts",
+    "build-worker": "vp build --config vite-worker.config.ts",
     "make-docker": "docker compose run --rm libav-wasm make",
     "docker-clean": "docker compose up --remove-orphans",
-    "dev-web": "vite --port 1234",
-    "vite-build": "vite build",
-    "vite-build-dev": "vite build --watch",
+    "dev-web": "vp dev --port 1234",
+    "vite-build": "vp build",
+    "vite-build-dev": "vp build --watch",
     "worker-build-dev": "nodemon -e ts --watch src/worker --exec \"npm run build-worker\"",
-    "build": "npm run copy-package && npm run make-docker && npm i ./dist && vite build && npm run build-worker  && npm run types && npm run copy-wasm && npm remove libav",
+    "build": "npm run copy-package && npm run make-docker && npm i ./dist && vp build && npm run build-worker  && npm run types && npm run copy-wasm && npm remove libav",
     "types": "tsc",
     "copy-package": "copyfiles -u 2 ./src/build-config/package.json dist",
     "copy-wasm": "copyfiles -u 1 dist/*.wasm build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
-    "preview": "vite preview"
+    "preview": "vp preview"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^24.0.1",
@@ -34,6 +34,17 @@
     "p-queue": "^7.3.0",
     "shx": "^0.3.4",
     "typescript": "^5.7.3",
-    "vite": "^6.1.0"
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
+    "vite-plus": "0.2.4"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "12.0.1",
+      "onFail": "download"
+    }
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4"
   }
 }
