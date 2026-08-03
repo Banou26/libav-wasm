@@ -15,9 +15,6 @@ jobs:
       with:
         node-version: 19.x
     - run: npm ci
-    
-    # - uses: satackey/action-docker-layer-caching@v0.0.11
-    #   continue-on-error: true
 
     - run: npm run build
 
@@ -71,6 +68,3 @@ jobs:
     - run: npm publish $(ls *.tgz)
       env:
         NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-    # - uses: actions/delete-package-versions@v1
-    #   with:
-    #     package-name: 'libav-wasm'

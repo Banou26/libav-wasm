@@ -11,10 +11,8 @@ export function debounceImmediateAndLatest<T extends (...args: any[]) => any>(
     const context = this;
 
     if (timeoutId === null) {
-      // Call immediately on the first call
       func.apply(context, args);
     } else {
-      // Store the latest arguments for the last call
       lastArgs = args;
     }
 
@@ -180,7 +178,6 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
             for (const buffer of this.buffers) controller.enqueue(buffer)
             controller.close()
           } catch (err) {
-            // console.error(err)
           }
           return
         }

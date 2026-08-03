@@ -4,8 +4,8 @@
 #include <vector>
 #include <sstream>
 #include <string>
-#include <cstring>  // for memcpy
-#include <numeric>  // std::accumulate
+#include <cstring>
+#include <numeric>
 
 extern "C" {
   #include <libavformat/avio.h>
@@ -114,22 +114,20 @@ public:
   AVCodecContext *audio_avcc = nullptr;
   int audio_index = -1;
 
-  // For transcoding (decoder)
   const AVCodec *audio_decoder_avc = nullptr;
   AVCodecContext *audio_decoder_avcc = nullptr;
   AVFrame *audio_input_frame = nullptr;
   AVFrame *audio_output_frame = nullptr;
   bool needs_audio_transcoding = false;
 
-  // Frame buffering for AAC encoder
   uint8_t **audio_buffer = nullptr;
   int audio_buffer_size = 0;
   int audio_buffer_samples = 0;
-  int aac_frame_size = 1024; // Standard AAC frame size
-  int64_t next_audio_pts = 0; // Track cumulative timestamp
-  bool audio_pts_initialized = false; // Track if we've set initial timestamp
+  // standard AAC frame; codecpar->frame_size, audio_output_frame->nb_samples and the encoder buffer split all follow this
+  int aac_frame_size = 1024;
+  int64_t next_audio_pts = 0;
+  bool audio_pts_initialized = false;
 
-  // Timestamp tracking for seek
   int64_t last_video_dts = AV_NOPTS_VALUE;
   int64_t last_audio_dts = AV_NOPTS_VALUE;
   int64_t pts_offset = 0;
@@ -144,9 +142,9 @@ public:
   int buffer_size;
   int video_stream_index;
   int number_of_streams;
+  // input stream index -> output stream index; -1 excludes the stream from the mp4 output (subtitles, attachments, non-selected audio) and drops its packets
   int* streams_list = nullptr;
 
-  // For partial segments
   double prev_duration = 0;
   double prev_pts = 0;
   long   prev_pos = 0;
@@ -154,7 +152,6 @@ public:
   double pts = 0;
   long   pos = 0;
 
-  // Some track-level info for building correct mime types
   std::string video_mime_type;
   std::string audio_mime_type;
 
@@ -205,7 +202,7 @@ public:
     switch (in_codecpar->profile) {
       case FF_PROFILE_AAC_LOW:  return "mp4a.40.2";   // AAC-LC
       case FF_PROFILE_AAC_HE:   return "mp4a.40.5";   // HE-AAC / AAC+ (SBR)
-      case FF_PROFILE_AAC_HE_V2:return "mp4a.40.29";  // HE-AAC v2 / AAC++ (SBR+PS)
+      case FF_PROFILE_AAC_HE_V2:return "mp4a.40.29";  // HE-AAC v2 (SBR+PS)
       case FF_PROFILE_AAC_LD:   return "mp4a.40.23";  // AAC-LD
       case FF_PROFILE_AAC_ELD:  return "mp4a.40.39";  // AAC-ELD
       default:                  return "mp4a.40.unknown";
@@ -317,10 +314,9 @@ public:
 
   int prepare_audio_encoder(){
     if (!needs_audio_transcoding) {
-        return 0; // No transcoding needed
+        return 0;
     }
 
-    // Find the output stream for audio in the output format
     AVStream* output_audio_stream = nullptr;
     for (int i = 0; i < output_format_context->nb_streams; i++) {
         if (output_format_context->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
@@ -346,15 +342,14 @@ public:
         return -1;
     }
 
-    // Use input stream parameters as basis
     int sample_rate = audio_decoder_avcc->sample_rate;
     int input_channels = audio_decoder_avcc->ch_layout.nb_channels;
-    if (input_channels > 2) input_channels = 2; // Downmix to stereo if needed
+    if (input_channels > 2) input_channels = 2;
 
     av_channel_layout_default(&audio_avcc->ch_layout, input_channels);
     audio_avcc->sample_rate = sample_rate;
-    // Use appropriate sample format for AAC encoder
-    audio_avcc->sample_fmt = AV_SAMPLE_FMT_FLTP; // AAC encoder typically uses float planar
+    // the AAC encoder takes float planar input only
+    audio_avcc->sample_fmt = AV_SAMPLE_FMT_FLTP;
     audio_avcc->bit_rate = 196000;
     audio_avcc->time_base = (AVRational){1, sample_rate};
     audio_avcc->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
@@ -364,14 +359,12 @@ public:
         return -1;
     }
 
-    // Update the output stream with encoder parameters
     avcodec_parameters_from_context(output_audio_stream->codecpar, audio_avcc);
     output_audio_stream->time_base = audio_avcc->time_base;
 
-    // Set frame_size for MP4 muxer
+    // required by the mp4 muxer, avcodec_parameters_from_context does not set it
     output_audio_stream->codecpar->frame_size = aac_frame_size;
 
-    // Set up output frame for AAC encoding
     audio_output_frame->format = audio_avcc->sample_fmt;
     audio_output_frame->ch_layout = audio_avcc->ch_layout;
     audio_output_frame->sample_rate = audio_avcc->sample_rate;
@@ -382,7 +375,6 @@ public:
         return -1;
     }
 
-    // Allocate sample buffer for frame splitting
     int output_channels = audio_avcc->ch_layout.nb_channels;
     audio_buffer_size = av_samples_get_buffer_size(NULL, output_channels, aac_frame_size * 4, audio_avcc->sample_fmt, 0);
     audio_buffer = (uint8_t**)av_calloc(output_channels, sizeof(uint8_t*));
@@ -437,7 +429,6 @@ public:
     int sample_size = av_get_bytes_per_sample(audio_avcc->sample_fmt);
     int input_samples = input_frame->nb_samples;
 
-    // Copy input frame data to our buffer
     for (int ch = 0; ch < channels; ch++) {
         memcpy(audio_buffer[ch] + (audio_buffer_samples * sample_size),
                input_frame->data[ch],
@@ -445,9 +436,7 @@ public:
     }
     audio_buffer_samples += input_samples;
 
-    // Send complete frames to encoder
     while (audio_buffer_samples >= aac_frame_size) {
-        // Copy one frame worth of samples to output frame
         for (int ch = 0; ch < channels; ch++) {
             memcpy(audio_output_frame->data[ch],
                    audio_buffer[ch],
@@ -456,13 +445,13 @@ public:
 
         audio_output_frame->nb_samples = aac_frame_size;
         audio_output_frame->pts = next_audio_pts;
-        next_audio_pts += aac_frame_size; // Increment by frame size in encoder time base
+        // works only because the encoder time_base is {1, sample_rate}, so one sample is one tick; any other time base drifts silently
+        next_audio_pts += aac_frame_size;
 
         if (send_audio_frame_to_encoder(audio_output_frame, out_stream) < 0) {
             return -1;
         }
 
-        // Shift remaining samples to beginning of buffer
         int remaining_samples = audio_buffer_samples - aac_frame_size;
         if (remaining_samples > 0) {
             for (int ch = 0; ch < channels; ch++) {
@@ -485,10 +474,8 @@ public:
     int channels = audio_avcc->ch_layout.nb_channels;
     int sample_size = av_get_bytes_per_sample(audio_avcc->sample_fmt);
 
-    // Send remaining samples (pad with silence if needed)
     for (int ch = 0; ch < channels; ch++) {
         memcpy(audio_output_frame->data[ch], audio_buffer[ch], audio_buffer_samples * sample_size);
-        // Pad with silence
         memset(audio_output_frame->data[ch] + (audio_buffer_samples * sample_size), 0,
                (aac_frame_size - audio_buffer_samples) * sample_size);
     }
@@ -519,7 +506,6 @@ public:
       }
 
       if (response >= 0) {
-        // Set initial timestamp from input packet, rescaled to encoder time base
         if (!audio_pts_initialized && input_packet->pts != AV_NOPTS_VALUE) {
           next_audio_pts = av_rescale_q(input_packet->pts,
                                         input_format_context->streams[audio_index]->time_base,
@@ -537,7 +523,6 @@ public:
     if (audio_index < 0) return 0;
     audio_avs = input_format_context->streams[audio_index];
 
-    // Set up decoder for transcoding if needed
     if (needs_audio_transcoding) {
         if (fill_stream_info(audio_avs, &audio_decoder_avc, &audio_decoder_avcc))
             return -1;
@@ -579,25 +564,23 @@ public:
 
   void init_input(bool skip = false) {
     input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
+    // args after the buffer size: 0 = not writing, this = opaque, avio_read = custom read, nullptr = no write, avio_seek = custom seek
     input_avio_context = avio_alloc_context(
       input_avio_buffer,
       buffer_size,
-      0,                       // not writing
-      this,                    // opaque
-      avio_read,               // custom read
-      nullptr,                 // no write
-      avio_seek                // custom seek
+      0,
+      this,
+      avio_read,
+      nullptr,
+      avio_seek
     );
     input_format_context = avformat_alloc_context();
     input_format_context->pb = input_avio_context;
 
+    // this branch carries an AVDictionary of analyzeduration/probesize tuning for codec detection during seek, both av_dict_set calls disabled for now; do not collapse it into the else
     if (skip) {
       AVDictionary* opts = nullptr;
-      // Increase analyzeduration and probesize for better codec detection during seek
-      // av_dict_set(&opts, "analyzeduration", "5000000", 0);  // 5 seconds
-      // av_dict_set(&opts, "probesize", "10000000", 0);       // 10MB
       int ret = avformat_open_input(&input_format_context, NULL, nullptr, &opts);
-      // int ret = avformat_open_input(&input_format_context, NULL, nullptr, nullptr);
       if (ret < 0) {
         throw std::runtime_error(
           "Could not open input: " + ffmpegErrStr(ret)
@@ -628,14 +611,15 @@ public:
 
   void init_output() {
     output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
+    // args after the buffer size: 1 = write flag, this = opaque, nullptr = no read, avio_write = custom write, nullptr = no seek
     output_avio_context = avio_alloc_context(
       output_avio_buffer,
       buffer_size,
-      1,                       // write flag
-      this,                    // opaque
-      nullptr,                 // no read
-      avio_write,             // custom write
-      nullptr                 // no seek
+      1,
+      this,
+      nullptr,
+      avio_write,
+      nullptr
     );
 
     avformat_alloc_output_context2(&output_format_context, NULL, "mp4", NULL);
@@ -684,7 +668,6 @@ public:
           continue;
         }
 
-        // Mux only the selected audio stream
         if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO && i != effective_audio) {
           streams_list[i] = -1;
           continue;
@@ -694,7 +677,7 @@ public:
           audio_index = i;
           if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
             needs_audio_transcoding = true;
-            audio_mime_type = "mp4a.40.2"; // AAC-LC output
+            audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the EAC3 input
           }
         }
 
@@ -707,8 +690,7 @@ public:
           throw std::runtime_error("Could not allocate an output stream");
         }
 
-        // For EAC3 audio, we'll set AAC parameters later in prepare_audio_encoder
-        // For now, just copy the parameters - they'll be overwritten if transcoding
+        // EAC3 params are copied as-is on purpose: prepare_audio_encoder runs later in init() and overwrites them with the AAC encoder params
         int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
         if (cpRet < 0) {
           throw std::runtime_error(
@@ -742,11 +724,9 @@ public:
       AVStream* in_stream = input_format_context->streams[i];
       AVCodecParameters* in_codecpar = in_stream->codecpar;
 
-      // We handle attachments separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
         Attachment attachment;
 
-        // Copy metadata
         if (auto fn = av_dict_get(in_stream->metadata, "filename", NULL, 0)) {
           attachment.filename = fn->value;
         }
@@ -763,37 +743,30 @@ public:
         continue;
       }
 
-      // We handle subtitles separately
       if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        // It's a subtitle header
         SubtitleFragment subtitle_fragment = SubtitleFragment();
         subtitle_fragment.streamIndex = i;
         subtitle_fragment.isHeader = true;
         subtitle_fragment.start = 0;
         subtitle_fragment.end = 0;
-        // Try reading some metadata
         AVDictionaryEntry* lang = av_dict_get(in_stream->metadata, "language", NULL, 0);
         if (lang) subtitle_fragment.language = lang->value;
         AVDictionaryEntry* title = av_dict_get(in_stream->metadata, "title", NULL, 0);
         if (title) subtitle_fragment.title = title->value;
-        // The extradata is the "header"
         std::string subtitle_data;
         subtitle_data.assign((char*)in_codecpar->extradata, in_codecpar->extradata_size);
         subtitle_fragment.data = subtitle_data;
 
         subtitles.push_back(subtitle_fragment);
-        // Mark not to be remuxed in the output container (mp4)
         streams_list[i] = -1;
         continue;
       }
 
-      // Mux only the selected audio stream
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO && i != effective_audio) {
         streams_list[i] = -1;
         continue;
       }
 
-      // Otherwise, we consider video or audio
       if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         video_stream_index = i;
         if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
@@ -808,11 +781,10 @@ public:
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
         } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
           needs_audio_transcoding = true;
-          audio_mime_type = "mp4a.40.2"; // AAC-LC output
+          audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the EAC3 input
         }
       }
 
-      // Create new output stream
       AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
       if (!out_stream) {
         throw std::runtime_error("Could not allocate an output stream");
@@ -835,13 +807,12 @@ public:
   }
 
   void write_header() {
-    // Step E: set fragmentation flags
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "strict", "experimental", 0);
     av_dict_set(&opts, "c", "copy", 0);
     av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
 
-    // Step F: write the MP4 header (this triggers avio_write => data -> data)
+    // synchronously drives the custom avio_write, which is how the mp4 init segment lands in write_vector and is returned as result.data
     int ret = avformat_write_header(output_format_context, &opts);
     if (ret < 0) {
       throw std::runtime_error(
@@ -878,7 +849,6 @@ public:
 
     AVStream* video_stream = input_format_context->streams[video_stream_index];
 
-    // Convert timestamp to stream time base
     int64_t seek_target = av_rescale_q(
       timestamp * AV_TIME_BASE,
       AV_TIME_BASE_Q,
@@ -902,7 +872,6 @@ public:
           return cancelled_result;
         }
         if (ret == AVERROR_EOF) {
-          // flush + trailer
           avio_flush(output_format_context->pb);
           av_write_trailer(output_format_context);
           av_packet_free(&packet);
@@ -914,7 +883,6 @@ public:
 
       AVStream* in_stream = input_format_context->streams[packet->stream_index];
 
-      // If it's a subtitle packet
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE || in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         av_packet_free(&packet);
         continue;
@@ -922,14 +890,12 @@ public:
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         av_packet_free(&packet);
         continue;
       }
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         continue;
       }
 
@@ -997,7 +963,6 @@ public:
     initializing = false;
     first_initialization_done = true;
 
-    // Build IOInfo
     IOInfo infoObj;
     infoObj.input.formatName  = input_format_context->iformat->name ? input_format_context->iformat->name : "";
     infoObj.input.mimeType    = input_format_context->iformat->mime_type ? input_format_context->iformat->mime_type : "";
@@ -1007,11 +972,10 @@ public:
 
     infoObj.output.formatName = output_format_context->oformat->name ? output_format_context->oformat->name : "";
     infoObj.output.mimeType   = output_format_context->oformat->mime_type ? output_format_context->oformat->mime_type : "";
-    infoObj.output.duration   = 0.0; // we haven’t written frames yet
+    infoObj.output.duration   = 0.0;
     infoObj.output.video_mime_type = video_mime_type;
     infoObj.output.audio_mime_type = audio_mime_type;
 
-    // Return everything the caller needs from init
     InitResult result;
     emscripten::val js_write_vector = emscripten::val(
       emscripten::typed_memory_view(
@@ -1026,7 +990,6 @@ public:
     result.audio_streams = audio_streams;
     result.info = infoObj;
 
-    // loop through the chapters
     for (int i = 0; i < input_format_context->nb_chapters; i++) {
       AVChapter *av_chapter = input_format_context->chapters[i];
       int64_t start_time = av_chapter->start * av_chapter->time_base.num / av_chapter->time_base.den;
@@ -1060,7 +1023,6 @@ public:
       }
     }
 
-    // Copy the extradata to the result
     if (in_codecpar->extradata && in_codecpar->extradata_size > 0) {
       result.video_extradata.assign(
         in_codecpar->extradata,
@@ -1087,18 +1049,14 @@ public:
     while (true) {
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
-      // printf("READ FRAME read error | %s \n", av_err2str(ret));
       if (ret < 0) {
-        // read_data_function = val::undefined();
         if (ret == AVERROR_EXIT) {
           ReadResult cancelled_result;
           cancelled_result.cancelled = true;
           read_data_function = val::undefined();
           return cancelled_result;
         }
-        // if ret == AVERROR_EOF, we finalize
         if (ret == AVERROR_EOF) {
-          // flush + trailer
           avio_flush(output_format_context->pb);
           av_write_trailer(output_format_context);
           av_packet_free(&packet);
@@ -1111,14 +1069,12 @@ public:
 
       AVStream* in_stream  = input_format_context->streams[packet->stream_index];
 
-      // If it's a subtitle packet
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
         SubtitleFragment subtitle_fragment;
         subtitle_fragment.streamIndex = packet->stream_index;
         subtitle_fragment.isHeader = false;
         subtitle_fragment.start = packet->pts;
         subtitle_fragment.end   = subtitle_fragment.start + packet->duration;
-        // The actual subtitle data
         std::string subtitle_data;
         subtitle_data.assign((char*)packet->data, packet->size);
         subtitle_fragment.data = subtitle_data;
@@ -1129,37 +1085,30 @@ public:
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         av_packet_free(&packet);
         continue;
       }
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
-        // not an included stream, drop
         continue;
       }
 
-      // If it's audio or video, we remux
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         if (needs_audio_transcoding && in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3) {
-          // Transcode EAC3 to AAC
           if (transcode_audio(packet, out_stream) < 0) {
             printf("ERROR: could not transcode audio\n");
           }
         } else {
-          // Direct copy for other audio formats
           av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-          // Fix timestamps after seek
           if (after_seek && packet->dts != AV_NOPTS_VALUE) {
             if (last_audio_dts == AV_NOPTS_VALUE) {
-              // First packet after seek
               last_audio_dts = packet->dts;
             } else if (packet->dts < last_audio_dts) {
-              // Non-monotonic timestamp detected, adjust
+              // the mp4 muxer rejects non-monotonic dts, so force it forward and clamp pts up to match
               packet->dts = last_audio_dts + 1;
               if (packet->pts != AV_NOPTS_VALUE && packet->pts < packet->dts) {
                 packet->pts = packet->dts;
@@ -1180,16 +1129,12 @@ public:
       bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
 
       duration += packet->duration * av_q2d(in_stream->time_base);
-      // rescale timestamps
       av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
-      // Fix timestamps after seek for video packets
       if (after_seek && packet->dts != AV_NOPTS_VALUE) {
         if (last_video_dts == AV_NOPTS_VALUE) {
-          // First packet after seek
           last_video_dts = packet->dts;
         } else if (packet->dts <= last_video_dts) {
-          // Non-monotonic timestamp detected, adjust
           packet->dts = last_video_dts + 1;
           if (packet->pts != AV_NOPTS_VALUE && packet->pts < packet->dts) {
             packet->pts = packet->dts;
@@ -1198,7 +1143,6 @@ public:
         last_video_dts = packet->dts;
       }
 
-      // Set proper timestamps for packets without them
       if (packet->pts == AV_NOPTS_VALUE && packet->dts != AV_NOPTS_VALUE) {
         packet->pts = packet->dts;
       }
@@ -1213,13 +1157,11 @@ public:
         pts = packet->pts * av_q2d(out_stream->time_base);
         pos = packet->pos;
 
-        // Clear after_seek flag on keyframe since we've stabilized
         if (after_seek) {
           after_seek = false;
         }
       }
 
-      // Write to output
       ret = av_interleaved_write_frame(output_format_context, packet);
       if (ret < 0) {
         printf("Error writing frame: %s\n", ffmpegErrStr(ret).c_str());
@@ -1259,7 +1201,7 @@ public:
 
     read_data_function = read_function;
 
-    // destroy_streams();
+    // unlike init(), this deliberately skips destroy_streams() and keeps video_mime_type/audio_mime_type, since init_streams(true) never re-derives video_mime_type
     destroy_input();
     destroy_output();
 
@@ -1269,10 +1211,7 @@ public:
     write_vector.clear();
     clear_attachments();
     subtitles.clear();
-    // video_mime_type.clear();
-    // audio_mime_type.clear();
 
-    // Reset transcoding state
     needs_audio_transcoding = false;
 
     initializing = true;
@@ -1287,13 +1226,11 @@ public:
     subtitles.clear();
     wrote = false;
 
-    // Reset audio transcoding buffer
     if (needs_audio_transcoding) {
         audio_buffer_samples = 0;
-        audio_pts_initialized = false; // Reset so we get proper timestamp from seek position
+        audio_pts_initialized = false;
     }
 
-    // Reset timestamp tracking after seek
     last_video_dts = AV_NOPTS_VALUE;
     last_audio_dts = AV_NOPTS_VALUE;
     pts_offset = 0;
@@ -1312,15 +1249,11 @@ public:
     return read_result;
   }
 
-  //-----------------------------------------
-  // Cleanup everything
-  //-----------------------------------------
   void destroy() {
     destroy_streams();
     destroy_input();
     destroy_output();
 
-    // Cleanup transcoding resources
     if (audio_input_frame) {
       av_frame_free(&audio_input_frame);
       audio_input_frame = nullptr;
@@ -1404,7 +1337,6 @@ private:
     }
   }
 
-  // Compatibility wrapper for different FFmpeg versions
   static int avio_write_impl(void* opaque, const uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
@@ -1416,7 +1348,6 @@ private:
     return buf_size;
   }
 
-  // Create function pointer with the correct signature for the current FFmpeg version
   #if LIBAVFORMAT_VERSION_MAJOR >= 59
   static int avio_write(void* opaque, const uint8_t* buf, int buf_size) {
   #else

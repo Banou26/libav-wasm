@@ -204,8 +204,6 @@ const makeModule = (publicPath: string, log: (isError: boolean, text: string) =>
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     print: (text: string) => console.log(text),
     printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
-    // print: (text: string) => log(false, text),
-    // printErr: (text: string) => log(true, text),
   }) as Promise<EmscriptenModule & { Remuxer: RemuxerInstance }>
 
 type WASMVector<T> = {
@@ -403,7 +401,7 @@ const resolvers = {
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
         const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
         if (!readResult.data?.byteLength) throw new Error('empty keyframe data')
-        // a decode error closes the decoder, recover instead of failing every later call
+        // a decode error closes the VideoDecoder permanently, so recreate it here or every later readKeyframe call fails
         if (videoDecoder.state === 'closed') videoDecoder = makeDecoder()
         if (videoDecoder.state === 'unconfigured') {
           if (!decoderConfig) throw new Error('decoder not configured')

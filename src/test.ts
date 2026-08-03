@@ -5,7 +5,6 @@ import { makeRemuxer } from '.'
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
 const BUFFER_SIZE = 2_500_000
 const VIDEO_URL = '../video2.mkv'
-// const VIDEO_URL = '../spidey.mkv'
 
 export default async function saveFile(plaintext: ArrayBuffer, fileName: string, fileType: string) {
   return new Promise((resolve, reject) => {
@@ -19,8 +18,7 @@ export default async function saveFile(plaintext: ArrayBuffer, fileName: string,
     // @ts-ignore
       return resolve();
     } else if (/iPhone|fxios/i.test(navigator.userAgent)) {
-      // This method is much slower but createObjectURL
-      // is buggy on iOS
+      // This method is much slower but createObjectURL is buggy on iOS
       const reader = new FileReader();
       reader.addEventListener('loadend', () => {
         if (reader.error) {
@@ -220,7 +218,7 @@ fetch(VIDEO_URL, { headers: { Range: `bytes=0-1` } })
       const { currentTime } = video
       const bufferedRanges = getTimeRanges()
       const timeRange = bufferedRanges.find(({ start, end }) => start <= currentTime && currentTime <= end)
-      // seeking forward in a buffered range, can just continue by reading
+      // already buffered and forward of the last seek, playback can just keep reading, no remuxer seek needed
       if (timeRange && currentTime >= lastSeekedPosition) {
         return
       }
