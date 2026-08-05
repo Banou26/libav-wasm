@@ -95,6 +95,86 @@ export const FIXTURES = [
     inputs: inputs(),
     args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'truehd'],
   },
+
+  // One per REASON a container used to fail, not one per extension. Nothing here is about the extension:
+  // avi and mpegts fail for what they do to h264, webm for codecs nothing knew how to name.
+  {
+    name: 'h264-aac.avi',
+    why: "avi tags h264 with its own fourcc, and the mp4 muxer refuses tags it does not recognise",
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
+    name: 'h264-aac.ts',
+    why: 'mpegts carries Annex-B video and ADTS audio, and mp4 takes neither as-is',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
+    name: 'hevc-aac.ts',
+    why: 'the hevc profile_tier_level has to be read out of an Annex-B SPS, emulation prevention and all',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=none', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
+    name: 'hevc-aac.mkv',
+    why: 'the hvcC half of the pair: identical stream to hevc-aac.ts, so the two codec strings must match',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=none', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
+    name: 'vp9-opus.webm',
+    why: 'vp9 stores its level nowhere, so it is derived from the picture size and rate',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-crf', '40', '-b:v', '0', '-pix_fmt', 'yuv420p', '-c:a', 'libopus'],
+  },
+  {
+    name: 'av1-opus.webm',
+    why: 'av1 keeps profile, level, tier and bit depth in its configuration record',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libsvtav1', '-preset', '12', '-crf', '50', '-pix_fmt', 'yuv420p', '-c:a', 'libopus'],
+  },
+  {
+    name: 'h264-flac.mkv',
+    why: 'flac goes into mp4 untouched, but only with strict experimental set',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'flac'],
+  },
+  {
+    name: 'h264-vorbis.mkv',
+    why: 'mp4 cannot carry vorbis at all, so it has to re-encode rather than be dropped',
+    seconds: 20,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'libvorbis'],
+  },
+  {
+    name: 'cover-art.mp4',
+    why: 'a poster marked attached_pic is a video stream too, and picking it thumbnails one frame forever',
+    seconds: 20,
+    cover: true,
+    inputs: inputs(),
+    // written out rather than reusing encode(), because every option here has to name stream 0: an
+    // unqualified -filter:v or -c:v would be applied to the still as well
+    args: [
+      '-filter:v:0', colourByTime,
+      '-g', String(GOP), '-keyint_min', String(GOP), '-sc_threshold', '0',
+      '-c:v:0', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+    ],
+  },
+  {
+    name: 'theora-vorbis.ogv',
+    why: 'a video codec no browser can play has to say so, not abort or produce an mp4 nothing accepts',
+    seconds: 10,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libtheora', '-q:v', '5', '-pix_fmt', 'yuv420p', '-c:a', 'libvorbis'],
+  },
 ]
 
 /**
@@ -128,7 +208,7 @@ third line
 
 /** the spec decides the bytes, so its hash decides whether a cached fixture is still valid */
 const specHash = (fixture) =>
-  createHash('sha256').update(JSON.stringify([fixture.inputs, fixture.args, fixture.seconds, fixture.subtitles, SECOND_STEP])).digest('hex').slice(0, 16)
+  createHash('sha256').update(JSON.stringify([fixture.inputs, fixture.args, fixture.seconds, fixture.subtitles, fixture.cover, SECOND_STEP])).digest('hex').slice(0, 16)
 
 const build = async (fixture) => {
   const target = join(FIXTURE_DIR, fixture.name)
@@ -138,14 +218,27 @@ const build = async (fixture) => {
   const cached = await readFile(stampPath, 'utf8').catch(() => null)
   if (cached === hash && await stat(target).then(s => s.size > 0, () => false)) return { ...fixture, path: target, cached: true }
 
-  const args = ['-hide_banner', '-loglevel', 'error', '-y']
+  const args = ['-hide_banner', '-loglevel', 'error', '-y', ...fixture.inputs]
+  const maps = ['-map', '0:v', '-map', '1:a']
+  const extra = []
+
   if (fixture.subtitles) {
     const subPath = join(FIXTURE_DIR, `${fixture.name}.srt`)
     await writeFile(subPath, SUBTITLE_TRACK)
-    args.push(...fixture.inputs, '-i', subPath, ...fixture.args, '-t', String(fixture.seconds), '-c:s', 'ass', '-map', '0:v', '-map', '1:a', '-map', '2:s')
-  } else {
-    args.push(...fixture.inputs, ...fixture.args, '-t', String(fixture.seconds), '-map', '0:v', '-map', '1:a')
+    args.push('-i', subPath)
+    extra.push('-c:s', 'ass')
+    maps.push('-map', '2:s')
   }
+
+  if (fixture.cover) {
+    const coverPath = join(FIXTURE_DIR, `${fixture.name}.cover.png`)
+    await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64', '-frames:v', '1', coverPath])
+    args.push('-i', coverPath)
+    extra.push('-c:v:1', 'png', '-disposition:v:1', 'attached_pic')
+    maps.push('-map', '2:v')
+  }
+
+  args.push(...fixture.args, ...extra, '-t', String(fixture.seconds), ...maps)
   if (fixture.strict) args.push('-strict', '-2')
   args.push(target)
 
@@ -173,7 +266,7 @@ export const localFixtures = async () => {
   const dir = join(FIXTURE_DIR, 'local')
   const names = await readdir(dir).catch(() => [])
   return names
-    .filter(name => /\.(mkv|mp4|webm|mov)$/i.test(name))
+    .filter(name => /\.(mkv|mp4|m4v|webm|mov|avi|ts|m2ts|flv|3gp|mpg|ogv|wmv)$/i.test(name))
     .map(name => ({ name, path: join(dir, name), local: true }))
 }
 

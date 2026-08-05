@@ -81,6 +81,94 @@ test.describe('remuxing', () => {
   })
 })
 
+// One case per REASON a container used to fail, not one per extension. Every one of these produced either
+// a module-killing throw or an mp4 with a codec nothing could name, which MediaSource rejects outright.
+test.describe('containers', () => {
+  const CASES = [
+    { name: 'h264-aac.avi', video: /^avc1\./, audio: 'mp4a.40.2', why: "avi's own h264 fourcc reached the mp4 muxer" },
+    { name: 'h264-aac.ts', video: /^avc1\./, audio: 'mp4a.40.2', why: 'mpegts hands over Annex-B video and ADTS audio' },
+    // exact, for the two the library works out for itself rather than copying from the file. Chrome takes
+    // any syntactically valid level, so a regexp here would pass just as happily on a wrong one: 320x240
+    // at 10fps is level 2.0 by the table in the vp9 spec, and svt-av1 writes seq_level_idx 0 at 8 bit.
+    { name: 'vp9-opus.webm', video: /^vp09\.00\.20\.08$/, audio: 'opus', why: 'vp9 stores no level anywhere, so it is derived' },
+    { name: 'av1-opus.webm', video: /^av01\.0\.00M\.08$/, audio: 'opus', why: 'av1 keeps everything in its configuration record' },
+    { name: 'cover-art.mp4', video: /^avc1\./, audio: 'mp4a.40.2', why: 'a poster is a video stream lavf will hand over too' },
+    { name: 'h264-flac.mkv', video: /^avc1\./, audio: 'flac', why: 'flac passes through mp4 untouched' },
+    { name: 'h264-vorbis.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'mp4 cannot carry vorbis, so it re-encodes' },
+  ]
+
+  for (const { name, video, audio, why } of CASES) {
+    test(`${name} plays, because ${why}`, async ({ page }) => {
+      await open(page)
+      const result = await page.evaluate((n) => window.harness.playable(n), name)
+
+      expect(result.videoMimeType, `${name} produced no usable video codec string`).toMatch(video)
+      expect(result.audioMimeType, `${name} produced no usable audio codec string`).toBe(audio)
+      expect(result.supported, `MediaSource does not support ${result.mime}`).toBe(true)
+      // the codec string being well formed proves nothing about the bytes: an mp4 whose tracks and
+      // codecs= disagree is accepted by isTypeSupported and rejected by appendBuffer
+      expect(typeof result.buffered, `MSE rejected the bytes: ${JSON.stringify(result.buffered)}`).toBe('number')
+      expect(result.buffered).toBeGreaterThan(0)
+    })
+  }
+
+  /**
+   * The same encode in two containers must be named identically.
+   *
+   * mp4 keeps h264 and hevc parameter sets in a length-prefixed avcC/hvcC record; every other container
+   * keeps them as raw Annex-B, which is a different layout behind a start code, and for hevc it is one
+   * that also carries emulation prevention bytes through the middle of the profile_tier_level. Comparing
+   * the two forms of one stream pins the Annex-B reader to the record reader, and needs no codec support
+   * from the browser running the suite: this machine's Chrome decodes no hevc at all, so an assertion
+   * about MediaSource would prove nothing here even when the parse is perfect.
+   */
+  const PAIRS = [
+    { annexb: 'h264-aac.ts', record: 'h264-aac.mkv', prefix: 'avc1.' },
+    { annexb: 'hevc-aac.ts', record: 'hevc-aac.mkv', prefix: 'hev1.' },
+  ]
+
+  for (const { annexb, record, prefix } of PAIRS) {
+    test(`${annexb} and ${record} describe the same stream identically`, async ({ page }) => {
+      await open(page)
+      const fromAnnexB = await page.evaluate((n) => window.harness.remux(n), annexb)
+      const fromRecord = await page.evaluate((n) => window.harness.remux(n), record)
+
+      expect(fromRecord.videoMimeType).toMatch(new RegExp(`^${prefix.replace('.', '\\.')}`))
+      expect(fromAnnexB.videoMimeType, `${annexb} read out of Annex-B`).toBe(fromRecord.videoMimeType)
+    })
+  }
+
+  // theora has no mp4 mapping and no browser decodes it, so this one cannot be made to play. What it must
+  // not do is take the module down, or hand back a pointer where a reason belongs.
+  test('a video codec that cannot reach a browser says so', async ({ page }) => {
+    await open(page)
+    const message = await page.evaluate(() =>
+      window.harness.remux('theora-vorbis.ogv').then(() => 'no error at all', (error) => String(error))
+    )
+    expect(message).toContain('No playable video track')
+  })
+
+  // A poster is a video stream as far as lavf is concerned, and it comes last, so taking the last video
+  // stream found makes every seek and every thumbnail read one still forever. The same silent wrongness
+  // the hevc thumbnail test exists for, reached from a different direction.
+  test('a cover image is not mistaken for the video track', async ({ page }) => {
+    await open(page)
+    const times = [4, 12]
+    const result = await page.evaluate((t) => window.harness.thumbnails('cover-art.mp4', t), times)
+
+    for (const shot of result.shots) expectFrameAt(shot, shot.t)
+    expect(new Set(result.shots.map(s => secondFromRed(s.r))).size).toBe(times.length)
+  })
+
+  // a file the muxer refuses is exactly when a thumbnail matters most, and the thumbnail path shares none
+  // of the muxer's limits: it decodes in wasm and hands back pixels
+  test('thumbnails still work for a file that cannot be remuxed', async ({ page }) => {
+    await open(page)
+    const result = await page.evaluate(() => window.harness.thumbnails('theora-vorbis.ogv', [2, 6]))
+    for (const shot of result.shots) expectFrameAt(shot, shot.t)
+  })
+})
+
 test.describe('seeking', () => {
   test('seeks land on the requested position, forwards and backwards', async ({ page }) => {
     await open(page)
@@ -94,6 +182,25 @@ test.describe('seeking', () => {
     const again = steps.filter(s => s.target === 30).at(-1)
     expect(again.bytes).toBe(first.bytes)
     expect(again.pts).toBe(first.pts)
+  })
+
+  /**
+   * mpegts starts its clock wherever the broadcast's happened to be, roughly 1.4s into this fixture and
+   * legitimately anywhere at all in a real one, and it carries no index to seek by either. Both showed up
+   * as a seek to 12s reporting 0: no second keyframe arrived before the first fragment flushed, so the
+   * result carried the zero the fragment was reset to, and once that was fixed it reported 13.42.
+   */
+  test('seeking is correct in a container whose clock does not start at zero', async ({ page }) => {
+    await open(page)
+    const { steps } = await page.evaluate(() => window.harness.seek('h264-aac.ts', [12, 4, 16]))
+    for (const step of steps) {
+      // at or before the target, never after: a seek lands on the keyframe at or before what was asked
+      // for, so anything later is the file's own clock leaking into the output rather than a rounding
+      // difference. Any tolerance wide enough for the keyframe interval also hides that offset.
+      expect(step.pts, `seek(${step.target}) landed at ${step.pts}, past the target`).toBeLessThanOrEqual(step.target + 0.001)
+      expect(step.target - step.pts, `seek(${step.target}) landed at ${step.pts}`).toBeLessThanOrEqual(3)
+    }
+    expect(new Set(steps.map(s => s.pts)).size, 'every seek landed in the same place').toBe(steps.length)
   })
 
   // mov timescales are not 1/1000, which is the only reason an unrescaled millisecond value ever worked

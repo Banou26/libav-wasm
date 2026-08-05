@@ -66,9 +66,12 @@ window.harness = {
     const remuxer = await makeRemuxer(common(length, read))
     try {
       const init = await remuxer.init()
-      const codecs = [init.info.output.videoMimeType, init.info.output.audioMimeType].filter(Boolean).join(',')
+      const videoMimeType = init.info.output.videoMimeType
+      const audioMimeType = init.info.output.audioMimeType
+      const codecs = [videoMimeType, audioMimeType].filter(Boolean).join(',')
       const mime = `video/mp4; codecs="${codecs}"`
-      if (!MediaSource.isTypeSupported(mime)) return { mime, supported: false }
+      const detail = { mime, videoMimeType, audioMimeType }
+      if (!MediaSource.isTypeSupported(mime)) return { ...detail, supported: false }
 
       const chunks = []
       for (let i = 0; i < 2; i++) {
@@ -96,7 +99,7 @@ window.harness = {
         }, { once: true })
         setTimeout(() => resolve({ error: 'timed out waiting for sourceopen' }), 20_000)
       })
-      return { mime, supported: true, buffered }
+      return { ...detail, supported: true, buffered }
     } finally { await remuxer.destroy() }
   },
 
