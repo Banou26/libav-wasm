@@ -248,14 +248,14 @@ public:
     auto extradata_size = in_codecpar->extradata_size;
     char mime_type[50];
 
-    if (!extradata || extradata_size < 1) {
+    if (!extradata || extradata_size < 4) {
       printf("Invalid extradata.\n");
-      return mime_type;
+      return "";
     }
 
     if (extradata[0] != 1) {
       printf("Unsupported extradata format.\n");
-      return mime_type;
+      return "";
     }
 
     // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/avcC.js#L6
@@ -272,14 +272,14 @@ public:
     auto extradata_size = in_codecpar->extradata_size;
     char mime_type[50];
 
-    if (!extradata || extradata_size < 1) {
+    if (!extradata || extradata_size < 13) {
       printf("Invalid extradata.\n");
-      return mime_type;
+      return "";
     }
 
     if (extradata[0] != 1) {
       printf("Unsupported extradata format.\n");
-      return mime_type;
+      return "";
     }
 
     // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/hvcC.js
@@ -1271,17 +1271,13 @@ public:
         subtitle_fragment.data = subtitle_data;
 
         subtitles.push_back(subtitle_fragment);
-        continue;
-      }
-
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
         av_packet_free(&packet);
         continue;
       }
 
       if (packet->stream_index >= number_of_streams
           || streams_list[packet->stream_index] < 0) {
+        av_packet_free(&packet);
         continue;
       }
 
@@ -1392,9 +1388,11 @@ public:
 
     read_data_function = read_function;
 
-    // unlike init(), this deliberately skips destroy_streams() and keeps video_mime_type/audio_mime_type, since init_streams(true) never re-derives video_mime_type
     destroy_input();
     destroy_output();
+    // init_streams/prepare_decoder/prepare_audio_encoder below all rebuild these over the live pointers,
+    // so without this every seek of a transcoded-audio file leaked two codec contexts and its PCM buffers
+    destroy_audio();
 
     av_packet_free(&packet);
 
@@ -1440,11 +1438,8 @@ public:
     return read_result;
   }
 
-  void destroy() {
-    destroy_streams();
-    destroy_input();
-    destroy_output();
-
+  // the order matters: audio_buffer's channel count is read back off audio_avcc, so that goes last
+  void destroy_audio() {
     if (audio_input_frame) {
       av_frame_free(&audio_input_frame);
       audio_input_frame = nullptr;
@@ -1461,14 +1456,6 @@ public:
       av_free(audio_buffer);
       audio_buffer = nullptr;
     }
-    if (video_decoder_avcc) {
-      avcodec_free_context(&video_decoder_avcc);
-      video_decoder_avcc = nullptr;
-    }
-    if (thumbnail_sws) {
-      sws_freeContext(thumbnail_sws);
-      thumbnail_sws = nullptr;
-    }
     if (audio_decoder_avcc) {
       avcodec_free_context(&audio_decoder_avcc);
       audio_decoder_avcc = nullptr;
@@ -1476,6 +1463,22 @@ public:
     if (audio_avcc) {
       avcodec_free_context(&audio_avcc);
       audio_avcc = nullptr;
+    }
+  }
+
+  void destroy() {
+    destroy_streams();
+    destroy_input();
+    destroy_output();
+    destroy_audio();
+
+    if (video_decoder_avcc) {
+      avcodec_free_context(&video_decoder_avcc);
+      video_decoder_avcc = nullptr;
+    }
+    if (thumbnail_sws) {
+      sws_freeContext(thumbnail_sws);
+      thumbnail_sws = nullptr;
     }
   }
 
