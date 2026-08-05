@@ -232,6 +232,19 @@ public:
     return hex;
   }
 
+  /**
+   * Whether the mp4 output can carry this audio at all.
+   *
+   * Handed a codec it cannot write, avformat_write_header fails and, with no exception support in this
+   * build, that failure aborts the entire module rather than surfacing as an error. So an audio track the
+   * muxer will not take is dropped from the output instead: the file then plays video only, which is worth
+   * far more than it not playing at all. TrueHD is the case that reaches this now that ac3 transcodes.
+   */
+  bool output_accepts_audio(AVCodecID codec_id) {
+    if (needs_transcoding_to_aac(codec_id)) return true;
+    return avformat_query_codec(output_format_context->oformat, codec_id, FF_COMPLIANCE_NORMAL) == 1;
+  }
+
   std::string parse_mp4a_mime_type(AVCodecParameters* in_codecpar) {
     switch (in_codecpar->profile) {
       case FF_PROFILE_AAC_LOW:  return "mp4a.40.2";   // AAC-LC
@@ -720,7 +733,8 @@ public:
           continue;
         }
 
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO && i != effective_audio) {
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
+            && (i != effective_audio || !output_accepts_audio(in_codecpar->codec_id))) {
           streams_list[i] = -1;
           continue;
         }
@@ -802,7 +816,8 @@ public:
         continue;
       }
 
-      if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO && i != effective_audio) {
+      if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
+          && (i != effective_audio || !output_accepts_audio(in_codecpar->codec_id))) {
         streams_list[i] = -1;
         continue;
       }
