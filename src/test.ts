@@ -1,5 +1,5 @@
 import PQueue from 'p-queue'
-import { queuedThrottleWithLastCall, toBufferedStream, toStreamChunkSize } from './utils'
+import { queuedThrottleWithLastCall } from './utils'
 import { makeRemuxer } from '.'
 
 const BACKPRESSURE_STREAM_ENABLED = !navigator.userAgent.includes("Firefox")
