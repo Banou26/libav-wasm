@@ -243,12 +243,19 @@ const makeModule = (publicPath: string) =>
 type WASMVector<T> = {
   size: () => number
   get: (index: number) => T
+  delete: () => void
 }
 
-const vectorToArray = <T>(vector: WASMVector<T>) =>
-  Array(vector.size())
+// Every vector field embind hands back is a raw-pointer handle over a heap copy that nothing finalizes, so
+// reading one without deleting it leaks that copy for the life of the session. Copying out first and then
+// deleting is the only shape that is safe on the cancel paths too, which fire on every scrub.
+const vectorToArray = <T>(vector: WASMVector<T>) => {
+  const array = Array(vector.size())
     .fill(undefined)
     .map((_, index) => vector.get(index))
+  vector.delete()
+  return array
+}
 
 const resolvers = {
   makeRemuxer: async (
@@ -330,9 +337,9 @@ const resolvers = {
       }),
       destroy: () => _remuxer.destroy(),
       seek: (read, timestamp) => _remuxer.seek(read, timestamp * 1000).then(result => {
-        if (result.cancelled) throw new Error('Cancelled')
+        if (result.cancelled) { result.subtitles.delete(); throw new Error('Cancelled') }
         const typedArray = new Uint8Array(result.data.byteLength)
-        typedArray.set(new Uint8Array(result.data))
+        typedArray.set(result.data)
         return {
           data: typedArray.buffer,
           subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
@@ -352,9 +359,9 @@ const resolvers = {
         }
       }),
       read: (read) => _remuxer.read(read).then(result => {
-        if (result.cancelled) throw new Error('Cancelled')
+        if (result.cancelled) { result.subtitles.delete(); throw new Error('Cancelled') }
         const typedArray = new Uint8Array(result.data.byteLength)
-        typedArray.set(new Uint8Array(result.data))
+        typedArray.set(result.data)
         return {
           data: typedArray.buffer,
           subtitles: vectorToArray(result.subtitles).map((_subtitle) => {
@@ -378,7 +385,7 @@ const resolvers = {
           .then(result => {
             if (result.cancelled) throw new Error('Cancelled')
             const typedArray = new Uint8Array(result.data.byteLength)
-            typedArray.set(new Uint8Array(result.data))
+            typedArray.set(result.data)
             return {
               data: typedArray.buffer,
               pts: result.pts,
@@ -393,7 +400,7 @@ const resolvers = {
             if (result.cancelled) throw new Error('Cancelled')
             // copied off the wasm heap before anything can grow it out from under the view
             const typedArray = new Uint8Array(result.data.byteLength)
-            typedArray.set(new Uint8Array(result.data))
+            typedArray.set(result.data)
             return {
               data: typedArray.buffer,
               width: result.width,
