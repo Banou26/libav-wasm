@@ -210,6 +210,14 @@ public:
   double prev_duration = 0;
   double prev_pts = 0;
   int64_t prev_pos = 0;
+  // prev_* only describe a real fragment once a second keyframe has gone by; until then they are the zero
+  // reset_fragment left behind, which is indistinguishable from the start of the file
+  int keyframes_since_reset = 0;
+  // AV_TIME_BASE units. mpegts timestamps start wherever the broadcast's clock happened to be, commonly a
+  // second or so in and legitimately anywhere at all, so every timestamp leaving this class is reported
+  // relative to the video stream's own start. Matroska and mp4 already start at zero, where this is 0 and
+  // changes nothing.
+  int64_t start_time_offset = 0;
   double duration = 0;
   double pts = 0;
   int64_t pos = 0;
@@ -903,7 +911,19 @@ public:
       if (in_stream->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
       video_stream_index = i;
       video_mime_type = parse_video_mime_type(in_stream);
+      start_time_offset = in_stream->start_time != AV_NOPTS_VALUE && in_stream->start_time > 0
+        ? av_rescale_q(in_stream->start_time, in_stream->time_base, AV_TIME_BASE_Q)
+        : 0;
     }
+  }
+
+  int64_t offset_in(AVRational time_base) {
+    return start_time_offset ? av_rescale_q(start_time_offset, AV_TIME_BASE_Q, time_base) : 0;
+  }
+
+  // a timestamp read straight off a packet or an index entry, as seconds from the start of the content
+  double content_seconds(int64_t timestamp, AVRational time_base) {
+    return (timestamp - offset_in(time_base)) * av_q2d(time_base);
   }
 
   std::string parse_video_mime_type(AVStream* in_stream) {
@@ -1150,6 +1170,7 @@ public:
     prev_duration = 0;
     prev_pts = 0;
     prev_pos = 0;
+    keyframes_since_reset = 0;
     duration = 0;
     pts = 0;
     pos = 0;
@@ -1210,7 +1231,7 @@ public:
 
       if (is_keyframe) {
         pos = packet->pos;
-        pts = packet->pts * av_q2d(in_stream->time_base);
+        pts = content_seconds(packet->pts, in_stream->time_base);
         duration = packet->duration * av_q2d(in_stream->time_base);
         break;
       } else {
@@ -1414,7 +1435,7 @@ public:
         Index index;
         index.index = i;
         index.pos = entry->pos;
-        index.timestamp = entry->timestamp * av_q2d(in_stream->time_base);
+        index.timestamp = content_seconds(entry->timestamp, in_stream->time_base);
         result.indexes.push_back(index);
       }
     }
@@ -1507,7 +1528,7 @@ public:
         Index index;
         index.index = i;
         index.pos = entry->pos;
-        index.timestamp = entry->timestamp * av_q2d(in_stream->time_base);
+        index.timestamp = content_seconds(entry->timestamp, in_stream->time_base);
         result.indexes.push_back(index);
       }
     }
@@ -1557,6 +1578,11 @@ public:
       }
 
       AVStream* in_stream  = input_format_context->streams[packet->stream_index];
+
+      if (const int64_t offset = offset_in(in_stream->time_base)) {
+        if (packet->pts != AV_NOPTS_VALUE) packet->pts -= offset;
+        if (packet->dts != AV_NOPTS_VALUE) packet->dts -= offset;
+      }
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
         SubtitleFragment subtitle_fragment;
@@ -1635,6 +1661,7 @@ public:
       }
 
       if (is_keyframe) {
+        keyframes_since_reset++;
         prev_duration = duration;
         prev_pts = pts;
         prev_pos = pos;
@@ -1671,11 +1698,17 @@ public:
       )
     );
 
+    // prev_* describe the fragment before the newest keyframe, which is what a caller wants while the
+    // newest one is still being written. Before a second keyframe has gone by they were never assigned, so
+    // the newest one is all there is: mpegts flushes its first fragment before a second keyframe arrives
+    // where matroska does not, and reporting the reset zero put every seek in a .ts at the start of file.
+    const bool have_previous = keyframes_since_reset > 1;
+
     result.data = js_write_vector;
     result.subtitles = subtitles;
-    result.offset = prev_pos;
-    result.pts = prev_pts;
-    result.duration = prev_duration;
+    result.offset = have_previous ? prev_pos : pos;
+    result.pts = have_previous ? prev_pts : pts;
+    result.duration = have_previous ? prev_duration : duration;
     result.cancelled = false;
     result.finished = finished;
 
