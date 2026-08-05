@@ -14,21 +14,20 @@
 	# --source-map-base http://localhost:1234/dist/ \
 	# -s ASSERTIONS=2 \
 
+DEBUG =
+DEBUG_FLAGS = -g -gsource-map --source-map-base http://localhost:1234/dist/ -s ASSERTIONS=2
+
 dist/libav-wasm.js:
 	mkdir -p dist && \
 	emcc --bind \
 	-Oz \
-	-g \
-	-gsource-map \
-	--source-map-base http://localhost:1234/dist/ \
-	-s ASSERTIONS=2 \
+	$(if $(DEBUG),$(DEBUG_FLAGS)) \
 	-L/opt/ffmpeg/lib \
 	-I/opt/ffmpeg/include/ \
 	-I/tmp/ffmpeg-7.1/ \
 	-s FILESYSTEM=0 \
 	-s ENVIRONMENT=web \
-	-s INITIAL_MEMORY=150mb \
-	-s TOTAL_MEMORY=125mb \
+	-s INITIAL_MEMORY=125mb \
 	-s STACK_SIZE=50mb \
 	-s ALLOW_MEMORY_GROWTH=1 \
 	-s ASYNCIFY \
