@@ -13,7 +13,8 @@ export type MakeTransmuxerOptions = {
   workerOptions?: WorkerOptions
   read: (offset: number, size: number) => Promise<ArrayBuffer>
   length: number
-  bufferSize: number
+  /** how much the demuxer reads ahead; defaults to 2.5 MB for a remuxer and 1 MB for a thumbnailer */
+  bufferSize?: number
   /** Input stream index of the audio track to mux; defaults to the first audio stream */
   audioStreamIndex?: number
 }
