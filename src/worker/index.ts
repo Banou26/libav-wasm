@@ -43,6 +43,14 @@ export interface ThumbnailReadResult {
   cancelled: boolean
 }
 
+/** what the thumbnail path needs from a file: no muxer, no encoder, no stream map */
+export interface ThumbnailInitResult {
+  duration: number
+  videoMimeType: string
+  videoExtradata: WASMVector<number>
+  indexes: WASMVector<Index>
+}
+
 /** `data` is tightly packed RGBA at width * height * 4, the exact shape an ImageData takes */
 export interface ThumbnailDecodeResult {
   data: Uint8Array
@@ -149,6 +157,7 @@ export interface RemuxerInstance {
     cancelled: boolean
     finished: boolean
   }>
+  initThumbnail: (read: WASMReadFunction) => Promise<ThumbnailInitResult>
   readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>
   decodeKeyframe: (read: WASMReadFunction, timestamp: number, width: number, height: number) => Promise<ThumbnailDecodeResult>
   setAudioStreamIndex: (index: number) => void
@@ -156,6 +165,12 @@ export interface RemuxerInstance {
 
 export type Remuxer = {
   new(options: RemuxerInstanceOptions): RemuxerInstance
+  initThumbnail: (read: WASMReadFunction) => Promise<{
+    duration: number
+    videoMimeType: string
+    videoExtradata: ArrayBuffer
+    indexes: Index[]
+  }>
   init: (read: WASMReadFunction) => Promise<{
     data: ArrayBuffer
     attachments: Attachment[]
@@ -218,7 +233,7 @@ export type Remuxer = {
   setAudioStreamIndex: (index: number) => void
 }
 
-const makeModule = (publicPath: string, log: (isError: boolean, text: string) => void) =>
+const makeModule = (publicPath: string) =>
   WASMModule({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     print: (text: string) => console.log(text),
@@ -237,19 +252,24 @@ const vectorToArray = <T>(vector: WASMVector<T>) =>
 
 const resolvers = {
   makeRemuxer: async (
-    { publicPath, length, bufferSize, audioStreamIndex, log }:
+    { publicPath, length, bufferSize, audioStreamIndex }:
     {
       publicPath: string
       length: number
       bufferSize: number
       audioStreamIndex?: number
-      log: (isError: boolean, text: string) => Promise<void>
     }
   ) => {
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
-    const module = await makeModule(publicPath, log)
+    const module = await makeModule(publicPath)
     const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, audioStreamIndex })
     const remuxer = {
+      initThumbnail: (read) => _remuxer.initThumbnail(read).then((result: ThumbnailInitResult) => ({
+        duration: result.duration,
+        videoMimeType: result.videoMimeType,
+        videoExtradata: new Uint8Array(vectorToArray(result.videoExtradata)).buffer,
+        indexes: vectorToArray(result.indexes).map(({ index, timestamp, pos }) => ({ index, timestamp, pos })),
+      })),
       init: (read) => _remuxer.init(read).then(result => {
         const typedArray = new Uint8Array(result.data.byteLength)
         typedArray.set(result.data)
@@ -426,24 +446,27 @@ const resolvers = {
       return (thumbnailCanvas = { canvas, context })
     }
 
+    // hw decoders repeat the first frame under this one-keyframe-per-flush pattern, so a software decoder
+    // is not a preference here, it is the only correct one. Falling back to a HARDWARE one was silently
+    // wrong: measured on Chrome 146, hevc main and main10 are supported but never with prefer-software, so
+    // every hevc thumbnail came back as the first frame of the file. libav decodes it correctly instead.
+    const chooseDecoder = async (codec: string, description: ArrayBuffer) => {
+      if (!hasWebCodecs) return
+      const swConfig: VideoDecoderConfig = { codec, description, hardwareAcceleration: 'prefer-software' }
+      useWebCodecs = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported === true, () => false)
+      if (useWebCodecs) decoderConfig = swConfig
+    }
+
     return {
       destroy: async () => remuxer.destroy(),
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
-        if (hasWebCodecs) {
-          // hw decoders repeat the first frame under this one-keyframe-per-flush pattern, so a software
-          // decoder is not a preference here, it is the only correct one.
-          const swConfig: VideoDecoderConfig = {
-            codec: initResult.info.input.videoMimeType,
-            description: initResult.videoExtradata,
-            hardwareAcceleration: 'prefer-software',
-          }
-          useWebCodecs = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported === true, () => false)
-          // Falling back to a HARDWARE WebCodecs decoder was silently wrong. Measured on Chrome 146: hevc
-          // main and main10 are supported, but never with prefer-software, so every hevc thumbnail came
-          // back as the first frame of the file. libav decodes it correctly, so that is the fallback now.
-          if (useWebCodecs) decoderConfig = swConfig
-        }
+        await chooseDecoder(initResult.info.input.videoMimeType, initResult.videoExtradata)
+        return initResult
+      },
+      initThumbnail: async (read: ReadFunction) => {
+        const initResult = await remuxer.initThumbnail(readToWasmRead(read))
+        await chooseDecoder(initResult.videoMimeType, initResult.videoExtradata)
         return initResult
       },
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),

@@ -28,31 +28,30 @@ const abortSignalToPromise = (abortSignal: AbortSignal) =>
     })
   })
 
-export const makeRemuxer = async ({
+/**
+ * The worker, the wasm instance and the serialized task queue that both public entry points share.
+ *
+ * Split out because a thumbnailer and a remuxer need identical plumbing and nothing else in common: only
+ * which wasm entry point they open the file with, and which calls they then expose.
+ */
+const makeSession = async ({
   publicPath,
   workerUrl,
   workerOptions,
   read,
   length,
-  bufferSize = 2_500_000,
+  bufferSize,
   audioStreamIndex
-}: MakeTransmuxerOptions) => {
+}: MakeTransmuxerOptions & { bufferSize: number }) => {
   const worker = new Worker(workerUrl, workerOptions)
 
   const { makeRemuxer } = await expose<Resolvers>({}, { transport: worker })
-  let currentStream: ReadableStream<Uint8Array> | undefined
-  let currentStreamOffset: number | undefined
-  let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined
 
   const remuxer = await makeRemuxer({
     publicPath,
     length,
     bufferSize,
-    audioStreamIndex,
-    log: async (isError, text) => {
-      if (isError) console.error(text)
-      else console.log(text)
-    }
+    audioStreamIndex
   })
 
   const queue = new PQueue({ concurrency: 1 })
@@ -95,27 +94,53 @@ export const makeRemuxer = async ({
     ])
   }
 
+  const destroy = async () => {
+    const currentAbortControllers = [...abortControllers]
+    abortControllers = []
+    queue.clear()
+    currentAbortControllers.forEach(abortController => abortController.abort())
+    await remuxer.destroy()
+    worker.terminate()
+  }
+
+  return { worker, remuxer, wasmRead, addTask, destroy }
+}
+
+export const makeRemuxer = async (options: MakeTransmuxerOptions) => {
+  const { worker, remuxer, wasmRead, addTask, destroy } = await makeSession({
+    ...options,
+    bufferSize: options.bufferSize ?? 2_500_000
+  })
+
   return {
     worker,
     init: () => addTask((abortController) => remuxer.init(wasmRead(abortController))),
-    destroy: async () => {
-      try {
-        await reader?.cancel()
-      } catch (err) {}
-      reader = undefined
-      currentStream = undefined
-      currentStreamOffset = undefined
-      const currentAbortControllers = [...abortControllers]
-      abortControllers = []
-      queue.clear()
-      currentAbortControllers.forEach(abortController => abortController.abort())
-      await remuxer.destroy()
-      worker.terminate()
-    },
+    destroy,
     seek: (timestamp: number) => addTask((abortController) => remuxer.seek(wasmRead(abortController), timestamp)),
     read: () => addTask((abortController) => remuxer.read(wasmRead(abortController))),
     readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp)),
     /** Takes effect on the next seek */
     setAudioStreamIndex: (index: number) => remuxer.setAudioStreamIndex(index)
+  }
+}
+
+/**
+ * Open a file for thumbnails only. No output muxer, no encoder, no stream map, no header.
+ *
+ * `readKeyframe` seeks BACKWARD on the input, which an output muxer cannot follow, so a remuxer that also
+ * served thumbnails could only be kept correct by never doing both on one instance. There is no muxer here
+ * to damage. It also opens files whose audio the muxer refuses outright, which a remuxer cannot.
+ */
+export const makeThumbnailer = async (options: MakeTransmuxerOptions) => {
+  const { worker, remuxer, wasmRead, addTask, destroy } = await makeSession({
+    ...options,
+    bufferSize: options.bufferSize ?? 1_000_000
+  })
+
+  return {
+    worker,
+    init: () => addTask((abortController) => remuxer.initThumbnail(wasmRead(abortController))),
+    readKeyframe: (timestamp: number) => addTask((abortController) => remuxer.readKeyframe(wasmRead(abortController), timestamp)),
+    destroy
   }
 }
