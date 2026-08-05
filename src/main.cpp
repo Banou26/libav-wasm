@@ -107,6 +107,14 @@ typedef struct ThumbnailReadResult {
   bool cancelled;
 } ThumbnailReadResult;
 
+// everything the thumbnail path needs from a file, none of which involves an output muxer
+typedef struct ThumbnailInitResult {
+  double duration;
+  std::string video_mime_type;
+  std::vector<uint8_t> video_extradata;
+  std::vector<Index> indexes;
+} ThumbnailInitResult;
+
 // `data` is tightly packed RGBA at width * height * 4, ready for an ImageData with no further conversion
 typedef struct ThumbnailDecodeResult {
   emscripten::val data;
@@ -1080,6 +1088,52 @@ public:
     return result;
   }
 
+  /**
+   * Open a file for thumbnails only: no output muxer, no encoder, no stream map, no header.
+   *
+   * That is not a saving, it is the point. readKeyframe seeks BACKWARD on the input, which an output muxer
+   * cannot follow, so a remuxer that also serves thumbnails can only be kept safe by convention. With no
+   * muxer to damage, it is safe by construction, and files whose audio the muxer refuses outright still
+   * produce thumbnails.
+   */
+  ThumbnailInitResult init_thumbnail(emscripten::val read_function) {
+    read_data_function = read_function;
+
+    init_input();
+    find_video_stream();
+
+    ThumbnailInitResult result;
+    result.duration = (double)input_format_context->duration / (double)AV_TIME_BASE;
+    result.video_mime_type = video_mime_type;
+
+    // seeking to the start is what makes lavf populate the seeking cues this walks
+    av_seek_frame(input_format_context, video_stream_index, 0, AVSEEK_FLAG_BACKWARD);
+
+    AVStream* in_stream = input_format_context->streams[video_stream_index];
+    int nb_entries = avformat_index_get_entries_count(in_stream);
+    for (int i = 0; i < nb_entries; i++) {
+      const AVIndexEntry* entry = avformat_index_get_entry(in_stream, i);
+      if (entry->flags & AVINDEX_KEYFRAME) {
+        Index index;
+        index.index = i;
+        index.pos = entry->pos;
+        index.timestamp = entry->timestamp * av_q2d(in_stream->time_base);
+        result.indexes.push_back(index);
+      }
+    }
+
+    AVCodecParameters* in_codecpar = in_stream->codecpar;
+    if (in_codecpar->extradata && in_codecpar->extradata_size > 0) {
+      result.video_extradata.assign(
+        in_codecpar->extradata,
+        in_codecpar->extradata + in_codecpar->extradata_size
+      );
+    }
+
+    read_data_function = val::undefined();
+    return result;
+  }
+
   InitResult init(emscripten::val read_function) {
     read_data_function = read_function;
 
@@ -1579,6 +1633,12 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("duration",  &ThumbnailReadResult::duration)
     .field("cancelled", &ThumbnailReadResult::cancelled);
 
+  emscripten::value_object<ThumbnailInitResult>("ThumbnailInitResult")
+    .field("duration",       &ThumbnailInitResult::duration)
+    .field("videoMimeType",  &ThumbnailInitResult::video_mime_type)
+    .field("videoExtradata", &ThumbnailInitResult::video_extradata)
+    .field("indexes",        &ThumbnailInitResult::indexes);
+
   emscripten::value_object<ThumbnailDecodeResult>("ThumbnailDecodeResult")
     .field("data",      &ThumbnailDecodeResult::data)
     .field("width",     &ThumbnailDecodeResult::width)
@@ -1593,6 +1653,7 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .function("read",    &Remuxer::read)
     .function("seek",    &Remuxer::seek)
     .function("destroy", &Remuxer::destroy)
+    .function("initThumbnail", &Remuxer::init_thumbnail)
     .function("readKeyframe", &Remuxer::read_keyframe)
     .function("decodeKeyframe", &Remuxer::decode_keyframe)
     .function("setAudioStreamIndex", &Remuxer::set_audio_stream_index);
