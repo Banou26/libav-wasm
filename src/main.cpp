@@ -14,6 +14,8 @@ extern "C" {
   #include <libavformat/avformat.h>
   #include <libswscale/swscale.h>
   #include <libavutil/pixdesc.h>
+  #include <libavutil/audio_fifo.h>
+  #include <libswresample/swresample.h>
 }
 
 using namespace emscripten;
@@ -186,10 +188,17 @@ public:
   AVFrame *audio_output_frame = nullptr;
   bool needs_audio_transcoding = false;
 
-  uint8_t **audio_buffer = nullptr;
-  int audio_buffer_size = 0;
-  int audio_buffer_samples = 0;
-  // standard AAC frame; codecpar->frame_size, audio_output_frame->nb_samples and the encoder buffer split all follow this
+  // A decoder's output format is its own business: pcm arrives packed 16 bit, wavpack planar 16, truehd
+  // packed 32, vorbis planar float, and every one of them at whatever frame size that codec uses. The aac
+  // encoder takes planar float at exactly 1024 samples. The resampler converts the format, the layout and
+  // the rate; the fifo regroups the frame size. Between them there is no arithmetic left to get wrong.
+  SwrContext *audio_resampler = nullptr;
+  AVAudioFifo *audio_fifo = nullptr;
+  // what the resampler was last configured to accept, so a frame that does not match rebuilds it
+  int resampler_in_format = AV_SAMPLE_FMT_NONE;
+  int resampler_in_rate = 0;
+  AVChannelLayout resampler_in_layout = {};
+  // standard AAC frame; codecpar->frame_size and audio_output_frame->nb_samples both follow this
   int aac_frame_size = 1024;
   int64_t next_audio_pts = 0;
   bool audio_pts_initialized = false;
@@ -609,9 +618,10 @@ public:
         return -1;
     }
 
-    int sample_rate = audio_decoder_avcc->sample_rate;
     int input_channels = audio_decoder_avcc->ch_layout.nb_channels;
     if (input_channels > 2) input_channels = 2;
+    if (input_channels < 1) input_channels = 2;
+    int sample_rate = encoder_sample_rate(audio_decoder_avcc->sample_rate);
 
     av_channel_layout_default(&audio_avcc->ch_layout, input_channels);
     audio_avcc->sample_rate = sample_rate;
@@ -642,15 +652,33 @@ public:
         return -1;
     }
 
-    int output_channels = audio_avcc->ch_layout.nb_channels;
-    audio_buffer_size = av_samples_get_buffer_size(NULL, output_channels, aac_frame_size * 4, audio_avcc->sample_fmt, 0);
-    audio_buffer = (uint8_t**)av_calloc(output_channels, sizeof(uint8_t*));
-    for (int i = 0; i < output_channels; i++) {
-        audio_buffer[i] = (uint8_t*)av_malloc(audio_buffer_size);
+    audio_fifo = av_audio_fifo_alloc(audio_avcc->sample_fmt, audio_avcc->ch_layout.nb_channels, aac_frame_size * 4);
+    if (!audio_fifo) {
+        printf("could not allocate the audio fifo\n");
+        return -1;
     }
-    audio_buffer_samples = 0;
 
     return 0;
+  }
+
+  /**
+   * The nearest rate the aac encoder actually supports.
+   *
+   * avcodec_open2 refuses a rate outside the encoder's list, and a codec is free to use one: 37800 and
+   * 18900 turn up in LPCM off optical media. Refusing to open left the transcode flag set with no encoder
+   * behind it, so resampling to a rate that opens is the difference between audio and a null dereference.
+   */
+  int encoder_sample_rate(int rate) {
+    if (rate <= 0) return 48000;
+    const int* supported = audio_avc ? audio_avc->supported_samplerates : nullptr;
+    if (!supported) return rate;
+
+    int best = 0;
+    for (int i = 0; supported[i]; i++) {
+      if (supported[i] == rate) return rate;
+      if (!best || abs(supported[i] - rate) < abs(best - rate)) best = supported[i];
+    }
+    return best ? best : rate;
   }
 
   int send_audio_frame_to_encoder(AVFrame *frame, AVStream *out_stream) {
@@ -687,27 +715,87 @@ public:
     return 0;
   }
 
+  /**
+   * A resampler that accepts this frame, building or rebuilding one if the last does not.
+   *
+   * Configured from the frame rather than from the decoder context, because the context describes what
+   * the container claimed before anything was decoded and the frame describes what actually came out. No
+   * fixture here needs the difference, so this is a guard rather than a fix: a stream that changes format
+   * partway through rebuilds instead of failing every convert from that point on.
+   */
+  int ensure_resampler(const AVFrame* frame) {
+    if (audio_resampler
+        && resampler_in_format == frame->format
+        && resampler_in_rate == frame->sample_rate
+        && av_channel_layout_compare(&resampler_in_layout, &frame->ch_layout) == 0) {
+      return 0;
+    }
+
+    swr_free(&audio_resampler);
+    av_channel_layout_uninit(&resampler_in_layout);
+
+    if (swr_alloc_set_opts2(
+          &audio_resampler,
+          &audio_avcc->ch_layout, audio_avcc->sample_fmt, audio_avcc->sample_rate,
+          &frame->ch_layout, (AVSampleFormat)frame->format, frame->sample_rate,
+          0, nullptr
+        ) < 0 || swr_init(audio_resampler) < 0) {
+      printf("Could not open the audio resampler\n");
+      swr_free(&audio_resampler);
+      return -1;
+    }
+
+    resampler_in_format = frame->format;
+    resampler_in_rate = frame->sample_rate;
+    av_channel_layout_copy(&resampler_in_layout, &frame->ch_layout);
+    return 0;
+  }
+
   int encode_audio(AVFrame *input_frame, AVStream *out_stream) {
-    if (!needs_audio_transcoding || !audio_buffer) {
+    if (!needs_audio_transcoding || !audio_fifo) {
         return send_audio_frame_to_encoder(input_frame, out_stream);
     }
 
-    int channels = audio_avcc->ch_layout.nb_channels;
-    int sample_size = av_get_bytes_per_sample(audio_avcc->sample_fmt);
-    int input_samples = input_frame->nb_samples;
-
-    for (int ch = 0; ch < channels; ch++) {
-        memcpy(audio_buffer[ch] + (audio_buffer_samples * sample_size),
-               input_frame->data[ch],
-               input_samples * sample_size);
+    // A decoder may hand back a channel count with no layout attached, and raw pcm routinely does.
+    // swr_init resolves that to the default layout for the count, after which the resampler's own
+    // configuration no longer matches the frames being fed to it and every convert fails with "Input
+    // changed". Naming the layout here keeps the two the same.
+    if (input_frame->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC) {
+        av_channel_layout_default(&input_frame->ch_layout, input_frame->ch_layout.nb_channels);
     }
-    audio_buffer_samples += input_samples;
 
-    while (audio_buffer_samples >= aac_frame_size) {
-        for (int ch = 0; ch < channels; ch++) {
-            memcpy(audio_output_frame->data[ch],
-                   audio_buffer[ch],
-                   aac_frame_size * sample_size);
+    if (ensure_resampler(input_frame) < 0) return -1;
+
+    AVFrame* converted = av_frame_alloc();
+    if (!converted) return -1;
+    av_channel_layout_copy(&converted->ch_layout, &audio_avcc->ch_layout);
+    converted->format = audio_avcc->sample_fmt;
+    converted->sample_rate = audio_avcc->sample_rate;
+
+    // left at nb_samples 0, so swresample sizes and allocates the destination itself from whatever the
+    // decoder handed over plus whatever it is still holding back
+    int ret = swr_convert_frame(audio_resampler, converted, input_frame);
+    if (ret < 0) {
+        printf("Error resampling audio: %s\n", ffmpegErrStr(ret).c_str());
+        av_frame_free(&converted);
+        return -1;
+    }
+
+    if (converted->nb_samples > 0
+        && av_audio_fifo_write(audio_fifo, (void**)converted->data, converted->nb_samples) < converted->nb_samples) {
+        printf("Could not write to the audio fifo\n");
+        av_frame_free(&converted);
+        return -1;
+    }
+    av_frame_free(&converted);
+
+    while (av_audio_fifo_size(audio_fifo) >= aac_frame_size) {
+        // the encoder keeps a reference to frames it has been sent, so reusing this one without asking
+        // for a private copy would rewrite audio that has not been encoded yet
+        if (av_frame_make_writable(audio_output_frame) < 0) return -1;
+        if (av_audio_fifo_read(audio_fifo, (void**)audio_output_frame->data, aac_frame_size) < aac_frame_size) {
+            printf("Short read from the audio fifo\n");
+            return -1;
         }
 
         audio_output_frame->nb_samples = aac_frame_size;
@@ -718,16 +806,6 @@ public:
         if (send_audio_frame_to_encoder(audio_output_frame, out_stream) < 0) {
             return -1;
         }
-
-        int remaining_samples = audio_buffer_samples - aac_frame_size;
-        if (remaining_samples > 0) {
-            for (int ch = 0; ch < channels; ch++) {
-                memmove(audio_buffer[ch],
-                        audio_buffer[ch] + (aac_frame_size * sample_size),
-                        remaining_samples * sample_size);
-            }
-        }
-        audio_buffer_samples = remaining_samples;
     }
 
     return 0;
@@ -1756,10 +1834,10 @@ public:
     subtitles.clear();
     wrote = false;
 
-    if (needs_audio_transcoding) {
-        audio_buffer_samples = 0;
-        audio_pts_initialized = false;
-    }
+    // destroy_audio above freed the resampler and the fifo, and prepare_audio_encoder built new ones, so
+    // there is no carried-over audio left to drain; only the clock has to be seeded again from the first
+    // packet at the new position
+    audio_pts_initialized = false;
 
     last_video_dts = AV_NOPTS_VALUE;
     last_audio_dts = AV_NOPTS_VALUE;
@@ -1798,13 +1876,16 @@ public:
       av_frame_free(&audio_output_frame);
       audio_output_frame = nullptr;
     }
-    if (audio_buffer) {
-      int channels = audio_avcc ? audio_avcc->ch_layout.nb_channels : 2;
-      for (int i = 0; i < channels; i++) {
-        if (audio_buffer[i]) av_free(audio_buffer[i]);
-      }
-      av_free(audio_buffer);
-      audio_buffer = nullptr;
+    if (audio_resampler) {
+      swr_free(&audio_resampler);
+      audio_resampler = nullptr;
+    }
+    av_channel_layout_uninit(&resampler_in_layout);
+    resampler_in_format = AV_SAMPLE_FMT_NONE;
+    resampler_in_rate = 0;
+    if (audio_fifo) {
+      av_audio_fifo_free(audio_fifo);
+      audio_fifo = nullptr;
     }
     if (audio_decoder_avcc) {
       avcodec_free_context(&audio_decoder_avcc);
