@@ -10,8 +10,10 @@
 extern "C" {
   #include <libavformat/avio.h>
   #include <libavcodec/avcodec.h>
+  #include <libavcodec/bsf.h>
   #include <libavformat/avformat.h>
   #include <libswscale/swscale.h>
+  #include <libavutil/pixdesc.h>
 }
 
 using namespace emscripten;
@@ -23,17 +25,36 @@ static inline std::string ffmpegErrStr(int errnum) {
   return std::string(buf);
 }
 
-// These fill their mp4 sample entry from the first packet, so empty_moov cannot write a header before one
-// arrives: "Cannot write moov atom before <codec> packets". avformat_query_codec does NOT predict this, it
-// answers for the muxer in general and says yes to all three. With no exception support in this build that
-// refusal aborts the whole module, so they never reach write_header.
-static inline bool needs_packet_before_moov(AVCodecID codec_id) {
-  return codec_id == AV_CODEC_ID_AC3 || codec_id == AV_CODEC_ID_EAC3 || codec_id == AV_CODEC_ID_TRUEHD;
+/**
+ * Which codecs survive to the output, and in what form.
+ *
+ * The output is always fragmented mp4 for MediaSource, so a stream is only worth keeping when mp4 can
+ * carry it AND a browser can decode it AND we can name it in a `codecs=` string. All three matter: a
+ * track the muxer accepts but we cannot name produces an mp4 that MediaSource refuses outright, which is
+ * strictly worse than not muxing it at all.
+ *
+ * This is deliberately an allow-list rather than a deny-list. avformat_query_codec answers the first
+ * question only, and answers it for the muxer in general: it says yes to ac3, whose mp4 sample entry is
+ * filled from the first packet, so empty_moov cannot write a header before one arrives and the write
+ * fails with "Cannot write moov atom before AC3 packets". Enumerating what works is the only check that
+ * covers all three questions at once.
+ *
+ * Video has no list here on purpose. parse_video_mime_type's switch is the list: a codec it cannot name
+ * is a codec that cannot reach a browser, and a second list beside it would only be something to disagree
+ * with.
+ */
+static inline bool audio_passthrough_ok(AVCodecID codec_id) {
+  return codec_id == AV_CODEC_ID_AAC
+    || codec_id == AV_CODEC_ID_OPUS
+    || codec_id == AV_CODEC_ID_FLAC;
 }
 
-// of those, the ones this build carries a decoder for, so they can be re-encoded to aac instead of dropped
+// Everything else audio, from ac3 and dts through vorbis, mp3, wma and raw pcm, re-encodes to aac rather
+// than being dropped. Video has no equivalent: re-encoding it is far too expensive to do live.
 static inline bool needs_transcoding_to_aac(AVCodecID codec_id) {
-  return needs_packet_before_moov(codec_id) && avcodec_find_decoder(codec_id) != nullptr;
+  return !audio_passthrough_ok(codec_id)
+    && avcodec_find_decoder(codec_id) != nullptr
+    && avcodec_find_encoder(AV_CODEC_ID_AAC) != nullptr;
 }
 
 typedef struct MediaInfo {
@@ -156,6 +177,9 @@ public:
   int thumbnail_sws_height = 0;
   std::vector<uint8_t> thumbnail_vector;
 
+  // only ever aac_adtstoasc, and only for an input that hands over ADTS; null the rest of the time
+  AVBSFContext *audio_bsf = nullptr;
+
   const AVCodec *audio_decoder_avc = nullptr;
   AVCodecContext *audio_decoder_avcc = nullptr;
   AVFrame *audio_input_frame = nullptr;
@@ -178,8 +202,8 @@ public:
   int64_t input_length = 0;
 
   int buffer_size;
-  int video_stream_index;
-  int number_of_streams;
+  int video_stream_index = -1;
+  int number_of_streams = 0;
   // input stream index -> output stream index; -1 excludes the stream from the mp4 output (subtitles, attachments, non-selected audio) and drops its packets
   int* streams_list = nullptr;
 
@@ -239,15 +263,13 @@ public:
   /**
    * Whether the mp4 output can carry this audio at all.
    *
-   * Handed a codec it cannot write, avformat_write_header fails and, with no exception support in this
-   * build, that failure aborts the entire module rather than surfacing as an error. So an audio track the
-   * muxer will not take is dropped from the output instead: the file then plays video only, which is worth
-   * far more than it not playing at all. TrueHD is the case that reaches this now that ac3 transcodes.
+   * Handed a codec it cannot write, avformat_write_header fails, and an audio track the muxer will not take
+   * is dropped from the output instead: the file then plays video only, which is worth far more than it not
+   * playing at all. Almost nothing reaches this now that everything with a decoder re-encodes to aac; it is
+   * the codecs this build carries no decoder for that end up here.
    */
   bool output_accepts_audio(AVCodecID codec_id) {
-    if (needs_transcoding_to_aac(codec_id)) return true;
-    if (needs_packet_before_moov(codec_id)) return false;
-    return avformat_query_codec(output_format_context->oformat, codec_id, FF_COMPLIANCE_NORMAL) == 1;
+    return audio_passthrough_ok(codec_id) || needs_transcoding_to_aac(codec_id);
   }
 
   std::string parse_mp4a_mime_type(AVCodecParameters* in_codecpar) {
@@ -257,8 +279,77 @@ public:
       case FF_PROFILE_AAC_HE_V2:return "mp4a.40.29";  // HE-AAC v2 (SBR+PS)
       case FF_PROFILE_AAC_LD:   return "mp4a.40.23";  // AAC-LD
       case FF_PROFILE_AAC_ELD:  return "mp4a.40.39";  // AAC-ELD
-      default:                  return "mp4a.40.unknown";
+      // AAC-LC, rather than a string no browser accepts. A profile lavf could not work out is not a
+      // reason to make the whole file unplayable, and it is what all but a rounding error of files carry.
+      default:                  return "mp4a.40.2";
     }
+  }
+
+  /**
+   * The name a browser knows this audio by, in a `codecs=` string.
+   *
+   * Only reached for the passthrough codecs: anything transcoded is aac by definition and is named at the
+   * point the transcode is decided, since its input profile says nothing about the output.
+   */
+  std::string parse_audio_mime_type(AVCodecParameters* in_codecpar) {
+    switch (in_codecpar->codec_id) {
+      case AV_CODEC_ID_AAC:  return parse_mp4a_mime_type(in_codecpar);
+      case AV_CODEC_ID_OPUS: return "opus";
+      case AV_CODEC_ID_FLAC: return "flac";
+      default:               return "";
+    }
+  }
+
+  /**
+   * The start of the first NAL of `nal_type` in Annex-B extradata, or nullptr.
+   *
+   * mp4 stores h264/hevc parameter sets as a length-prefixed avcC/hvcC record, which is what
+   * extradata[0] == 1 marks. Every other container stores them as raw Annex-B: start code, NAL, start
+   * code, NAL. movenc converts that form itself when muxing, but the codec string has to be built before
+   * the first packet is written, so the profile and level get read out of the SPS directly.
+   */
+  const uint8_t* find_annexb_nal(const uint8_t* data, int size, int nal_type, bool is_hevc, int* out_size) {
+    for (int i = 0; i + 3 < size; i++) {
+      if (data[i] != 0 || data[i + 1] != 0) continue;
+      int start;
+      if (data[i + 2] == 1) start = i + 3;
+      else if (data[i + 2] == 0 && i + 4 < size && data[i + 3] == 1) start = i + 4;
+      else continue;
+
+      int type = is_hevc ? ((data[start] >> 1) & 0x3F) : (data[start] & 0x1F);
+      if (type != nal_type) continue;
+
+      // the payload runs to the next start code, or to the end
+      int end = size;
+      for (int j = start; j + 2 < size; j++) {
+        if (data[j] == 0 && data[j + 1] == 0 && (data[j + 2] == 1 || (data[j + 2] == 0 && j + 3 < size && data[j + 3] == 1))) {
+          end = j;
+          break;
+        }
+      }
+      *out_size = end - start;
+      return data + start;
+    }
+    return nullptr;
+  }
+
+  /**
+   * Annex-B payload with emulation prevention bytes removed.
+   *
+   * A NAL cannot contain 00 00 00/01/02/03, so an encoder writing three zero bytes inserts 00 00 03 and
+   * the reader drops the 03. The hevc profile_tier_level is mostly reserved zeros, so this fires on real
+   * streams routinely rather than as an edge case: skipping it shifts general_level_idc by a byte.
+   */
+  std::vector<uint8_t> strip_emulation_prevention(const uint8_t* data, int size, int limit) {
+    std::vector<uint8_t> out;
+    out.reserve(limit);
+    int zeros = 0;
+    for (int i = 0; i < size && (int)out.size() < limit; i++) {
+      if (zeros == 2 && data[i] == 3) { zeros = 0; continue; }
+      zeros = data[i] == 0 ? zeros + 1 : 0;
+      out.push_back(data[i]);
+    }
+    return out;
   }
 
   std::string parse_h264_mime_type(AVCodecParameters *in_codecpar) {
@@ -271,15 +362,26 @@ public:
       return "";
     }
 
-    if (extradata[0] != 1) {
-      printf("Unsupported extradata format.\n");
-      return "";
-    }
+    uint8_t profile, constraints, level;
 
-    // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/avcC.js#L6
-    uint8_t profile = extradata[1];
-    uint8_t constraints = extradata[2];
-    uint8_t level = extradata[3];
+    if (extradata[0] == 1) {
+      // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/avcC.js#L6
+      profile = extradata[1];
+      constraints = extradata[2];
+      level = extradata[3];
+    } else {
+      int sps_size = 0;
+      const uint8_t* sps = find_annexb_nal(extradata, extradata_size, 7, false, &sps_size);
+      if (!sps || sps_size < 4) {
+        printf("No h264 SPS in Annex-B extradata.\n");
+        return "";
+      }
+      // profile_idc, constraint flags and level_idc are the three bytes straight after the NAL header, so
+      // no emulation prevention can have intervened yet
+      profile = sps[1];
+      constraints = sps[2];
+      level = sps[3];
+    }
 
     sprintf(mime_type, "avc1.%02x%02x%02x", profile, constraints, level);
     return mime_type;
@@ -295,9 +397,26 @@ public:
       return "";
     }
 
+    // profile_tier_level occupies hvcC bytes 1..12, and in an Annex-B SPS it occupies the twelve bytes
+    // straight after sps_video_parameter_set_id/max_sub_layers/temporal_id_nesting. Same fields, same
+    // order, so one parser reads both once the Annex-B copy is lined up at the same offset.
+    std::vector<uint8_t> annexb;
     if (extradata[0] != 1) {
-      printf("Unsupported extradata format.\n");
-      return "";
+      int sps_size = 0;
+      const uint8_t* sps = find_annexb_nal(extradata, extradata_size, 33, true, &sps_size);
+      if (!sps || sps_size < 15) {
+        printf("No hevc SPS in Annex-B extradata.\n");
+        return "";
+      }
+      // 2 byte NAL header, then one byte of ids; that ids byte lands where hvcC keeps configurationVersion,
+      // which this parser reads only to tell the two forms apart and never again
+      annexb = strip_emulation_prevention(sps + 2, sps_size - 2, 13);
+      if (annexb.size() < 13) {
+        printf("Truncated hevc SPS.\n");
+        return "";
+      }
+      extradata = annexb.data();
+      extradata_size = annexb.size();
     }
 
     // https://github.com/gpac/mp4box.js/blob/a8f4cd883b8221bedef1da8c6d5979c2ab9632a8/src/parsing/hvcC.js
@@ -340,6 +459,94 @@ public:
       general_level_idc,
       general_constraint_indicator_flags
     );
+    return mime_type;
+  }
+
+  /**
+   * vp09.PP.LL.DD: profile, level, bit depth.
+   *
+   * The level is the one field no container hands over. Matroska stores none, so codecpar->level comes back
+   * unset, and vp9 carries no in-band sequence header to read one out of either. It is instead a function
+   * of the picture size and rate, which is what this table encodes, straight from the VP9 spec's level
+   * definitions. A level that overstates the stream is harmless, since a decoder at level N handles
+   * everything below it; a level Chrome does not recognise as a level at all is not, so this rounds up to
+   * a real one rather than computing a plausible number.
+   */
+  std::string parse_vp9_mime_type(AVCodecParameters* in_codecpar, AVRational frame_rate) {
+    struct VP9Level { int level; int64_t sample_rate; int64_t picture_size; int dimension; };
+    static const VP9Level levels[] = {
+      { 10,        829440,    36864,   512 },
+      { 11,       2764800,    73728,   768 },
+      { 20,       4608000,   122880,   960 },
+      { 21,       9216000,   245760,  1344 },
+      { 30,      20736000,   552960,  2048 },
+      { 31,      36864000,   983040,  2752 },
+      { 40,      83558400,  2228224,  4160 },
+      { 41,     160432128,  2228224,  4160 },
+      { 50,     311951360,  8912896,  8384 },
+      { 51,     588251136,  8912896,  8384 },
+      { 52,    1176502272,  8912896,  8384 },
+      { 60,    1176502272, 35651584, 16832 },
+      { 61,    2353004544, 35651584, 16832 },
+      { 62,    4706009088, 35651584, 16832 },
+    };
+
+    int width = in_codecpar->width > 0 ? in_codecpar->width : 1920;
+    int height = in_codecpar->height > 0 ? in_codecpar->height : 1080;
+    double fps = frame_rate.den > 0 ? av_q2d(frame_rate) : 30.0;
+    if (fps <= 0 || fps > 1000) fps = 30.0;
+
+    int64_t picture_size = (int64_t)width * height;
+    int64_t sample_rate = (int64_t)(picture_size * fps);
+    int dimension = width > height ? width : height;
+
+    int level = in_codecpar->level;
+    // -99 is lavf's "unset", and matroska sets nothing, so this is the normal path rather than a fallback
+    if (level <= 0) {
+      level = levels[sizeof(levels) / sizeof(levels[0]) - 1].level;
+      for (const auto& candidate : levels) {
+        if (candidate.sample_rate >= sample_rate && candidate.picture_size >= picture_size && candidate.dimension >= dimension) {
+          level = candidate.level;
+          break;
+        }
+      }
+    }
+
+    int bit_depth = 8;
+    const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get((AVPixelFormat)in_codecpar->format);
+    if (descriptor && descriptor->comp[0].depth > 0) bit_depth = descriptor->comp[0].depth;
+
+    int profile = in_codecpar->profile;
+    if (profile < 0 || profile > 3) profile = 0;
+
+    char mime_type[50];
+    sprintf(mime_type, "vp09.%02d.%02d.%02d", profile, level, bit_depth);
+    return mime_type;
+  }
+
+  /**
+   * av01.P.LLT.DD: profile, level, tier, bit depth.
+   *
+   * Every field comes out of the AV1CodecConfigurationRecord, which is what both matroska's CodecPrivate
+   * and mp4's av1C box hold verbatim, so unlike vp9 there is nothing to derive.
+   */
+  std::string parse_av1_mime_type(AVCodecParameters* in_codecpar) {
+    auto extradata = in_codecpar->extradata;
+    if (!extradata || in_codecpar->extradata_size < 4 || (extradata[0] & 0x80) == 0) {
+      printf("Invalid av1 configuration record.\n");
+      return "";
+    }
+
+    uint8_t seq_profile = (extradata[1] >> 5) & 0x07;
+    uint8_t seq_level_idx = extradata[1] & 0x1F;
+    uint8_t seq_tier = (extradata[2] >> 7) & 0x01;
+    uint8_t high_bitdepth = (extradata[2] >> 6) & 0x01;
+    uint8_t twelve_bit = (extradata[2] >> 5) & 0x01;
+
+    int bit_depth = seq_profile == 2 && high_bitdepth ? (twelve_bit ? 12 : 10) : (high_bitdepth ? 10 : 8);
+
+    char mime_type[50];
+    sprintf(mime_type, "av01.%d.%02d%c.%02d", seq_profile, seq_level_idx, seq_tier ? 'H' : 'M', bit_depth);
     return mime_type;
   }
 
@@ -576,11 +783,13 @@ public:
     audio_streams.clear();
     audio_index = -1;
     int first_audio = -1;
+    int first_usable = -1;
     bool selected_valid = false;
     for (int i = 0; i < input_format_context->nb_streams; i++) {
       AVStream* in_stream = input_format_context->streams[i];
       if (in_stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
       if (first_audio < 0) first_audio = i;
+      if (first_usable < 0 && output_accepts_audio(in_stream->codecpar->codec_id)) first_usable = i;
       if (i == selected_audio_index) selected_valid = true;
       AudioStream audio_stream;
       audio_stream.streamIndex = i;
@@ -588,7 +797,11 @@ public:
       if (auto title = av_dict_get(in_stream->metadata, "title", NULL, 0)) audio_stream.title = title->value;
       audio_streams.push_back(audio_stream);
     }
-    return selected_valid ? selected_audio_index : first_audio;
+    // Default to the first track that can actually reach the output rather than simply the first track. A
+    // file whose first track is a codec this build has no decoder for would otherwise play silent, while a
+    // perfectly usable second track sat next to it. An explicit choice is still honoured as made.
+    if (selected_valid) return selected_audio_index;
+    return first_usable >= 0 ? first_usable : first_audio;
   }
 
   void init_input(bool skip = false) {
@@ -678,77 +891,42 @@ public:
     }
 
     number_of_streams = input_format_context->nb_streams;
+    video_stream_index = -1;
+    video_mime_type.clear();
 
     for (int i = 0; i < number_of_streams; i++) {
-      AVCodecParameters* in_codecpar = input_format_context->streams[i]->codecpar;
+      AVStream* in_stream = input_format_context->streams[i];
+      AVCodecParameters* in_codecpar = in_stream->codecpar;
       if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO) continue;
       video_stream_index = i;
-      if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
-        video_mime_type = parse_h264_mime_type(in_codecpar);
-      } else if (in_codecpar->codec_id == AV_CODEC_ID_H265) {
-        video_mime_type = parse_h265_mime_type(in_codecpar);
-      }
+      video_mime_type = parse_video_mime_type(in_stream);
     }
   }
 
+  std::string parse_video_mime_type(AVStream* in_stream) {
+    AVCodecParameters* in_codecpar = in_stream->codecpar;
+    switch (in_codecpar->codec_id) {
+      case AV_CODEC_ID_H264: return parse_h264_mime_type(in_codecpar);
+      case AV_CODEC_ID_HEVC: return parse_h265_mime_type(in_codecpar);
+      case AV_CODEC_ID_VP9:  return parse_vp9_mime_type(in_codecpar, in_stream->avg_frame_rate);
+      case AV_CODEC_ID_AV1:  return parse_av1_mime_type(in_codecpar);
+      default:               return "";
+    }
+  }
+
+  /**
+   * Build the input-to-output stream map, and decide what each stream becomes.
+   *
+   * `skip` is the seek path, which rebuilds the muxer from scratch and so must produce the exact same map,
+   * but has no use for attachments, subtitles or chapters: those were handed over once at init and do not
+   * change. It is the only difference. The two used to be separate loops, which is how the seek path came
+   * to leave audio_mime_type unset for aac while the init path filled it in.
+   */
   void init_streams(bool skip = false) {
     find_video_stream();
     av_freep(&streams_list);
 
-    if (skip) {
-      streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
-      if (!streams_list) {
-        throw std::runtime_error("Could not allocate streams_list");
-      }
-
-      const int effective_audio = collect_audio_streams();
-
-      int out_index = 0;
-      for (int i = 0; i < number_of_streams; i++) {
-        AVStream* in_stream = input_format_context->streams[i];
-        AVCodecParameters* in_codecpar = in_stream->codecpar;
-        if (!(
-          in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
-          in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
-        )) {
-          streams_list[i] = -1;
-          continue;
-        }
-
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
-            && (i != effective_audio || !output_accepts_audio(in_codecpar->codec_id))) {
-          streams_list[i] = -1;
-          continue;
-        }
-
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-          audio_index = i;
-          if (needs_transcoding_to_aac(in_codecpar->codec_id)) {
-            needs_audio_transcoding = true;
-            audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the compressed input
-          }
-        }
-
-        AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
-        if (!out_stream) {
-          throw std::runtime_error("Could not allocate an output stream");
-        }
-
-        // EAC3 params are copied as-is on purpose: prepare_audio_encoder runs later in init() and overwrites them with the AAC encoder params
-        int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
-        if (cpRet < 0) {
-          throw std::runtime_error(
-            "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
-          );
-        }
-
-        streams_list[i] = out_index++;
-      }
-      return;
-    }
-
     streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
-
     if (!streams_list) {
       throw std::runtime_error("Could not allocate streams_list");
     }
@@ -759,8 +937,10 @@ public:
     for (int i = 0; i < number_of_streams; i++) {
       AVStream* in_stream = input_format_context->streams[i];
       AVCodecParameters* in_codecpar = in_stream->codecpar;
+      streams_list[i] = -1;
 
       if (in_codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT) {
+        if (skip) continue;
         Attachment attachment;
 
         if (auto fn = av_dict_get(in_stream->metadata, "filename", NULL, 0)) {
@@ -775,11 +955,11 @@ public:
         std::memcpy((void*)attachment.ptr, in_codecpar->extradata, attachment.size);
 
         attachments.push_back(attachment);
-        streams_list[i] = -1;
         continue;
       }
 
       if (in_codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        if (skip) continue;
         SubtitleFragment subtitle_fragment = SubtitleFragment();
         subtitle_fragment.streamIndex = i;
         subtitle_fragment.isHeader = true;
@@ -794,38 +974,151 @@ public:
         subtitle_fragment.data = subtitle_data;
 
         subtitles.push_back(subtitle_fragment);
-        streams_list[i] = -1;
         continue;
       }
 
-      if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO
-          && (i != effective_audio || !output_accepts_audio(in_codecpar->codec_id))) {
-        streams_list[i] = -1;
-        continue;
+      if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        // one video track reaches the output: the one find_video_stream picked, and only if mp4 can carry
+        // it and a browser can name it. A cover image or a second angle muxed alongside would each get
+        // their own track, and MediaSource takes the first one it finds.
+        if (i != video_stream_index || video_mime_type.empty()) continue;
       }
 
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        if (i != effective_audio || !output_accepts_audio(in_codecpar->codec_id)) continue;
         audio_index = i;
-        if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
-          audio_mime_type = parse_mp4a_mime_type(in_codecpar);
-        } else if (needs_transcoding_to_aac(in_codecpar->codec_id)) {
+        if (needs_transcoding_to_aac(in_codecpar->codec_id)) {
           needs_audio_transcoding = true;
           audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the compressed input
+        } else {
+          audio_mime_type = parse_audio_mime_type(in_codecpar);
         }
+      }
+
+      if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO && in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+        continue;
       }
 
       AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
       if (!out_stream) {
         throw std::runtime_error("Could not allocate an output stream");
       }
+
+      // transcoded audio is copied as-is on purpose: prepare_audio_encoder runs later in init() and
+      // overwrites these with the aac encoder's own parameters
       int cpRet = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
       if (cpRet < 0) {
         throw std::runtime_error(
           "Could not copy codec parameters: " + ffmpegErrStr(cpRet)
         );
       }
+
+      // The input container's fourcc means nothing to mp4, and movenc rejects the ones it does not
+      // recognise rather than substituting its own: AVI's 'H264' tag made every avi file fail with
+      // "Could not find tag for codec h264 in stream #0". Zero asks movenc to pick the mp4 tag itself.
+      out_stream->codecpar->codec_tag = 0;
+
       streams_list[i] = out_index++;
     }
+
+    if (video_stream_index < 0 || video_mime_type.empty()) {
+      throw std::runtime_error(
+        "No playable video track: the file has no video stream, or its codec cannot be carried by mp4"
+      );
+    }
+  }
+
+  void destroy_audio_bsf() {
+    if (audio_bsf) av_bsf_free(&audio_bsf);
+    audio_bsf = nullptr;
+  }
+
+  /**
+   * mp4 stores AAC as raw frames plus a single AudioSpecificConfig in the sample entry. mpegts and .aac
+   * hand over ADTS instead, which repeats that configuration in a header on every frame and leaves the
+   * stream's extradata empty, so movenc refuses the packets outright: "Malformed AAC bitstream detected".
+   *
+   * aac_adtstoasc converts them, but the sample entry has to be right before the first packet is written,
+   * and empty_moov writes the header before any packet exists. So the filter is primed here on a single
+   * packet purely to learn the configuration, and the input is rewound before anything is muxed. lavf will
+   * not insert this itself: its automatic filtering runs per packet, which is already too late.
+   */
+  void prepare_audio_bitstream_filter() {
+    destroy_audio_bsf();
+    if (audio_index < 0 || needs_audio_transcoding || streams_list[audio_index] < 0) return;
+
+    AVStream* in_stream = input_format_context->streams[audio_index];
+    AVCodecParameters* in_codecpar = in_stream->codecpar;
+    if (in_codecpar->codec_id != AV_CODEC_ID_AAC || in_codecpar->extradata_size > 0) return;
+
+    const AVBitStreamFilter* filter = av_bsf_get_by_name("aac_adtstoasc");
+    if (!filter || av_bsf_alloc(filter, &audio_bsf) < 0) {
+      destroy_audio_bsf();
+      return;
+    }
+
+    audio_bsf->time_base_in = in_stream->time_base;
+    if (avcodec_parameters_copy(audio_bsf->par_in, in_codecpar) < 0 || av_bsf_init(audio_bsf) < 0) {
+      destroy_audio_bsf();
+      return;
+    }
+
+    // One audio packet is all the filter needs to work the configuration out. It publishes it as
+    // NEW_EXTRADATA side data on the packet it hands back rather than on its own par_out, so that is what
+    // this reads; par_out is kept as a fallback because older builds of the filter set it there instead.
+    std::vector<uint8_t> config;
+    AVPacket* probe = av_packet_alloc();
+    AVPacket* filtered = av_packet_alloc();
+    for (int reads = 0; probe && filtered && reads < 512 && config.empty(); reads++) {
+      if (av_read_frame(input_format_context, probe) < 0) break;
+      if (probe->stream_index != audio_index) {
+        av_packet_unref(probe);
+        continue;
+      }
+      // send takes the contents and leaves probe blank, which is exactly the state the next read wants
+      if (av_bsf_send_packet(audio_bsf, probe) == 0) {
+        while (av_bsf_receive_packet(audio_bsf, filtered) == 0) {
+          size_t size = 0;
+          const uint8_t* side = av_packet_get_side_data(filtered, AV_PKT_DATA_NEW_EXTRADATA, &size);
+          if (side && size > 0 && config.empty()) config.assign(side, side + size);
+          av_packet_unref(filtered);
+        }
+      }
+      av_packet_unref(probe);
+    }
+    av_packet_free(&probe);
+    av_packet_free(&filtered);
+
+    if (config.empty() && audio_bsf->par_out->extradata_size > 0) {
+      config.assign(
+        audio_bsf->par_out->extradata,
+        audio_bsf->par_out->extradata + audio_bsf->par_out->extradata_size
+      );
+    }
+
+    if (!config.empty()) {
+      AVCodecParameters* out_codecpar = output_format_context->streams[streams_list[audio_index]]->codecpar;
+      uint8_t* copy = (uint8_t*)av_mallocz(config.size() + AV_INPUT_BUFFER_PADDING_SIZE);
+      if (copy) {
+        std::memcpy(copy, config.data(), config.size());
+        av_freep(&out_codecpar->extradata);
+        out_codecpar->extradata = copy;
+        out_codecpar->extradata_size = (int)config.size();
+      }
+    }
+
+    // The filter keeps nothing across packets except the fact that it has already reported the
+    // configuration once, so it carries straight on from a clean queue; only the packets it consumed
+    // above have to be read a second time.
+    av_bsf_flush(audio_bsf);
+    av_seek_frame(input_format_context, -1, 0, AVSEEK_FLAG_BACKWARD);
+  }
+
+  // aac_adtstoasc emits exactly one packet for every packet it is given, so this stays a substitution
+  bool filter_audio_packet() {
+    if (!audio_bsf) return true;
+    if (av_bsf_send_packet(audio_bsf, packet) < 0) return false;
+    return av_bsf_receive_packet(audio_bsf, packet) == 0;
   }
 
   void destroy_streams() {
@@ -1099,6 +1392,10 @@ public:
     init_input();
     find_video_stream();
 
+    if (video_stream_index < 0) {
+      throw std::runtime_error("No video stream to take thumbnails from");
+    }
+
     ThumbnailInitResult result;
     result.duration = (double)input_format_context->duration / (double)AV_TIME_BASE;
     result.video_mime_type = video_mime_type;
@@ -1147,6 +1444,7 @@ public:
     init_streams();
     prepare_decoder();
     prepare_audio_encoder();
+    prepare_audio_bitstream_filter();
     write_header();
     initializing = false;
     first_initialization_done = true;
@@ -1285,6 +1583,8 @@ public:
           if (transcode_audio(packet, out_stream) < 0) {
             printf("ERROR: could not transcode audio\n");
           }
+        } else if (!filter_audio_packet()) {
+          printf("ERROR: could not filter audio packet\n");
         } else {
           av_packet_rescale_ts(packet, in_stream->time_base, out_stream->time_base);
 
@@ -1406,6 +1706,7 @@ public:
     init_streams(true);
     prepare_decoder();
     prepare_audio_encoder();
+    prepare_audio_bitstream_filter();
     write_header();
     initializing = false;
     write_vector.clear();
@@ -1445,6 +1746,7 @@ public:
 
   // the order matters: audio_buffer's channel count is read back off audio_avcc, so that goes last
   void destroy_audio() {
+    destroy_audio_bsf();
     if (audio_input_frame) {
       av_frame_free(&audio_input_frame);
       audio_input_frame = nullptr;
