@@ -898,6 +898,9 @@ public:
       AVStream* in_stream = input_format_context->streams[i];
       AVCodecParameters* in_codecpar = in_stream->codecpar;
       if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO) continue;
+      // a cover image is a video stream as far as lavf is concerned, and picking it as THE video stream
+      // makes every seek and every thumbnail read from a single still
+      if (in_stream->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
       video_stream_index = i;
       video_mime_type = parse_video_mime_type(in_stream);
     }
