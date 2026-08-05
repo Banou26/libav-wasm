@@ -1383,7 +1383,7 @@ public:
     return result;
   }
 
-  ReadResult seek(emscripten::val read_function, int timestamp) {
+  ReadResult seek(emscripten::val read_function, double timestamp) {
     resolved_promise.await();
 
     read_data_function = read_function;
@@ -1425,7 +1425,16 @@ public:
     pts_offset = 0;
     after_seek = true;
 
-    int ret = av_seek_frame(input_format_context, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
+    // rescale here, not at the top: destroy_input() above frees the context this stream comes from. The
+    // seconds-to-time_base conversion was previously a bare millisecond value, correct only for matroska.
+    AVStream* video_stream = input_format_context->streams[video_stream_index];
+    int64_t seek_target = av_rescale_q(
+      timestamp * AV_TIME_BASE,
+      AV_TIME_BASE_Q,
+      video_stream->time_base
+    );
+
+    int ret = av_seek_frame(input_format_context, video_stream_index, seek_target, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
       printf("ERROR: av_seek_frame: %s\n", ffmpegErrStr(ret).c_str());
       ReadResult cancelled_result;

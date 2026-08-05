@@ -336,7 +336,7 @@ const resolvers = {
         }
       }),
       destroy: () => _remuxer.destroy(),
-      seek: (read, timestamp) => _remuxer.seek(read, timestamp * 1000).then(result => {
+      seek: (read, timestamp) => _remuxer.seek(read, timestamp).then(result => {
         if (result.cancelled) { result.subtitles.delete(); throw new Error('Cancelled') }
         const typedArray = new Uint8Array(result.data.byteLength)
         typedArray.set(result.data)
