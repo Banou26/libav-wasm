@@ -227,6 +227,10 @@ public:
   // relative to the video stream's own start. Matroska and mp4 already start at zero, where this is 0 and
   // changes nothing.
   int64_t start_time_offset = 0;
+  // Worked out once, on the first open, and kept. A seek tears the input down and reopens it, and lavf is
+  // free to report a different start_time having probed from a different position: re-deriving it there
+  // shifts every timestamp the caller has already been given, and can report them as negative.
+  bool start_time_offset_known = false;
   double duration = 0;
   double pts = 0;
   int64_t pos = 0;
@@ -269,9 +273,14 @@ public:
     selected_audio_index = index;
   }
 
+  // std::to_string is decimal, which matched only while the value stayed below 10. Main profile's
+  // compatibility flags reverse to 6, so every ordinary hevc file hid this; a RExt stream reverses to 0x10
+  // and was named hev1.4.16 instead of hev1.4.10, which no browser matches against its own decoder list.
   auto decimalToHex(int d, int padding) {
-    std::string hex = std::to_string(d);
-    while (hex.length() < padding) {
+    char buffer[16];
+    snprintf(buffer, sizeof(buffer), "%x", d);
+    std::string hex = buffer;
+    while ((int)hex.length() < padding) {
       hex = "0" + hex;
     }
     return hex;
@@ -980,18 +989,32 @@ public:
     video_stream_index = -1;
     video_mime_type.clear();
 
+    // The first stream that can actually be muxed wins, and a file with none still keeps a video stream
+    // for the thumbnail path to decode. Taking whichever came last meant one trailing mjpeg preview track
+    // decided the whole file was unplayable, and a cover image is a video stream to lavf as well: picking
+    // one makes every seek and every thumbnail read from a single still.
+    int fallback = -1;
     for (int i = 0; i < number_of_streams; i++) {
       AVStream* in_stream = input_format_context->streams[i];
       AVCodecParameters* in_codecpar = in_stream->codecpar;
       if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO) continue;
-      // a cover image is a video stream as far as lavf is concerned, and picking it as THE video stream
-      // makes every seek and every thumbnail read from a single still
       if (in_stream->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
+      if (fallback < 0) fallback = i;
+
+      std::string mime = parse_video_mime_type(in_stream);
+      if (mime.empty()) continue;
       video_stream_index = i;
-      video_mime_type = parse_video_mime_type(in_stream);
-      start_time_offset = in_stream->start_time != AV_NOPTS_VALUE && in_stream->start_time > 0
-        ? av_rescale_q(in_stream->start_time, in_stream->time_base, AV_TIME_BASE_Q)
+      video_mime_type = mime;
+      break;
+    }
+    if (video_stream_index < 0) video_stream_index = fallback;
+
+    if (!start_time_offset_known && video_stream_index >= 0) {
+      AVStream* chosen = input_format_context->streams[video_stream_index];
+      start_time_offset = chosen->start_time != AV_NOPTS_VALUE && chosen->start_time > 0
+        ? av_rescale_q(chosen->start_time, chosen->time_base, AV_TIME_BASE_Q)
         : 0;
+      start_time_offset_known = true;
     }
   }
 
@@ -1269,7 +1292,10 @@ public:
   bool seek_to_keyframe(double timestamp) {
     AVStream* video_stream = input_format_context->streams[video_stream_index];
 
-    int64_t seek_target = av_rescale_q(
+    // the caller counts from the start of the content, the input counts from its own clock, and
+    // offset_in is the difference. Without it a file whose clock starts at 600s answers every seek with
+    // the beginning of the file, since every target asked for is far behind where the content begins.
+    int64_t seek_target = offset_in(video_stream->time_base) + av_rescale_q(
       timestamp * AV_TIME_BASE,
       AV_TIME_BASE_Q,
       video_stream->time_base
@@ -1846,7 +1872,8 @@ public:
     // rescale here, not at the top: destroy_input() above frees the context this stream comes from. The
     // seconds-to-time_base conversion was previously a bare millisecond value, correct only for matroska.
     AVStream* video_stream = input_format_context->streams[video_stream_index];
-    int64_t seek_target = av_rescale_q(
+    // same content-clock to input-clock conversion as seek_to_keyframe; see the note there
+    int64_t seek_target = offset_in(video_stream->time_base) + av_rescale_q(
       timestamp * AV_TIME_BASE,
       AV_TIME_BASE_Q,
       video_stream->time_base
