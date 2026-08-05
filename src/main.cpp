@@ -164,11 +164,7 @@ public:
 
   int64_t last_video_dts = AV_NOPTS_VALUE;
   int64_t last_audio_dts = AV_NOPTS_VALUE;
-  int64_t pts_offset = 0;
   bool after_seek = false;
-
-  uint8_t* input_avio_buffer = nullptr;
-  uint8_t* output_avio_buffer = nullptr;
 
   int64_t currentOffset = 0;
   int64_t input_length = 0;
@@ -513,29 +509,6 @@ public:
     return 0;
   }
 
-  int flush_audio_buffer(AVStream *out_stream) {
-    if (!needs_audio_transcoding || !audio_buffer || audio_buffer_samples == 0) {
-        return 0;
-    }
-
-    int channels = audio_avcc->ch_layout.nb_channels;
-    int sample_size = av_get_bytes_per_sample(audio_avcc->sample_fmt);
-
-    for (int ch = 0; ch < channels; ch++) {
-        memcpy(audio_output_frame->data[ch], audio_buffer[ch], audio_buffer_samples * sample_size);
-        memset(audio_output_frame->data[ch] + (audio_buffer_samples * sample_size), 0,
-               (aac_frame_size - audio_buffer_samples) * sample_size);
-    }
-
-    audio_output_frame->nb_samples = aac_frame_size;
-    audio_output_frame->pts = next_audio_pts;
-    next_audio_pts += aac_frame_size;
-    int result = send_audio_frame_to_encoder(audio_output_frame, out_stream);
-    audio_buffer_samples = 0;
-
-    return result;
-  }
-
   int transcode_audio(AVPacket *input_packet, AVStream *out_stream) {
     int response = avcodec_send_packet(audio_decoder_avcc, input_packet);
     if (response < 0) {
@@ -610,7 +583,7 @@ public:
   }
 
   void init_input(bool skip = false) {
-    input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
+    uint8_t* input_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     // args after the buffer size: 0 = not writing, this = opaque, avio_read = custom read, nullptr = no write, avio_seek = custom seek
     input_avio_context = avio_alloc_context(
       input_avio_buffer,
@@ -657,7 +630,7 @@ public:
   }
 
   void init_output() {
-    output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
+    uint8_t* output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     // args after the buffer size: 1 = write flag, this = opaque, nullptr = no read, avio_write = custom write, nullptr = no seek
     output_avio_context = avio_alloc_context(
       output_avio_buffer,
@@ -1437,7 +1410,6 @@ public:
 
     last_video_dts = AV_NOPTS_VALUE;
     last_audio_dts = AV_NOPTS_VALUE;
-    pts_offset = 0;
     after_seek = true;
 
     // rescale here, not at the top: destroy_input() above frees the context this stream comes from. The
