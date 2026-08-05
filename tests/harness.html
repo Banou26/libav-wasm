@@ -126,9 +126,9 @@ window.harness = {
     } finally { await instance.destroy() }
   },
 
-  async seek(name, targets) {
+  async seek(name, targets, { bufferSize } = {}) {
     const { length, read } = await sourceFor(name)
-    const remuxer = await makeRemuxer(common(length, read))
+    const remuxer = await makeRemuxer({ ...common(length, read), ...(bufferSize ? { bufferSize } : {}) })
     try {
       await remuxer.init()
       const steps = []

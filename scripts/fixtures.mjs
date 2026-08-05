@@ -109,8 +109,11 @@ export const FIXTURES = [
     name: 'h264-aac.ts',
     why: 'mpegts carries Annex-B video and ADTS audio, and mp4 takes neither as-is',
     seconds: 20,
+    // A broadcast capture's clock starts wherever the broadcast's did. mpegts already starts ~1.4s in on
+    // its own, but that is inside one GOP, so a seek that never converts back to the input's clock still
+    // lands on the right keyframe and looks correct. Ten minutes in, it cannot.
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-output_ts_offset', '600'],
     inputs: inputs(),
-    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
   },
   {
     name: 'hevc-aac.ts',
@@ -125,6 +128,13 @@ export const FIXTURES = [
     seconds: 20,
     inputs: inputs(),
     args: [...encode(), '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=none', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
+    name: 'hevc-rext.mkv',
+    why: 'the only hevc profile whose compatibility flags exceed 9, where a decimal printf stops matching hex',
+    seconds: 5,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=none', '-crf', '20', '-pix_fmt', 'yuv444p', '-c:a', 'aac'],
   },
   {
     name: 'vp9-opus.webm',
@@ -175,6 +185,33 @@ export const FIXTURES = [
     maps: ['-map', '1:a', '-map', '1:a', '-map', '0:v'],
     inputs: inputs(),
     args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
+    name: 'h264-pcm.mkv',
+    why: 'raw pcm decodes packed, at 16 bit, with no channel layout: none of what the aac encoder takes',
+    seconds: 10,
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le'],
+  },
+  {
+    name: 'h264-wavpack.mkv',
+    why: 'a wavpack frame is 22050 samples, where the old staging buffer held 8192 and never checked',
+    seconds: 10,
+    inputs: inputs('320x240', 10),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'wavpack'],
+  },
+  {
+    name: 'two-video.mkv',
+    why: 'a trailing preview track must not decide the file is unplayable, so the first usable one wins',
+    seconds: 10,
+    maps: ['-map', '0:v', '-map', '0:v', '-map', '1:a'],
+    inputs: inputs(),
+    args: [
+      '-filter:v:0', colourByTime,
+      '-g', String(GOP), '-keyint_min', String(GOP), '-sc_threshold', '0',
+      '-c:v:0', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-c:v:1', 'mjpeg', '-c:a', 'aac',
+    ],
   },
   {
     name: 'theora-vorbis.ogv',

@@ -94,6 +94,12 @@ test.describe('containers', () => {
     { name: 'av1-opus.webm', video: /^av01\.0\.00M\.08$/, audio: 'opus', why: 'av1 keeps everything in its configuration record' },
     { name: 'cover-art.mp4', video: /^avc1\./, audio: 'mp4a.40.2', why: 'a poster is a video stream lavf will hand over too' },
     { name: 'audio-first.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'the input and output stream numbering disagree' },
+    { name: 'two-video.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'a trailing mjpeg preview track must not win' },
+    // the aac encoder takes planar float at 1024 samples and nothing else. pcm decodes packed, 16 bit and
+    // with no channel layout at all; a wavpack frame is 22050 samples. Both used to be dropped outright,
+    // and admitting them without converting first read integers as floats and ran off the end of a buffer.
+    { name: 'h264-pcm.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'pcm decodes packed, at 16 bit, with no layout' },
+    { name: 'h264-wavpack.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'a wavpack frame is 22050 samples' },
     { name: 'h264-flac.mkv', video: /^avc1\./, audio: 'flac', why: 'flac passes through mp4 untouched' },
     { name: 'h264-vorbis.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'mp4 cannot carry vorbis, so it re-encodes' },
   ]
@@ -139,6 +145,20 @@ test.describe('containers', () => {
     })
   }
 
+  /**
+   * The hevc profile-compatibility field is hex, and printed with the wrong base it silently agreed.
+   *
+   * Main reverses to 6 and Main 10 to 4, so every ordinary hevc file printed the same digits either way
+   * and nothing noticed that the printf was decimal. RExt reverses to 0x10, which decimal renders as 16:
+   * a codec string a browser matches against nothing. Only the compatibility field is asserted, since the
+   * constraint byte after it is the encoder's business and moves between x265 releases.
+   */
+  test('an hevc profile whose compatibility flags exceed 9 is named in hex', async ({ page }) => {
+    await open(page)
+    const result = await page.evaluate(() => window.harness.remux('hevc-rext.mkv'))
+    expect(result.videoMimeType).toMatch(/^hev1\.4\.10\./)
+  })
+
   // theora has no mp4 mapping and no browser decodes it, so this one cannot be made to play. What it must
   // not do is take the module down, or hand back a pointer where a reason belongs.
   test('a video codec that cannot reach a browser says so', async ({ page }) => {
@@ -156,6 +176,18 @@ test.describe('containers', () => {
     await open(page)
     const times = [4, 12]
     const result = await page.evaluate((t) => window.harness.thumbnails('cover-art.mp4', t), times)
+
+    for (const shot of result.shots) expectFrameAt(shot, shot.t)
+    expect(new Set(result.shots.map(s => secondFromRed(s.r))).size).toBe(times.length)
+  })
+
+  // Same clock, through the other entry point. readKeyframe seeks on its own and decodes the frame, so
+  // the fixture's colour says outright which second came back: a seek that never converts the target back
+  // into the input's clock hands over second 0 for every timestamp asked for.
+  test('thumbnails land on the right second when the clock does not start at zero', async ({ page }) => {
+    await open(page)
+    const times = [4, 10, 16]
+    const result = await page.evaluate((t) => window.harness.thumbnails('h264-aac.ts', t), times)
 
     for (const shot of result.shots) expectFrameAt(shot, shot.t)
     expect(new Set(result.shots.map(s => secondFromRed(s.r))).size).toBe(times.length)
@@ -194,6 +226,7 @@ test.describe('seeking', () => {
   test('seeking is correct in a container whose clock does not start at zero', async ({ page }) => {
     await open(page)
     const { steps } = await page.evaluate(() => window.harness.seek('h264-aac.ts', [12, 4, 16]))
+    expect(new Set(steps.map(s => s.bytes)).size, 'every seek returned the same bytes').toBe(steps.length)
     for (const step of steps) {
       // at or before the target, never after: a seek lands on the keyframe at or before what was asked
       // for, so anything later is the file's own clock leaking into the output rather than a rounding
@@ -202,6 +235,25 @@ test.describe('seeking', () => {
       expect(step.target - step.pts, `seek(${step.target}) landed at ${step.pts}`).toBeLessThanOrEqual(3)
     }
     expect(new Set(steps.map(s => s.pts)).size, 'every seek landed in the same place').toBe(steps.length)
+  })
+
+  /**
+   * The same target, twice, must answer the same.
+   *
+   * A seek tears the input down and opens it again, and how much lavf probes on that second open depends
+   * on the read size, so it can settle on a different start_time than the first open did. Deriving the
+   * content offset from it each time then moves the whole reported timeline underneath a caller who has
+   * already been told where it is: the second seek to 8s reported 0 for an mpegts whose video starts
+   * later than its audio, and 9.8 for one where it does not. The offset is a property of the file.
+   */
+  test('seeking twice to the same place answers the same, whatever the read size', async ({ page }) => {
+    await open(page)
+    const { steps } = await page.evaluate(() => window.harness.seek('h264-aac.ts', [8, 8], { bufferSize: 65_536 }))
+
+    const [first, again] = steps
+    expect(again.pts, `seek(8) gave ${first.pts} then ${again.pts}`).toBe(first.pts)
+    expect(again.bytes).toBe(first.bytes)
+    expect(Math.abs(first.pts - 8)).toBeLessThanOrEqual(3)
   })
 
   // mov timescales are not 1/1000, which is the only reason an unrescaled millisecond value ever worked
