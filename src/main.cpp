@@ -23,6 +23,11 @@ static inline std::string ffmpegErrStr(int errnum) {
   return std::string(buf);
 }
 
+// the mp4 muxer refuses both under empty_moov, and with no exception support that refusal aborts the module
+static inline bool needs_transcoding_to_aac(AVCodecID codec_id) {
+  return codec_id == AV_CODEC_ID_EAC3 || codec_id == AV_CODEC_ID_AC3;
+}
+
 typedef struct MediaInfo {
   std::string formatName;
   std::string mimeType;
@@ -696,9 +701,9 @@ public:
 
         if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
           audio_index = i;
-          if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+          if (needs_transcoding_to_aac(in_codecpar->codec_id)) {
             needs_audio_transcoding = true;
-            audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the EAC3 input
+            audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the compressed input
           }
         }
 
@@ -800,9 +805,9 @@ public:
         audio_index = i;
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
           audio_mime_type = parse_mp4a_mime_type(in_codecpar);
-        } else if (in_codecpar->codec_id == AV_CODEC_ID_EAC3) {
+        } else if (needs_transcoding_to_aac(in_codecpar->codec_id)) {
           needs_audio_transcoding = true;
-          audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the EAC3 input
+          audio_mime_type = "mp4a.40.2"; // describes the AAC-LC output, not the compressed input
         }
       }
 
@@ -1236,7 +1241,7 @@ public:
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        if (needs_audio_transcoding && in_stream->codecpar->codec_id == AV_CODEC_ID_EAC3) {
+        if (needs_audio_transcoding && needs_transcoding_to_aac(in_stream->codecpar->codec_id)) {
           if (transcode_audio(packet, out_stream) < 0) {
             printf("ERROR: could not transcode audio\n");
           }
