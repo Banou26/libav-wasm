@@ -361,6 +361,10 @@ const resolvers = {
     let videoFrameResolve: ((value: VideoFrame) => void) | undefined
     let videoFrameReject: ((reason?: any) => void) | undefined
     let decoderConfig: VideoDecoderConfig | undefined
+    // WebCodecs is needed by readKeyframe and by nothing else here: demuxing and remuxing are pure wasm.
+    // So none of it may be touched while building a remuxer, or a browser without WebCodecs (Firefox for
+    // Android) loses PLAYBACK to a thumbnail feature it never asked for. It is built on first use instead.
+    const hasWebCodecs = typeof VideoDecoder !== 'undefined' && typeof EncodedVideoChunk !== 'undefined'
     // an output with no waiter must be closed or the hw decoder's output pool exhausts
     const makeDecoder = () => new VideoDecoder({
       output: (output) => {
@@ -375,38 +379,46 @@ const resolvers = {
         videoFrameReject = undefined
       }
     })
-    let videoDecoder = makeDecoder()
-    const offscreen = new OffscreenCanvas(200 * 16/9, 200)
-    const offscreenContext = offscreen.getContext('2d')
-    if (!offscreenContext) throw new Error('OffscreenCanvas not supported')
+    let videoDecoder: VideoDecoder | undefined
+    let thumbnailCanvas: { canvas: OffscreenCanvas, context: OffscreenCanvasRenderingContext2D } | undefined
+    const ensureCanvas = () => {
+      if (thumbnailCanvas) return thumbnailCanvas
+      const canvas = new OffscreenCanvas(200 * 16/9, 200)
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('OffscreenCanvas not supported')
+      return (thumbnailCanvas = { canvas, context })
+    }
 
     return {
       destroy: async () => remuxer.destroy(),
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
-        const baseConfig: VideoDecoderConfig = {
-          codec: initResult.info.input.videoMimeType,
-          description: initResult.videoExtradata,
+        if (hasWebCodecs) {
+          const baseConfig: VideoDecoderConfig = {
+            codec: initResult.info.input.videoMimeType,
+            description: initResult.videoExtradata,
+          }
+          // hw decoders repeat the first frame under this one-keyframe-per-flush pattern
+          const swConfig: VideoDecoderConfig = { ...baseConfig, hardwareAcceleration: 'prefer-software' }
+          const swSupported = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported, () => false)
+          decoderConfig = swSupported ? swConfig : baseConfig
         }
-        // hw decoders repeat the first frame under this one-keyframe-per-flush pattern
-        const swConfig: VideoDecoderConfig = { ...baseConfig, hardwareAcceleration: 'prefer-software' }
-        const swSupported = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported, () => false)
-        decoderConfig = swSupported ? swConfig : baseConfig
-        if (videoDecoder.state === 'unconfigured') videoDecoder.configure(decoderConfig)
         return initResult
       },
       seek: (read: ReadFunction, timestamp: number) => remuxer.seek(readToWasmRead(read), timestamp),
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
       setAudioStreamIndex: async (index: number) => remuxer.setAudioStreamIndex(index),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
+        if (!hasWebCodecs) throw new Error('WebCodecs is unavailable, so keyframes cannot be decoded')
         const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
         if (!readResult.data?.byteLength) throw new Error('empty keyframe data')
         // a decode error closes the VideoDecoder permanently, so recreate it here or every later readKeyframe call fails
-        if (videoDecoder.state === 'closed') videoDecoder = makeDecoder()
+        if (!videoDecoder || videoDecoder.state === 'closed') videoDecoder = makeDecoder()
         if (videoDecoder.state === 'unconfigured') {
           if (!decoderConfig) throw new Error('decoder not configured')
           videoDecoder.configure(decoderConfig)
         }
+        const { canvas, context } = ensureCanvas()
         const videoFramePromise = new Promise<VideoFrame>((resolve, reject) => {
           videoFrameResolve = resolve
           videoFrameReject = reject
@@ -418,9 +430,9 @@ const resolvers = {
           data: readResult.data
         }))
         const [videoFrame] = await Promise.all([videoFramePromise, videoDecoder.flush()])
-        offscreenContext.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
+        context.drawImage(videoFrame, 0, 0, 200 * 16/9, 200)
         videoFrame.close()
-        return offscreen.convertToBlob().then(blob => blob.arrayBuffer())
+        return canvas.convertToBlob().then(blob => blob.arrayBuffer())
       }
     }
   }
