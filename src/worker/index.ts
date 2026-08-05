@@ -400,6 +400,8 @@ const resolvers = {
     // So none of it may be touched while building a remuxer, or a browser without WebCodecs (Firefox for
     // Android) loses PLAYBACK to a thumbnail feature it never asked for. It is built on first use instead.
     const hasWebCodecs = typeof VideoDecoder !== 'undefined' && typeof EncodedVideoChunk !== 'undefined'
+    // decided in init(), once the codec is known: only a SOFTWARE WebCodecs decoder is usable here
+    let useWebCodecs = false
     // an output with no waiter must be closed or the hw decoder's output pool exhausts
     const makeDecoder = () => new VideoDecoder({
       output: (output) => {
@@ -429,14 +431,18 @@ const resolvers = {
       init: async (read: ReadFunction) => {
         const initResult = await remuxer.init(readToWasmRead(read))
         if (hasWebCodecs) {
-          const baseConfig: VideoDecoderConfig = {
+          // hw decoders repeat the first frame under this one-keyframe-per-flush pattern, so a software
+          // decoder is not a preference here, it is the only correct one.
+          const swConfig: VideoDecoderConfig = {
             codec: initResult.info.input.videoMimeType,
             description: initResult.videoExtradata,
+            hardwareAcceleration: 'prefer-software',
           }
-          // hw decoders repeat the first frame under this one-keyframe-per-flush pattern
-          const swConfig: VideoDecoderConfig = { ...baseConfig, hardwareAcceleration: 'prefer-software' }
-          const swSupported = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported, () => false)
-          decoderConfig = swSupported ? swConfig : baseConfig
+          useWebCodecs = await VideoDecoder.isConfigSupported(swConfig).then(res => res.supported === true, () => false)
+          // Falling back to a HARDWARE WebCodecs decoder was silently wrong. Measured on Chrome 146: hevc
+          // main and main10 are supported, but never with prefer-software, so every hevc thumbnail came
+          // back as the first frame of the file. libav decodes it correctly, so that is the fallback now.
+          if (useWebCodecs) decoderConfig = swConfig
         }
         return initResult
       },
@@ -444,10 +450,11 @@ const resolvers = {
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
       setAudioStreamIndex: async (index: number) => remuxer.setAudioStreamIndex(index),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
-        // No WebCodecs (Firefox for Android): libav decodes and scales the keyframe itself. The build
-        // already carries h264, hevc and swscale, so this costs nothing extra and the caller cannot tell
-        // the two paths apart. Slower than WebCodecs, which is the right trade for a scrub preview.
-        if (!hasWebCodecs) {
+        // libav decodes and scales the keyframe itself whenever WebCodecs cannot do it CORRECTLY: either
+        // it is absent entirely (Firefox for Android) or it only offers a hardware decoder for this codec,
+        // which repeats the first frame. The build already carries h264, hevc and swscale, so this costs
+        // nothing extra and the caller cannot tell the paths apart. Slower, which is right for a preview.
+        if (!useWebCodecs) {
           const { canvas, context } = ensureCanvas()
           const decoded = await remuxer.decodeKeyframe(readToWasmRead(read), timestamp, canvas.width, canvas.height)
           context.putImageData(new ImageData(new Uint8ClampedArray(decoded.data), decoded.width, decoded.height), 0, 0)
