@@ -66,8 +66,8 @@ typedef struct AudioStream {
 
 typedef struct Index {
   int index;
-  float timestamp;
-  size_t pos;
+  double timestamp;
+  double pos;
 } Index;
 
 typedef struct Chapter {
@@ -92,7 +92,7 @@ typedef struct InitResult {
 typedef struct ReadResult {
   emscripten::val data;
   std::vector<SubtitleFragment> subtitles;
-  long offset;
+  double offset;
   double pts;
   double duration;
   bool cancelled;
@@ -101,7 +101,7 @@ typedef struct ReadResult {
 
 typedef struct ThumbnailReadResult {
   emscripten::val data;
-  long offset;
+  double offset;
   double pts;
   double duration;
   bool cancelled;
@@ -181,10 +181,10 @@ public:
 
   double prev_duration = 0;
   double prev_pts = 0;
-  long   prev_pos = 0;
+  int64_t prev_pos = 0;
   double duration = 0;
   double pts = 0;
-  long   pos = 0;
+  int64_t pos = 0;
 
   std::string video_mime_type;
   std::string audio_mime_type;
@@ -207,7 +207,7 @@ public:
 
   Remuxer(emscripten::val options) {
     resolved_promise = options["resolvedPromise"];
-    input_length = options["length"].as<float>();
+    input_length = options["length"].as<double>();
     buffer_size = options["bufferSize"].as<int>();
     selected_audio_index = options["audioStreamIndex"].isUndefined() ? -1 : options["audioStreamIndex"].as<int>();
     needs_audio_transcoding = false;
