@@ -93,6 +93,7 @@ test.describe('containers', () => {
     { name: 'vp9-opus.webm', video: /^vp09\.00\.20\.08$/, audio: 'opus', why: 'vp9 stores no level anywhere, so it is derived' },
     { name: 'av1-opus.webm', video: /^av01\.0\.00M\.08$/, audio: 'opus', why: 'av1 keeps everything in its configuration record' },
     { name: 'cover-art.mp4', video: /^avc1\./, audio: 'mp4a.40.2', why: 'a poster is a video stream lavf will hand over too' },
+    { name: 'audio-first.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'the input and output stream numbering disagree' },
     { name: 'h264-flac.mkv', video: /^avc1\./, audio: 'flac', why: 'flac passes through mp4 untouched' },
     { name: 'h264-vorbis.mkv', video: /^avc1\./, audio: 'mp4a.40.2', why: 'mp4 cannot carry vorbis, so it re-encodes' },
   ]

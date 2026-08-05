@@ -169,6 +169,14 @@ export const FIXTURES = [
     ],
   },
   {
+    name: 'audio-first.mkv',
+    why: 'input and output stream numbering only agree while video comes first, and the map has to be applied',
+    seconds: 20,
+    maps: ['-map', '1:a', '-map', '1:a', '-map', '0:v'],
+    inputs: inputs(),
+    args: [...encode(), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac'],
+  },
+  {
     name: 'theora-vorbis.ogv',
     why: 'a video codec no browser can play has to say so, not abort or produce an mp4 nothing accepts',
     seconds: 10,
@@ -208,7 +216,7 @@ third line
 
 /** the spec decides the bytes, so its hash decides whether a cached fixture is still valid */
 const specHash = (fixture) =>
-  createHash('sha256').update(JSON.stringify([fixture.inputs, fixture.args, fixture.seconds, fixture.subtitles, fixture.cover, SECOND_STEP])).digest('hex').slice(0, 16)
+  createHash('sha256').update(JSON.stringify([fixture.inputs, fixture.args, fixture.seconds, fixture.subtitles, fixture.cover, fixture.maps, SECOND_STEP])).digest('hex').slice(0, 16)
 
 const build = async (fixture) => {
   const target = join(FIXTURE_DIR, fixture.name)
@@ -219,7 +227,7 @@ const build = async (fixture) => {
   if (cached === hash && await stat(target).then(s => s.size > 0, () => false)) return { ...fixture, path: target, cached: true }
 
   const args = ['-hide_banner', '-loglevel', 'error', '-y', ...fixture.inputs]
-  const maps = ['-map', '0:v', '-map', '1:a']
+  const maps = fixture.maps ? [...fixture.maps] : ['-map', '0:v', '-map', '1:a']
   const extra = []
 
   if (fixture.subtitles) {
@@ -267,7 +275,9 @@ export const localFixtures = async () => {
   const names = await readdir(dir).catch(() => [])
   return names
     .filter(name => /\.(mkv|mp4|m4v|webm|mov|avi|ts|m2ts|flv|3gp|mpg|ogv|wmv)$/i.test(name))
-    .map(name => ({ name, path: join(dir, name), local: true }))
+    // the subdirectory belongs in the name: it is what the test server resolves against the fixture root,
+    // and without it every local file 404s. Nothing noticed, because an empty directory skips the test.
+    .map(name => ({ name: `local/${name}`, path: join(dir, name), local: true }))
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
