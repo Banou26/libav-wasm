@@ -1607,6 +1607,13 @@ public:
 
       AVStream* out_stream = output_format_context->streams[streams_list[packet->stream_index]];
 
+      // The map is not only for deciding what to keep, it has to be applied to the packet: the muxer reads
+      // stream_index off the packet and rejects anything past the end of ITS stream list. This was silent
+      // for as long as the two numberings happened to agree, which they do whenever video comes first and
+      // only trailing streams are dropped. Hand it a file whose four audio tracks precede the video and
+      // every video packet is refused as "Invalid packet stream index: 4", for an mp4 with no video in it.
+      packet->stream_index = streams_list[packet->stream_index];
+
       if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         if (needs_audio_transcoding && needs_transcoding_to_aac(in_stream->codecpar->codec_id)) {
           if (transcode_audio(packet, out_stream) < 0) {
