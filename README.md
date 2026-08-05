@@ -1,61 +1,98 @@
-# LibAV WASM
+# libav-wasm
 
-This library can be used to remux from MKV -> MP4, it could technically do any remux but i haven't had the need for it, create an issue if you'd like it.
+Remuxes a video file into fragmented MP4 in the browser, a fragment at a time, from a `read(offset, size)`
+you supply. Nothing is downloaded up front and nothing is written to disk, so it plays a file over HTTP
+range requests, out of a torrent, or out of anything else that can answer for a byte range.
 
-[src/test.ts](https://github.com/Banou26/libav-wasm/blob/main/src/test.ts)
-Contains a full example of a MKV video player
+ffmpeg 7.1 compiled to wasm with emscripten. [src/test.ts](./src/test.ts) is a working player.
 
-Basic usage
+## What it accepts
+
+Any container ffmpeg can demux: mkv, mp4, mov, webm, avi, mpegts, flv, 3gp and the rest. What decides
+whether a file plays is the **codec**, not the extension.
+
+| | passes through | re-encoded to aac | not playable |
+| --- | --- | --- | --- |
+| video | h264, hevc, vp9, av1 | | anything else |
+| audio | aac, opus, flac | ac3, eac3, truehd, dts, mp3, vorbis, wma, pcm, … | codecs with no decoder |
+
+Video is never re-encoded, so a codec no browser can decode (mpeg2, mpeg4 part 2, theora, vc1) cannot be
+rescued and `init()` rejects saying so. Audio always can be, and is, so a track the mp4 muxer will not
+carry never costs you the file. Thumbnails have none of these limits: they decode in wasm and hand back
+pixels, so they work on files that cannot be remuxed at all.
+
+Timestamps are reported relative to the start of the content, so a format whose clock starts elsewhere
+(mpegts) still lines up with a player's timeline.
+
+## Usage
+
 ```ts
+import { makeRemuxer } from 'libav-wasm'
+
 const remuxer = await makeRemuxer({
-  // the path at which the wasm file is getting served
+  // where libav.wasm is served from
   publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
-  // url of the worker file of libavWASM
   workerUrl: new URL('../build/worker.js', import.meta.url).toString(),
-  // reads will be done in 2.5mb chunks
-  bufferSize: 2_500_000,
-  // byte length of the video file
+  workerOptions: { type: 'module' },
   length: contentLength,
-  // fetch returning a ReadableStream
-  getStream: async (offset, size) =>
-    fetch(
-      VIDEO_URL,
-      {
-        headers: {
-          Range: `bytes=${offset}-${size ? Math.min(offset + size, contentLength) - 1 : ''}`
-        }
-      }
-    ).then(res => res.body)
+  read: (offset, size) =>
+    fetch(VIDEO_URL, { headers: { Range: `bytes=${offset}-${offset + size - 1}` } })
+      .then(res => res.arrayBuffer()),
 })
 
-// returns the header of the video with all the metadata
-const header = await remuxer.init()
+// the mp4 init segment, plus every piece of metadata the file carries
+const { data, info, indexes, subtitles, attachments, chapters } = await remuxer.init()
+const codecs = [info.output.videoMimeType, info.output.audioMimeType].filter(Boolean).join(',')
+const mime = `video/mp4; codecs="${codecs}"`
 
-// Returns a chunk that looks like {
-//   offset: number,
-//   buffer: Uint8Array,
-//   pos: number,
-//   pts: number, // timestamp
-//   duration: number
-// }
-// buffer can be appended to the MediaSource API(MSE API)
+// { data, pts, duration, offset, finished } — data appends straight to a SourceBuffer
 const chunk = await remuxer.read()
 
-// allows you to seek to timestamp and start reading from there
-const seekChunk = await remuxer.seek(number)
-// ...
+// rebuilds the muxer and starts again from the keyframe at or before this timestamp
+const seeked = await remuxer.seek(90)
+
+await remuxer.destroy()
 ```
 
+`makeThumbnailer` opens the same file with no muxer, no encoder and no stream map, for `readKeyframe(t)`
+alone. Use it rather than a remuxer: `readKeyframe` seeks backward on the input, which an output muxer
+cannot follow, and a thumbnailer has no muxer to damage.
+
+## Building
+
+`npm run build` compiles `src/main.cpp` in Docker (emsdk plus ffmpeg, cached after the first run), bundles
+the library and the worker, and emits types. Only the last step re-runs when you touch C++, so the loop is
+about 25 seconds.
+
+## Tests
+
+`npm test` runs a browser suite against fixtures it synthesizes with ffmpeg on first run. Nothing is
+committed and nothing is anyone's content, so there is no copyright question and no multi-megabyte blob in
+git history: what matters for a remuxer is a file's structure, and every fixture exists because a real bug
+needed exactly that structure to show up.
+
+Each fixture encodes its own timestamp in the frame's colour, so a decoded thumbnail can be checked back to
+the second it came from. Without that the only available assertion is "some bytes came back", which is how
+hevc thumbnails silently returned frame one for every timestamp.
+
+Drop real files in `fixtures/local/` to widen coverage. That directory is gitignored, and those tests
+assert only what has to hold for any file. `npm run test:large` adds a fixture over 4 GB for the byte
+offset tests.
+
+Real Chrome is used rather than Playwright's bundled Chromium, because codec support is a property of the
+binary: Chromium reports hevc unsupported where Chrome supports it. Set `LIBAV_CHROME_PATH` if Chrome is
+not on `PATH`.
 
 ## Intellisense
-To have C++ autocompletion, put a ffmpeg repo clone folder in the root
-`git clone https://github.com/FFmpeg/FFmpeg` & `git clone https://github.com/emscripten-core/emscripten`
 
+For C++ autocompletion, clone into the repo root:
+`git clone https://github.com/FFmpeg/FFmpeg` and `git clone https://github.com/emscripten-core/emscripten`
 
+## Ideas
 
-## Issues to fix / features to implement
-- Try to play around with `sourceBuffer.timestampOffset = res.pts` and always increasing timestamps to not have to re-init on backwards seeks
-- Transcoding
-- Base transcoding off of https://cconcolato.github.io/media-mime-support/#audio_codecs
+- `sourceBuffer.timestampOffset` with always-increasing timestamps, to avoid re-initialising on a backwards seek
+- video transcoding, the only thing that would make mpeg2, mpeg4 part 2 and theora playable
+- audio codec reference: https://cconcolato.github.io/media-mime-support/#audio_codecs
+
 <!-- https://www.ffmpeg.org/doxygen/trunk/remuxing_8c-example.html -->
 <!-- https://github.com/leandromoreira/ffmpeg-libav-tutorial -->
