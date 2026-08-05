@@ -1543,9 +1543,7 @@ private:
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
     self->wrote = true;
-    std::vector<uint8_t> chunk(buf, buf + buf_size);
-    memcpy(chunk.data(), buf, buf_size);
-    self->write_vector.insert(self->write_vector.end(), chunk.begin(), chunk.end());
+    self->write_vector.insert(self->write_vector.end(), buf, buf + buf_size);
 
     return buf_size;
   }
