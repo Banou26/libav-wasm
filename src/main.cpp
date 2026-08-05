@@ -665,16 +665,34 @@ public:
     }
   }
 
-  void init_streams(bool skip = false) {
-    if (skip) {
-      int ret = avformat_find_stream_info(input_format_context, nullptr);
-      if (ret < 0) {
-        throw std::runtime_error(
-          "Could not find stream info: " + ffmpegErrStr(ret)
-        );
-      }
+  // input-only discovery, shared by both init_streams branches and by the thumbnail path, which has no output
+  void find_video_stream() {
+    int ret = avformat_find_stream_info(input_format_context, nullptr);
+    if (ret < 0) {
+      throw std::runtime_error(
+        "Could not find stream info: " + ffmpegErrStr(ret)
+      );
+    }
 
-      number_of_streams = input_format_context->nb_streams;
+    number_of_streams = input_format_context->nb_streams;
+
+    for (int i = 0; i < number_of_streams; i++) {
+      AVCodecParameters* in_codecpar = input_format_context->streams[i]->codecpar;
+      if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO) continue;
+      video_stream_index = i;
+      if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
+        video_mime_type = parse_h264_mime_type(in_codecpar);
+      } else if (in_codecpar->codec_id == AV_CODEC_ID_H265) {
+        video_mime_type = parse_h265_mime_type(in_codecpar);
+      }
+    }
+  }
+
+  void init_streams(bool skip = false) {
+    find_video_stream();
+    av_freep(&streams_list);
+
+    if (skip) {
       streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
       if (!streams_list) {
         throw std::runtime_error("Could not allocate streams_list");
@@ -707,10 +725,6 @@ public:
           }
         }
 
-        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-          video_stream_index = i;
-        }
-
         AVStream* out_stream = avformat_new_stream(output_format_context, nullptr);
         if (!out_stream) {
           throw std::runtime_error("Could not allocate an output stream");
@@ -729,14 +743,6 @@ public:
       return;
     }
 
-    int ret = avformat_find_stream_info(input_format_context, nullptr);
-    if (ret < 0) {
-      throw std::runtime_error(
-        "Could not find stream info: " + ffmpegErrStr(ret)
-      );
-    }
-
-    number_of_streams = input_format_context->nb_streams;
     streams_list = (int*)av_calloc(number_of_streams, sizeof(*streams_list));
 
     if (!streams_list) {
@@ -793,14 +799,6 @@ public:
         continue;
       }
 
-      if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-        video_stream_index = i;
-        if (in_codecpar->codec_id == AV_CODEC_ID_H264) {
-          video_mime_type = parse_h264_mime_type(in_codecpar);
-        } else if (in_codecpar->codec_id == AV_CODEC_ID_H265) {
-          video_mime_type = parse_h265_mime_type(in_codecpar);
-        }
-      }
       if (in_codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         audio_index = i;
         if (in_codecpar->codec_id == AV_CODEC_ID_AAC) {
@@ -897,18 +895,13 @@ public:
         break;
       }
 
+      // only the video stream can carry the keyframe, so this needs no output stream map at all
+      if (packet->stream_index != video_stream_index) {
+        av_packet_free(&packet);
+        continue;
+      }
+
       AVStream* in_stream = input_format_context->streams[packet->stream_index];
-
-      if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE || in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-        av_packet_free(&packet);
-        continue;
-      }
-
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
-        av_packet_free(&packet);
-        continue;
-      }
 
       bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
 
