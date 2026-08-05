@@ -31,6 +31,8 @@ dist/libav-wasm.js:
 	-s STACK_SIZE=50mb \
 	-s ALLOW_MEMORY_GROWTH=1 \
 	-s ASYNCIFY \
+	-fexceptions \
+	-s EXPORTED_RUNTIME_METHODS=getExceptionMessage \
 	-s MODULARIZE=1 \
 	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \

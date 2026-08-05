@@ -257,6 +257,38 @@ const vectorToArray = <T>(vector: WASMVector<T>) => {
   return array
 }
 
+/**
+ * Give the module's exceptions their message back.
+ *
+ * A C++ exception crosses into JS as a bare pointer, so every failure inside the module arrives looking
+ * like `78177720`: "no playable video track" and an allocation failure are indistinguishable, and both are
+ * unreportable. Emscripten keeps the type and message behind that pointer, and getExceptionMessage reads
+ * them back out. A Proxy rather than a wrapper per method, because the methods that need it are every
+ * method, including the ones added next.
+ */
+const withReadableErrors = <T extends object>(module: EmscriptenModule, instance: T): T => {
+  const describe = (error: unknown) => {
+    if (typeof error !== 'number') return error
+    const [type, message] = (module as { getExceptionMessage?: (pointer: number) => string[] }).getExceptionMessage?.(error) ?? []
+    if (!message) return new Error(`libav threw at ${error}`)
+    return new Error(type && type !== 'std::runtime_error' ? `${type}: ${message}` : message)
+  }
+  return new Proxy(instance, {
+    get: (target, property, receiver) => {
+      const value = Reflect.get(target, property, receiver)
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) => {
+        try {
+          const result = value.apply(target, args)
+          return result instanceof Promise ? result.catch((error: unknown) => { throw describe(error) }) : result
+        } catch (error) {
+          throw describe(error)
+        }
+      }
+    },
+  })
+}
+
 const resolvers = {
   makeRemuxer: async (
     { publicPath, length, bufferSize, audioStreamIndex }:
@@ -269,7 +301,7 @@ const resolvers = {
   ) => {
     // this module should not be destructured as the HEAPU8 variable changes if the heap needs to grow
     const module = await makeModule(publicPath)
-    const _remuxer = new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, audioStreamIndex })
+    const _remuxer = withReadableErrors(module, new module.Remuxer({ resolvedPromise: Promise.resolve(), length, bufferSize, audioStreamIndex }))
     const remuxer = {
       initThumbnail: (read) => _remuxer.initThumbnail(read).then((result: ThumbnailInitResult) => ({
         duration: result.duration,
