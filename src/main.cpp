@@ -23,9 +23,17 @@ static inline std::string ffmpegErrStr(int errnum) {
   return std::string(buf);
 }
 
-// the mp4 muxer refuses both under empty_moov, and with no exception support that refusal aborts the module
+// These fill their mp4 sample entry from the first packet, so empty_moov cannot write a header before one
+// arrives: "Cannot write moov atom before <codec> packets". avformat_query_codec does NOT predict this, it
+// answers for the muxer in general and says yes to all three. With no exception support in this build that
+// refusal aborts the whole module, so they never reach write_header.
+static inline bool needs_packet_before_moov(AVCodecID codec_id) {
+  return codec_id == AV_CODEC_ID_AC3 || codec_id == AV_CODEC_ID_EAC3 || codec_id == AV_CODEC_ID_TRUEHD;
+}
+
+// of those, the ones this build carries a decoder for, so they can be re-encoded to aac instead of dropped
 static inline bool needs_transcoding_to_aac(AVCodecID codec_id) {
-  return codec_id == AV_CODEC_ID_EAC3 || codec_id == AV_CODEC_ID_AC3;
+  return needs_packet_before_moov(codec_id) && avcodec_find_decoder(codec_id) != nullptr;
 }
 
 typedef struct MediaInfo {
@@ -238,6 +246,7 @@ public:
    */
   bool output_accepts_audio(AVCodecID codec_id) {
     if (needs_transcoding_to_aac(codec_id)) return true;
+    if (needs_packet_before_moov(codec_id)) return false;
     return avformat_query_codec(output_format_context->oformat, codec_id, FF_COMPLIANCE_NORMAL) == 1;
   }
 

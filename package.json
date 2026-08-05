@@ -22,9 +22,13 @@
     "types": "tsc",
     "copy-wasm": "copyfiles -u 1 dist/libav.wasm build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
     "preview": "vp preview",
-    "make-docker-debug": "docker compose run --rm libav-wasm make DEBUG=1"
+    "make-docker-debug": "docker compose run --rm libav-wasm make DEBUG=1",
+    "fixtures": "node scripts/fixtures.mjs",
+    "test": "playwright test",
+    "test:large": "LIBAV_LARGE_FIXTURE=1 playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@rollup/plugin-commonjs": "^24.0.1",
     "@types/emscripten": "^1.40.0",
     "concurrently": "^7.6.0",

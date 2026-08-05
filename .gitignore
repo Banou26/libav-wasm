@@ -17,3 +17,7 @@ video9.mkv
 video10.mkv
 video11.mkv
 video12.mkv
+
+fixtures/
+test-results/
+playwright-report/
