@@ -102,6 +102,16 @@ typedef struct ThumbnailReadResult {
   bool cancelled;
 } ThumbnailReadResult;
 
+// `data` is tightly packed RGBA at width * height * 4, ready for an ImageData with no further conversion
+typedef struct ThumbnailDecodeResult {
+  emscripten::val data;
+  int width;
+  int height;
+  double pts;
+  double duration;
+  bool cancelled;
+} ThumbnailDecodeResult;
+
 class Remuxer {
 public:
   AVIOContext* input_avio_context = nullptr;
@@ -113,6 +123,17 @@ public:
   AVStream *audio_avs = nullptr;
   AVCodecContext *audio_avcc = nullptr;
   int audio_index = -1;
+
+  // decoding video happens only for thumbnails, so all of this is built on the first decode_keyframe call
+  const AVCodec *video_decoder_avc = nullptr;
+  AVCodecContext *video_decoder_avcc = nullptr;
+  SwsContext *thumbnail_sws = nullptr;
+  int thumbnail_sws_source_width = 0;
+  int thumbnail_sws_source_height = 0;
+  AVPixelFormat thumbnail_sws_source_format = AV_PIX_FMT_NONE;
+  int thumbnail_sws_width = 0;
+  int thumbnail_sws_height = 0;
+  std::vector<uint8_t> thumbnail_vector;
 
   const AVCodec *audio_decoder_avc = nullptr;
   AVCodecContext *audio_decoder_avcc = nullptr;
@@ -840,13 +861,9 @@ public:
     attachments.clear();
   }
 
-  ThumbnailReadResult read_keyframe(emscripten::val read_function, double timestamp) {
-    resolved_promise.await();
-    read_data_function = read_function;
-
-    write_vector.clear();
-    av_packet_free(&packet);
-
+  // Leaves the keyframe at or before `timestamp` in `packet`, with pos/pts/duration updated to match.
+  // False means there is nothing to hand back: a failed seek, a cancelled read, or EOF.
+  bool seek_to_keyframe(double timestamp) {
     AVStream* video_stream = input_format_context->streams[video_stream_index];
 
     int64_t seek_target = av_rescale_q(
@@ -856,24 +873,18 @@ public:
     );
 
     if (av_seek_frame(input_format_context, video_stream_index, seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
-      ThumbnailReadResult result;
-      result.cancelled = true;
-      return result;
+      return false;
     }
 
     while (true) {
       packet = av_packet_alloc();
       int ret = av_read_frame(input_format_context, packet);
       if (ret < 0) {
-        if (ret == AVERROR_EXIT) {
-          ThumbnailReadResult cancelled_result;
-          cancelled_result.cancelled = true;
-          read_data_function = val::undefined();
-          return cancelled_result;
-        }
+        if (ret == AVERROR_EXIT) return false;
         if (ret == AVERROR_EOF) {
-          avio_flush(output_format_context->pb);
-          av_write_trailer(output_format_context);
+          // deliberately does NOT flush or write a trailer the way the remuxing read() path does. Running
+          // off the end while hunting a keyframe says nothing about the output, and finalizing a muxer
+          // from here is the one way this path could ever damage a remux. It now only reads.
           av_packet_free(&packet);
           break;
         }
@@ -894,11 +905,6 @@ public:
         continue;
       }
 
-      if (packet->stream_index >= number_of_streams
-          || streams_list[packet->stream_index] < 0) {
-        continue;
-      }
-
       bool is_keyframe = packet->flags & AV_PKT_FLAG_KEY;
 
       duration += packet->duration * av_q2d(in_stream->time_base);
@@ -915,10 +921,39 @@ public:
       }
     }
 
+    // The loop can exit at EOF/error with the packet already freed.
+    return packet && packet->data && packet->size > 0;
+  }
+
+  bool open_video_decoder() {
+    if (video_decoder_avcc) return true;
+
+    AVStream* video_stream = input_format_context->streams[video_stream_index];
+    video_decoder_avc = avcodec_find_decoder(video_stream->codecpar->codec_id);
+    if (!video_decoder_avc) return false;
+
+    video_decoder_avcc = avcodec_alloc_context3(video_decoder_avc);
+    if (!video_decoder_avcc) return false;
+
+    if (avcodec_parameters_to_context(video_decoder_avcc, video_stream->codecpar) < 0
+        || avcodec_open2(video_decoder_avcc, video_decoder_avc, nullptr) < 0) {
+      avcodec_free_context(&video_decoder_avcc);
+      video_decoder_avcc = nullptr;
+      return false;
+    }
+    return true;
+  }
+
+  ThumbnailReadResult read_keyframe(emscripten::val read_function, double timestamp) {
+    resolved_promise.await();
+    read_data_function = read_function;
+
+    write_vector.clear();
+    av_packet_free(&packet);
+
     ThumbnailReadResult result;
 
-    // The loop can exit at EOF/error with the packet already freed.
-    if (!packet || !packet->data || packet->size <= 0) {
+    if (!seek_to_keyframe(timestamp)) {
       result.cancelled = true;
       read_data_function = val::undefined();
       return result;
@@ -939,6 +974,110 @@ public:
     result.duration = duration;
     result.cancelled = false;
 
+    read_data_function = val::undefined();
+    return result;
+  }
+
+  /**
+   * Decode that keyframe to RGBA here instead of handing the compressed packet out for WebCodecs to decode.
+   * The build already carries the h264 and hevc decoders and swscale, so this needs no new dependency, and
+   * it is what runs on a browser with no WebCodecs at all (Firefox for Android).
+   *
+   * Same instance-level caveat as read_keyframe: this seeks BACKWARD on the input, which the output muxer
+   * cannot follow, so it must only ever run on a remuxer dedicated to thumbnails. Ripple gives it one by
+   * calling makeRemuxer separately, and every call there stands up its own worker and its own Remuxer.
+   */
+  ThumbnailDecodeResult decode_keyframe(emscripten::val read_function, double timestamp, int out_width, int out_height) {
+    resolved_promise.await();
+    read_data_function = read_function;
+
+    write_vector.clear();
+    av_packet_free(&packet);
+
+    ThumbnailDecodeResult result;
+    result.width = 0;
+    result.height = 0;
+    result.pts = 0;
+    result.duration = 0;
+    result.cancelled = true;
+
+    if (out_width <= 0 || out_height <= 0 || !seek_to_keyframe(timestamp) || !open_video_decoder()) {
+      read_data_function = val::undefined();
+      return result;
+    }
+
+    // a previous call left the decoder drained, and this one starts from its own seek regardless
+    avcodec_flush_buffers(video_decoder_avcc);
+
+    if (avcodec_send_packet(video_decoder_avcc, packet) < 0) {
+      read_data_function = val::undefined();
+      return result;
+    }
+
+    AVFrame* frame = av_frame_alloc();
+    if (!frame) {
+      read_data_function = val::undefined();
+      return result;
+    }
+
+    int ret = avcodec_receive_frame(video_decoder_avcc, frame);
+    if (ret == AVERROR(EAGAIN)) {
+      // a decoder can hold its first frame back until it is told no more packets are coming
+      avcodec_send_packet(video_decoder_avcc, nullptr);
+      ret = avcodec_receive_frame(video_decoder_avcc, frame);
+    }
+
+    if (ret < 0 || frame->width <= 0 || frame->height <= 0) {
+      av_frame_free(&frame);
+      read_data_function = val::undefined();
+      return result;
+    }
+
+    AVPixelFormat source_format = (AVPixelFormat)frame->format;
+    if (!thumbnail_sws
+        || thumbnail_sws_source_width != frame->width
+        || thumbnail_sws_source_height != frame->height
+        || thumbnail_sws_source_format != source_format
+        || thumbnail_sws_width != out_width
+        || thumbnail_sws_height != out_height) {
+      sws_freeContext(thumbnail_sws);
+      thumbnail_sws = sws_getContext(
+        frame->width, frame->height, source_format,
+        out_width, out_height, AV_PIX_FMT_RGBA,
+        SWS_BILINEAR, nullptr, nullptr, nullptr
+      );
+      thumbnail_sws_source_width = frame->width;
+      thumbnail_sws_source_height = frame->height;
+      thumbnail_sws_source_format = source_format;
+      thumbnail_sws_width = out_width;
+      thumbnail_sws_height = out_height;
+    }
+
+    if (!thumbnail_sws) {
+      av_frame_free(&frame);
+      read_data_function = val::undefined();
+      return result;
+    }
+
+    thumbnail_vector.assign((size_t)out_width * (size_t)out_height * 4, 0);
+    uint8_t* destination_data[4] = { thumbnail_vector.data(), nullptr, nullptr, nullptr };
+    int destination_linesize[4] = { out_width * 4, 0, 0, 0 };
+
+    sws_scale(thumbnail_sws, frame->data, frame->linesize, 0, frame->height, destination_data, destination_linesize);
+
+    result.data = emscripten::val(
+      emscripten::typed_memory_view(
+        thumbnail_vector.size(),
+        thumbnail_vector.data()
+      )
+    );
+    result.width = out_width;
+    result.height = out_height;
+    result.pts = pts;
+    result.duration = duration;
+    result.cancelled = false;
+
+    av_frame_free(&frame);
     read_data_function = val::undefined();
     return result;
   }
@@ -1270,6 +1409,14 @@ public:
       av_free(audio_buffer);
       audio_buffer = nullptr;
     }
+    if (video_decoder_avcc) {
+      avcodec_free_context(&video_decoder_avcc);
+      video_decoder_avcc = nullptr;
+    }
+    if (thumbnail_sws) {
+      sws_freeContext(thumbnail_sws);
+      thumbnail_sws = nullptr;
+    }
     if (audio_decoder_avcc) {
       avcodec_free_context(&audio_decoder_avcc);
       audio_decoder_avcc = nullptr;
@@ -1434,6 +1581,14 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .field("duration",  &ThumbnailReadResult::duration)
     .field("cancelled", &ThumbnailReadResult::cancelled);
 
+  emscripten::value_object<ThumbnailDecodeResult>("ThumbnailDecodeResult")
+    .field("data",      &ThumbnailDecodeResult::data)
+    .field("width",     &ThumbnailDecodeResult::width)
+    .field("height",    &ThumbnailDecodeResult::height)
+    .field("pts",       &ThumbnailDecodeResult::pts)
+    .field("duration",  &ThumbnailDecodeResult::duration)
+    .field("cancelled", &ThumbnailDecodeResult::cancelled);
+
   emscripten::class_<Remuxer>("Remuxer")
     .constructor<emscripten::val>()
     .function("init",    &Remuxer::init)
@@ -1441,5 +1596,6 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
     .function("seek",    &Remuxer::seek)
     .function("destroy", &Remuxer::destroy)
     .function("readKeyframe", &Remuxer::read_keyframe)
+    .function("decodeKeyframe", &Remuxer::decode_keyframe)
     .function("setAudioStreamIndex", &Remuxer::set_audio_stream_index);
 }

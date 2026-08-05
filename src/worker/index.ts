@@ -43,6 +43,16 @@ export interface ThumbnailReadResult {
   cancelled: boolean
 }
 
+/** `data` is tightly packed RGBA at width * height * 4, the exact shape an ImageData takes */
+export interface ThumbnailDecodeResult {
+  data: Uint8Array
+  width: number
+  height: number
+  pts: number
+  duration: number
+  cancelled: boolean
+}
+
 export type Index = {
   index: number
   timestamp: number
@@ -140,6 +150,7 @@ export interface RemuxerInstance {
     finished: boolean
   }>
   readKeyframe: (read: WASMReadFunction, timestamp: number) => Promise<ThumbnailReadResult>
+  decodeKeyframe: (read: WASMReadFunction, timestamp: number, width: number, height: number) => Promise<ThumbnailDecodeResult>
   setAudioStreamIndex: (index: number) => void
 }
 
@@ -194,6 +205,14 @@ export type Remuxer = {
     pts: number
     duration: number
     offset: number
+    cancelled: boolean
+  }>
+  decodeKeyframe: (read: WASMReadFunction, timestamp: number, width: number, height: number) => Promise<{
+    data: ArrayBuffer
+    width: number
+    height: number
+    pts: number
+    duration: number
     cancelled: boolean
   }>
   setAudioStreamIndex: (index: number) => void
@@ -348,6 +367,22 @@ const resolvers = {
               cancelled: result.cancelled
             }
           }),
+      decodeKeyframe: (read, timestamp, width, height) =>
+        _remuxer.decodeKeyframe(read, timestamp, width, height)
+          .then((result: ThumbnailDecodeResult) => {
+            if (result.cancelled) throw new Error('Cancelled')
+            // copied off the wasm heap before anything can grow it out from under the view
+            const typedArray = new Uint8Array(result.data.byteLength)
+            typedArray.set(new Uint8Array(result.data))
+            return {
+              data: typedArray.buffer,
+              width: result.width,
+              height: result.height,
+              pts: result.pts,
+              duration: result.duration,
+              cancelled: result.cancelled
+            }
+          }),
       setAudioStreamIndex: (index) => _remuxer.setAudioStreamIndex(index)
     } as Remuxer
 
@@ -409,7 +444,15 @@ const resolvers = {
       read: (read: ReadFunction) => remuxer.read(readToWasmRead(read)),
       setAudioStreamIndex: async (index: number) => remuxer.setAudioStreamIndex(index),
       readKeyframe: async (read: ReadFunction, timestamp: number) => {
-        if (!hasWebCodecs) throw new Error('WebCodecs is unavailable, so keyframes cannot be decoded')
+        // No WebCodecs (Firefox for Android): libav decodes and scales the keyframe itself. The build
+        // already carries h264, hevc and swscale, so this costs nothing extra and the caller cannot tell
+        // the two paths apart. Slower than WebCodecs, which is the right trade for a scrub preview.
+        if (!hasWebCodecs) {
+          const { canvas, context } = ensureCanvas()
+          const decoded = await remuxer.decodeKeyframe(readToWasmRead(read), timestamp, canvas.width, canvas.height)
+          context.putImageData(new ImageData(new Uint8ClampedArray(decoded.data), decoded.width, decoded.height), 0, 0)
+          return canvas.convertToBlob().then(blob => blob.arrayBuffer())
+        }
         const readResult = await remuxer.readKeyframe(readToWasmRead(read), timestamp)
         if (!readResult.data?.byteLength) throw new Error('empty keyframe data')
         // a decode error closes the VideoDecoder permanently, so recreate it here or every later readKeyframe call fails
