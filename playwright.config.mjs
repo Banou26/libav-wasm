@@ -40,9 +40,25 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
+  /**
+   * The same file twice, once per wasm build.
+   *
+   * `make` emits an Asyncify build and a JSPI one, and the worker picks between them on
+   * WebAssembly.Suspending. Chrome has JSPI, so a single project would exercise that build and leave the
+   * Asyncify one, which is what every Safari and iOS user gets, almost entirely untested. The `no-jspi`
+   * project loads the harness with `?nojspi=1`, which defaults every remuxer to the shim worker that
+   * blanks the constructor before the worker module evaluates.
+   */
   projects: [
     {
       name: 'chrome',
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(executablePath ? { launchOptions: { executablePath } } : { channel: 'chrome' }),
+      },
+    },
+    {
+      name: 'no-jspi',
       use: {
         ...devices['Desktop Chrome'],
         ...(executablePath ? { launchOptions: { executablePath } } : { channel: 'chrome' }),

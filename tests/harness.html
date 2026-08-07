@@ -16,9 +16,16 @@ const sourceFor = async (name) => {
   return { length, read }
 }
 
+// `?nojspi=1` swaps the DEFAULT worker for the shim that blanks WebAssembly.Suspending, which is how the
+// whole suite gets run a second time against the Asyncify build. Chrome has JSPI, so without this every
+// test but the three explicit ones would only ever exercise the JSPI build, and the fallback Safari
+// actually receives would be the least tested code in the repo.
+const DEFAULT_WORKER =
+  new URLSearchParams(location.search).get('nojspi') ? '/no-jspi-worker.js' : '/build/worker.js'
+
 const common = (length, read, workerUrl) => ({
   publicPath: '/build/',
-  workerUrl: workerUrl ?? '/build/worker.js',
+  workerUrl: workerUrl ?? DEFAULT_WORKER,
   workerOptions: { type: 'module' },
   length,
   read,

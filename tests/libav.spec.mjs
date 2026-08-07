@@ -11,8 +11,11 @@ test.beforeAll(async () => {
   await ensureFixtures({ large: LARGE })
 })
 
+/** the `no-jspi` project runs this whole file a second time against the Asyncify build; see the config */
+const withoutJSPI = () => test.info().project.name === 'no-jspi'
+
 const open = async (page) => {
-  await page.goto('/')
+  await page.goto(withoutJSPI() ? '/?nojspi=1' : '/')
   await page.waitForFunction(() => window.harnessReady === true, null, { timeout: 60_000 })
 }
 
@@ -311,6 +314,10 @@ test.describe('thumbnails', () => {
 // without this one the Asyncify build could rot unnoticed until a Safari user hit it.
 test.describe('without JSPI', () => {
   const workerUrl = '/no-jspi-worker.js'
+
+  // in the no-jspi project the default worker is ALREADY the shim, so these would compare the fallback
+  // against itself and pass without proving anything
+  test.skip(() => withoutJSPI(), 'the no-jspi project runs the whole file on the fallback already')
 
   test('the Asyncify build produces the same bytes as the JSPI build', async ({ page }) => {
     await open(page)
