@@ -42,9 +42,19 @@ DEBUG_FLAGS = -g -gsource-map --source-map-base http://localhost:1234/dist/ -s A
 # A wrong name here is silent at runtime but loud at build time: emcc prints "Asyncify removelist
 # contained a non-existing function name". Watch for it after any ffmpeg upgrade.
 
-dist/libav-wasm.js:
-	mkdir -p dist && \
-	emcc --bind \
+# Two builds of the same source, picked at runtime by the worker on `WebAssembly.Suspending`.
+#
+# JSPI hands the suspend to the engine, so nothing is instrumented at all: 0 instrumented functions
+# against Asyncify's 3832, 9583542 bytes against 11817023, and h264-pcm.mkv remuxes in 556.1ms against
+# 634.7ms (and 737.7ms before the remove-list). Chrome and Edge have it from 137, Firefox from 153.
+# Safari has none, which is what the Asyncify build stays for.
+#
+# The JSPI target MUST use -fwasm-exceptions. With -fexceptions the invoke_* trampolines are treated as
+# suspending imports and the module traps inside __wasm_call_ctors before any of our code runs: measured
+# as 36 of 36 tests failing. Native wasm EH emits no invoke_* at all, which is why it works.
+all: dist/libav.js dist/libav-jspi.js
+
+COMMON = --bind \
 	-Oz \
 	$(if $(DEBUG),$(DEBUG_FLAGS)) \
 	-L/opt/ffmpeg/lib \
@@ -55,11 +65,25 @@ dist/libav-wasm.js:
 	-s INITIAL_MEMORY=125mb \
 	-s STACK_SIZE=50mb \
 	-s ALLOW_MEMORY_GROWTH=1 \
+	-s EXPORTED_RUNTIME_METHODS=getExceptionMessage \
+	-s MODULARIZE=1 \
+	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264
+
+dist/libav.js: src/main.cpp Makefile
+	mkdir -p dist && \
+	emcc $(COMMON) \
 	-s ASYNCIFY \
 	-s ASYNCIFY_REMOVE="['av_vlog','buffer_replace','__pthread_once','__vfprintf_internal','ff_refstruct_unref','ff_get_buffer','ff_get_encode_buffer','ff_tx_init_subtx']" \
 	-fexceptions \
-	-s EXPORTED_RUNTIME_METHODS=getExceptionMessage \
-	-s MODULARIZE=1 \
-	-lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil -lm -lx264 \
 	-o dist/libav.js \
+	src/main.cpp
+
+dist/libav-jspi.js: src/main.cpp Makefile
+	mkdir -p dist && \
+	emcc $(COMMON) \
+	-s JSPI \
+	-fwasm-exceptions \
+	-s EXPORT_EXCEPTION_HANDLING_HELPERS \
+	-DLIBAV_JSPI \
+	-o dist/libav-jspi.js \
 	src/main.cpp

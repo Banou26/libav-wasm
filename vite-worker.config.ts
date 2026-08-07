@@ -28,7 +28,10 @@ export default defineConfig((env) => ({
   // stop installing dist/ as a package and then uninstalling it, a dance that rewrote package.json mid-build
   // and left "libav": "file:dist" in released manifests whenever a step in between failed.
   resolve: {
-    alias: { libav: fileURLToPath(new URL('./dist/libav.js', import.meta.url)) },
+    alias: {
+      libav: fileURLToPath(new URL('./dist/libav.js', import.meta.url)),
+      'libav-jspi': fileURLToPath(new URL('./dist/libav-jspi.js', import.meta.url)),
+    },
   },
   build: {
     emptyOutDir: false,

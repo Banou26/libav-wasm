@@ -21,6 +21,16 @@ extern "C" {
 using namespace emscripten;
 using namespace std;
 
+// Under JSPI a method that suspends has to be bound with the async policy, or embind hands back a plain
+// export and the first `.await()` traps with "trying to suspend without WebAssembly.promising". It cannot
+// be unconditional: libembind asserts `!isAsync` whenever JSPI is off, so the Asyncify build would refuse
+// to start. `make` builds both, and the JSPI target defines LIBAV_JSPI. See the Makefile.
+#ifdef LIBAV_JSPI
+#define SUSPENDS , emscripten::async()
+#else
+#define SUSPENDS
+#endif
+
 static inline std::string ffmpegErrStr(int errnum) {
   char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
   av_strerror(errnum, buf, sizeof(buf));
@@ -2108,12 +2118,13 @@ EMSCRIPTEN_BINDINGS(libav_wasm_simplified) {
 
   emscripten::class_<Remuxer>("Remuxer")
     .constructor<emscripten::val>()
-    .function("init",    &Remuxer::init)
-    .function("read",    &Remuxer::read)
-    .function("seek",    &Remuxer::seek)
+    // every method that reaches the JS read, or awaits resolved_promise, has to be marked
+    .function("init",    &Remuxer::init SUSPENDS)
+    .function("read",    &Remuxer::read SUSPENDS)
+    .function("seek",    &Remuxer::seek SUSPENDS)
     .function("destroy", &Remuxer::destroy)
-    .function("initThumbnail", &Remuxer::init_thumbnail)
-    .function("readKeyframe", &Remuxer::read_keyframe)
-    .function("decodeKeyframe", &Remuxer::decode_keyframe)
+    .function("initThumbnail", &Remuxer::init_thumbnail SUSPENDS)
+    .function("readKeyframe", &Remuxer::read_keyframe SUSPENDS)
+    .function("decodeKeyframe", &Remuxer::decode_keyframe SUSPENDS)
     .function("setAudioStreamIndex", &Remuxer::set_audio_stream_index);
 }

@@ -20,7 +20,7 @@
     "worker-build-dev": "nodemon -e ts --watch src/worker --exec \"npm run build-worker\"",
     "build": "npm run make-docker && vp build && npm run build-worker && npm run types && npm run copy-wasm",
     "types": "tsc",
-    "copy-wasm": "copyfiles -u 1 dist/libav.wasm build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
+    "copy-wasm": "copyfiles -u 1 dist/libav.wasm dist/libav-jspi.wasm build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
     "preview": "vp preview",
     "make-docker-debug": "docker compose run --rm libav-wasm make DEBUG=1",
     "fixtures": "node scripts/fixtures.mjs",

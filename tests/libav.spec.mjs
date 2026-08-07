@@ -306,6 +306,44 @@ test.describe('thumbnails', () => {
   })
 })
 
+// Two builds of the same source ship side by side: JSPI where the engine can switch stacks, Asyncify
+// everywhere else. Chrome runs the suite, so every other test above exercises the JSPI build only, and
+// without this one the Asyncify build could rot unnoticed until a Safari user hit it.
+test.describe('without JSPI', () => {
+  const workerUrl = '/no-jspi-worker.js'
+
+  test('the Asyncify build produces the same bytes as the JSPI build', async ({ page }) => {
+    await open(page)
+    const jspi = await page.evaluate(() => window.harness.remux('h264-aac.mkv'))
+    const asyncify = await page.evaluate((url) => window.harness.remux('h264-aac.mkv', { workerUrl: url }), workerUrl)
+
+    expect(asyncify.videoMimeType).toBe(jspi.videoMimeType)
+    expect(asyncify.audioMimeType).toBe(jspi.audioMimeType)
+    expect(asyncify.initBytes).toBe(jspi.initBytes)
+    expect(asyncify.segments.map((s) => s.bytes)).toEqual(jspi.segments.map((s) => s.bytes))
+  })
+
+  // the fallback has its own exception path: -fexceptions throws a pointer where -fwasm-exceptions throws
+  // a WebAssembly.Exception, and reading the message back is a different call in each
+  test('a failure still reports its reason on the fallback', async ({ page }) => {
+    await open(page)
+    const message = await page.evaluate((url) =>
+      window.harness.remux('theora-vorbis.ogv', { workerUrl: url }).then(() => 'no error at all', (error) => String(error)),
+    workerUrl)
+    expect(message).toContain('No playable video track')
+  })
+
+  // seeking is the deepest suspend path: it tears the input and output contexts down and rebuilds them,
+  // so it unwinds repeatedly through the whole of avformat
+  test('seeking works on the fallback too', async ({ page }) => {
+    await open(page)
+    const jspi = await page.evaluate(() => window.harness.seek('h264-aac.mkv', [10, 4]))
+    const asyncify = await page.evaluate((url) => window.harness.seek('h264-aac.mkv', [10, 4], { workerUrl: url }), workerUrl)
+    expect(asyncify.steps.map((s) => s.pts)).toEqual(jspi.steps.map((s) => s.pts))
+    expect(asyncify.steps.every((s) => s.bytes > 0)).toBe(true)
+  })
+})
+
 test.describe('without WebCodecs', () => {
   const workerUrl = '/no-webcodecs-worker.js'
 

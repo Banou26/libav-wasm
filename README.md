@@ -30,7 +30,7 @@ Timestamps are reported relative to the start of the content, so a format whose 
 import { makeRemuxer } from 'libav-wasm'
 
 const remuxer = await makeRemuxer({
-  // where libav.wasm is served from
+  // where libav.wasm AND libav-jspi.wasm are served from; the worker picks one at runtime
   publicPath: new URL('/dist/', new URL(import.meta.url).origin).toString(),
   workerUrl: new URL('../build/worker.js', import.meta.url).toString(),
   workerOptions: { type: 'module' },
@@ -63,6 +63,21 @@ cannot follow, and a thumbnailer has no muxer to damage.
 `npm run build` compiles `src/main.cpp` in Docker (emsdk plus ffmpeg, cached after the first run), bundles
 the library and the worker, and emits types. Only the last step re-runs when you touch C++, so the loop is
 about 25 seconds.
+
+### Two builds, one source
+
+`make` emits **both** `libav.wasm` and `libav-jspi.wasm`, and the worker picks between them at runtime on
+`typeof WebAssembly.Suspending === 'function'`. **Both files have to be reachable at `publicPath`**, since
+the choice happens in the browser rather than at build time.
+
+The JSPI build lets the engine switch stacks, so nothing is instrumented: it remuxes the same file in
+549.3ms against the Asyncify build's 641.5ms, and its wasm is 2.2 MB smaller. Chrome and Edge have had JSPI
+since 137 and Firefox since 153; Safari has none, and iOS is Safari whatever the badge says, which is the
+whole reason the Asyncify build still ships.
+
+The Chrome-only suite would exercise JSPI and nothing else, so `tests/no-jspi-worker.js` blanks the
+constructor before the worker evaluates and the `without JSPI` tests run the fallback for real. They assert
+byte-identical output, not merely "it ran".
 
 ## Tests
 

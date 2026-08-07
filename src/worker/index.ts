@@ -2,6 +2,8 @@ import { expose } from 'osra'
 
 // @ts-ignore
 import WASMModule from 'libav'
+// @ts-ignore
+import WASMModuleJSPI from 'libav-jspi'
 
 export type RemuxerInstanceSubtitleFragment =
   | {
@@ -233,8 +235,20 @@ export type Remuxer = {
   setAudioStreamIndex: (index: number) => void
 }
 
+/**
+ * JSPI hands the suspend to the engine, so its build carries no Asyncify instrumentation at all: it
+ * remuxes h264-pcm.mkv in 556.1ms where the Asyncify build takes 634.7ms, and its wasm is 2.2 MB smaller.
+ * Chrome and Edge have had it since 137 and Firefox since 153; Safari has none, which is the only reason
+ * the Asyncify build still ships.
+ *
+ * Feature-detected rather than UA-sniffed, and detected on `Suspending` specifically because that is the
+ * constructor the glue actually calls. Both wasm files must sit at publicPath, since which one is fetched
+ * is decided here rather than at build time.
+ */
+const supportsJSPI = typeof (WebAssembly as { Suspending?: unknown }).Suspending === 'function'
+
 const makeModule = (publicPath: string) =>
-  WASMModule({
+  (supportsJSPI ? WASMModuleJSPI : WASMModule)({
     locateFile: (path: string) => `${publicPath}${path.replace('/dist', '')}`,
     print: (text: string) => console.log(text),
     printErr: (text: string) => text.includes('Read error at pos') ? undefined : console.error(text),
@@ -265,11 +279,19 @@ const vectorToArray = <T>(vector: WASMVector<T>) => {
  * unreportable. Emscripten keeps the type and message behind that pointer, and getExceptionMessage reads
  * them back out. A Proxy rather than a wrapper per method, because the methods that need it are every
  * method, including the ones added next.
+ *
+ * The two builds throw DIFFERENT things and both have to be recognised. `-fexceptions` throws the pointer
+ * as a number; `-fwasm-exceptions`, which the JSPI build is required to use, throws a
+ * `WebAssembly.Exception`. getExceptionMessage accepts whichever its own build produces, so the value is
+ * passed straight through and only the guard has to know about both. Checking only for a number is what
+ * made the JSPI build report `No playable video track` as an opaque object.
  */
 const withReadableErrors = <T extends object>(module: EmscriptenModule, instance: T): T => {
+  const isWasmException = (error: unknown) =>
+    typeof WebAssembly.Exception === 'function' && error instanceof WebAssembly.Exception
   const describe = (error: unknown) => {
-    if (typeof error !== 'number') return error
-    const [type, message] = (module as { getExceptionMessage?: (pointer: number) => string[] }).getExceptionMessage?.(error) ?? []
+    if (typeof error !== 'number' && !isWasmException(error)) return error
+    const [type, message] = (module as { getExceptionMessage?: (thrown: unknown) => string[] }).getExceptionMessage?.(error) ?? []
     if (!message) return new Error(`libav threw at ${error}`)
     return new Error(type && type !== 'std::runtime_error' ? `${type}: ${message}` : message)
   }
