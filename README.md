@@ -98,7 +98,10 @@ For C++ autocompletion, clone into the repo root:
   no Cues comes back with about two entries and no way to tell that apart from a short file. Measured
   on three 38MB matroska files differing only in Cues placement: at the front, 20 entries; at the end,
   the same 20 at the cost of one read at the tail; with no Cues at all, 2. The C++ already has the
-  walk in `init` and `initThumbnail`, so this is mostly plumbing.
+  walk in `init` and `initThumbnail`, so the plumbing is small. **Not planned**, on two findings since:
+  `seek()` calls `destroy_input()`, so every accumulated entry is discarded on each seek and rebuilt
+  from Cues alone; and `Index.index` is the loop counter over the full AVIndexEntry array rather than a
+  keyframe ordinal, which matroska inserts into in timestamp order, so it shifts between calls.
 
 <!-- https://www.ffmpeg.org/doxygen/trunk/remuxing_8c-example.html -->
 <!-- https://github.com/leandromoreira/ffmpeg-libav-tutorial -->
