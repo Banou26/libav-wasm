@@ -45,7 +45,7 @@ const { data, info, indexes, subtitles, attachments, chapters } = await remuxer.
 const codecs = [info.output.videoMimeType, info.output.audioMimeType].filter(Boolean).join(',')
 const mime = `video/mp4; codecs="${codecs}"`
 
-// { data, pts, duration, offset, finished } — data appends straight to a SourceBuffer
+// { data, pts, duration, offset, finished }: data appends straight to a SourceBuffer
 const chunk = await remuxer.read()
 
 // rebuilds the muxer and starts again from the keyframe at or before this timestamp
@@ -93,6 +93,12 @@ For C++ autocompletion, clone into the repo root:
 - `sourceBuffer.timestampOffset` with always-increasing timestamps, to avoid re-initialising on a backwards seek
 - video transcoding, the only thing that would make mpeg2, mpeg4 part 2 and theora playable
 - audio codec reference: https://cconcolato.github.io/media-mime-support/#audio_codecs
+- `getIndexes()` on the remuxer, re-running the same keyframe walk `init` does, so the index can grow
+  as `read()` demuxes. `indexes` is the container's declared index rather than a scan, so a file with
+  no Cues comes back with about two entries and no way to tell that apart from a short file. Measured
+  on three 38MB matroska files differing only in Cues placement: at the front, 20 entries; at the end,
+  the same 20 at the cost of one read at the tail; with no Cues at all, 2. The C++ already has the
+  walk in `init` and `initThumbnail`, so this is mostly plumbing.
 
 <!-- https://www.ffmpeg.org/doxygen/trunk/remuxing_8c-example.html -->
 <!-- https://github.com/leandromoreira/ffmpeg-libav-tutorial -->
