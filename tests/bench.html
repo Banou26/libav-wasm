@@ -1,0 +1,197 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>libav-wasm bench</title></head>
+<body>
+<script type="module">
+import { makeRemuxer } from '/build/index.js'
+
+/**
+ * Two sources, because they answer different questions.
+ *
+ * `memory` holds the whole file in an ArrayBuffer and resolves a slice, so a read costs the osra hop and
+ * nothing else. That is the only way to see a difference between the two wasm builds: over HTTP the
+ * network swamps a per-read cost measured in microseconds.
+ *
+ * `http` is a real range request per read, which is what a consumer actually does, and is what makes read
+ * amplification visible at all.
+ */
+const sizeOf = async (name) =>
+  (await (await fetch(`/size?name=${encodeURIComponent(name)}`)).json()).length
+
+const memorySource = async (name) => {
+  const body = await (await fetch(`/media?name=${encodeURIComponent(name)}`)).arrayBuffer()
+  return {
+    length: body.byteLength,
+    read: (offset, size) => Promise.resolve(body.slice(offset, Math.min(offset + size, body.byteLength))),
+  }
+}
+
+const httpSource = async (name) => {
+  const length = await sizeOf(name)
+  return {
+    length,
+    read: async (offset, size) => {
+      const end = Math.min(offset + size, length) - 1
+      if (end < offset) return new ArrayBuffer(0)
+      const res = await fetch(`/media?name=${encodeURIComponent(name)}`, {
+        headers: { range: `bytes=${offset}-${end}` },
+      })
+      return res.arrayBuffer()
+    },
+  }
+}
+
+/**
+ * The caller-side window cache, which is the whole of route 1: it lives entirely in the consumer and the
+ * library never learns it exists.
+ *
+ * A hit may return LESS than was asked for. ffmpeg tolerates arbitrary short reads (the suite proves byte
+ * identical output down to a 4096 byte cap), so a partial hit is served from the window rather than
+ * refetching, which is what turns a mostly-hit workload into an almost-never-fetch one.
+ */
+const windowCache = (read, { windows = 3, windowBytes = 5_000_000, length }) => {
+  const held = []
+  const stats = { fetches: 0, fetchedBytes: 0, hits: 0, partialHits: 0, misses: 0 }
+  return {
+    stats,
+    read: async (offset, size) => {
+      const hit = held.find(w => offset >= w.start && offset < w.start + w.bytes.byteLength)
+      if (hit) {
+        held.splice(held.indexOf(hit), 1)
+        held.push(hit)
+        const from = offset - hit.start
+        const take = Math.min(size, hit.bytes.byteLength - from)
+        if (take < size) stats.partialHits++
+        else stats.hits++
+        return hit.bytes.slice(from, from + take)
+      }
+      stats.misses++
+      const want = Math.min(windowBytes, length - offset)
+      const bytes = await read(offset, Math.max(want, size))
+      stats.fetches++
+      stats.fetchedBytes += bytes.byteLength
+      held.push({ start: offset, bytes })
+      while (held.length > windows) held.shift()
+      const take = Math.min(size, bytes.byteLength)
+      return bytes.slice(0, take)
+    },
+  }
+}
+
+const now = () => performance.now()
+
+window.bench = {
+  /**
+   * One playback session: open, pull `segments` fragments, then seek to each target and pull one more.
+   * That is the shape a player actually produces, and seeks are included because the reopen path is where
+   * the probe-read replay lives.
+   */
+  async session(name, {
+    workerUrl,
+    bufferSize,
+    segments = 3,
+    seeks = [],
+    source = 'memory',
+    cache = null,
+    transferReads = false,
+  } = {}) {
+    const base = source === 'memory' ? await memorySource(name) : await httpSource(name)
+
+    let reads = 0
+    let bytesRequested = 0
+    let bytesReturned = 0
+    let cached = null
+
+    const underlying = (offset, size) => {
+      bytesRequested += size
+      return base.read(offset, size).then(buf => { bytesReturned += buf.byteLength; return buf })
+    }
+    if (cache) cached = windowCache(underlying, { ...cache, length: base.length })
+
+    const read = (offset, size) => {
+      reads++
+      return (cached ? cached.read : underlying)(offset, size)
+    }
+
+    // Timed separately: the two builds differ by 2.2 MB of wasm, which is a real cost but one paid at
+    // worker boot rather than per read, so folding it into the remux would hide both effects at once.
+    const tBoot = now()
+    const remuxer = await makeRemuxer({
+      publicPath: '/build/',
+      workerUrl: workerUrl ?? '/build/worker.js',
+      workerOptions: { type: 'module' },
+      length: base.length,
+      read,
+      transferReads,
+      ...(bufferSize ? { bufferSize } : {}),
+    })
+    const bootMs = now() - tBoot
+
+    try {
+      const t0 = now()
+      const init = await remuxer.init()
+      const tInit = now()
+
+      let segmentBytes = 0
+      for (let i = 0; i < segments; i++) {
+        const chunk = await remuxer.read()
+        segmentBytes += chunk.data?.byteLength ?? 0
+        if (chunk.finished) break
+      }
+      const tSegments = now()
+
+      for (const target of seeks) {
+        await remuxer.seek(target)
+        const chunk = await remuxer.read()
+        segmentBytes += chunk.data?.byteLength ?? 0
+      }
+      const tEnd = now()
+
+      return {
+        name,
+        bootMs,
+        totalMs: tEnd - t0,
+        initMs: tInit - t0,
+        segmentsMs: tSegments - tInit,
+        seeksMs: tEnd - tSegments,
+        reads,
+        bytesRequested,
+        bytesReturned,
+        segmentBytes,
+        transferReads,
+        initBytes: init.data.byteLength,
+        videoMimeType: init.info.output.videoMimeType,
+        audioMimeType: init.info.output.audioMimeType,
+        ...(cached ? { cache: { ...cached.stats } } : {}),
+      }
+    } finally { await remuxer.destroy() }
+  },
+
+  /**
+   * The floor a suspending call is measured against: an exported method that returns without ever
+   * touching the read. Whatever this costs is the osra round trip, and any read costing the same is
+   * paying for the hop rather than for the stack switch.
+   */
+  async roundTrip(name, { workerUrl, iterations = 500 } = {}) {
+    const base = await memorySource(name)
+    const remuxer = await makeRemuxer({
+      publicPath: '/build/',
+      workerUrl: workerUrl ?? '/build/worker.js',
+      workerOptions: { type: 'module' },
+      length: base.length,
+      read: base.read,
+    })
+    try {
+      await remuxer.init()
+      const t0 = now()
+      for (let i = 0; i < iterations; i++) await remuxer.setAudioStreamIndex(0)
+      const t1 = now()
+      return { iterations, totalMs: t1 - t0, perCallUs: ((t1 - t0) / iterations) * 1000 }
+    } finally { await remuxer.destroy() }
+  },
+}
+
+window.benchReady = true
+</script>
+</body>
+</html>
