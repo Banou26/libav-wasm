@@ -54,6 +54,22 @@ const seeked = await remuxer.seek(90)
 await remuxer.destroy()
 ```
 
+### `read` gives up the buffer it returns
+
+The buffer `read` resolves with is **transferred** to the worker, not copied, so it is detached in your
+code once you hand it over. Returning a fresh buffer per read is the normal shape and needs no thought: a
+`fetch(...).arrayBuffer()`, a buffer transferred out of another worker, or a `slice` all qualify. Only a
+consumer answering out of a cache it keeps has to do anything, and what it has to do is return a copy.
+
+Copying the whole payload across the worker boundary on every read is not cheap: at the default 2.5 MB
+buffer a session moves close to a gigabyte, and transferring instead measured 15% off a full remux
+(2264.8 ms to 1918.3 ms, 382 reads, medians over 7 alternated rounds). Pass `transferReads: false` to go
+back to copying.
+
+Handing back bytes you kept detaches them, and a detached buffer reads as zero bytes, which ffmpeg takes
+for EOF: the file would truncate silently at that offset. The first time a read comes back empty before
+the end of the file, the library says so on the console.
+
 `makeThumbnailer` opens the same file with no muxer, no encoder and no stream map, for `readKeyframe(t)`
 alone. Use it rather than a remuxer: `readKeyframe` seeks backward on the input, which an output muxer
 cannot follow, and a thumbnailer has no muxer to damage.

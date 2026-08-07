@@ -2,7 +2,7 @@ import PQueue from 'p-queue'
 import type { Resolvers } from './worker'
 import type { SubtitleFragment } from './worker'
 
-import { expose } from 'osra'
+import { expose, transfer } from 'osra'
 export * from './utils'
 
 export type MakeTransmuxerOptions = {
@@ -17,6 +17,15 @@ export type MakeTransmuxerOptions = {
   bufferSize?: number
   /** Input stream index of the audio track to mux; defaults to the first audio stream */
   audioStreamIndex?: number
+  /**
+   * Set false to copy each read across to the worker instead of handing it over. Defaults to true.
+   *
+   * `read` gives up ownership of the buffer it returns: it is DETACHED once handed over, so a consumer
+   * answering out of its own cache has to return a copy rather than the bytes it keeps. That is the
+   * normal shape already (a fetch, a worker transfer, a slice all produce a fresh buffer), and moving
+   * rather than cloning measured 15% off a session, since the whole payload crosses the hop every read.
+   */
+  transferReads?: boolean
 }
 
 const abortSignalToPromise = (abortSignal: AbortSignal) =>
@@ -42,7 +51,8 @@ const makeSession = async ({
   read,
   length,
   bufferSize,
-  audioStreamIndex
+  audioStreamIndex,
+  transferReads = true
 }: MakeTransmuxerOptions & { bufferSize: number }) => {
   const worker = new Worker(workerUrl, workerOptions)
 
@@ -57,12 +67,35 @@ const makeSession = async ({
 
   const queue = new PQueue({ concurrency: 1 })
 
+  /**
+   * The one way transferring can go wrong, said out loud instead of left to be debugged.
+   *
+   * A consumer that answers out of its own cache hands back a buffer we detached on an earlier read, and
+   * a detached buffer reports zero bytes. ffmpeg reads zero bytes as EOF, so the file silently truncates
+   * at whatever offset that happened rather than failing anywhere near the cause. Zero bytes at or past
+   * the end of the file is ordinary EOF and says nothing, so only a short read BEFORE the end is a tell.
+   */
+  let warnedDetached = false
+  const warnIfDetached = (buffer: ArrayBuffer, offset: number) => {
+    if (warnedDetached || !transferReads || buffer.byteLength > 0 || offset >= length) return
+    warnedDetached = true
+    console.warn(
+      `libav-wasm: read(${offset}) returned 0 bytes, ${length - offset} bytes before the end of the file. `
+      + 'Reads are transferred, so the buffer read() returns is detached in the caller and handing back '
+      + 'bytes you keep returns that same detached buffer. Return a copy, or pass transferReads: false.'
+    )
+  }
+
   const wasmRead = (abortController: AbortController) => (offset: number, size: number) => {
     if (abortController.signal.aborted) return Promise.resolve({ resolved: new Uint8Array(0).buffer, rejected: true })
     return Promise.race([
       read(Number(offset), Number(size))
         .then(
-          buffer => ({ resolved: new Uint8Array(buffer).buffer, rejected: false }),
+          buffer => {
+            warnIfDetached(buffer, Number(offset))
+            const owned = new Uint8Array(buffer).buffer
+            return { resolved: transferReads ? transfer(owned) : owned, rejected: false }
+          },
           () => ({ resolved: new Uint8Array(0).buffer, rejected: true })
         ),
       abortSignalToPromise(abortController.signal)
