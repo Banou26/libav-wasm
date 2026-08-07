@@ -6,6 +6,7 @@
 #include <string>
 #include <cstring>
 #include <numeric>
+#include <algorithm>
 
 extern "C" {
   #include <libavformat/avio.h>
@@ -250,8 +251,19 @@ public:
 
   bool initializing = false;
   bool first_initialization_done = false;
-  int init_buffer_count = 0;
-  std::vector<std::string> init_vector;
+  /**
+   * The probe reads the first open made, replayed to every reopen so a seek costs no JS reads.
+   *
+   * Keyed by offset, not by call order. A reopen does not always ask for the same sequence: the
+   * bitstream filter probe reads until it finds a frame, so one extra or one fewer read shifts a
+   * positional replay onto another range's bytes with nothing anywhere to detect it. An offset that
+   * was never cached falls through to a real read instead of being answered wrongly.
+   */
+  struct CachedRead {
+    int64_t offset;
+    std::string bytes;
+  };
+  std::vector<CachedRead> init_vector;
   std::vector<uint8_t> write_vector;
   std::vector<Attachment> attachments;
   std::vector<SubtitleFragment> subtitles;
@@ -1954,18 +1966,23 @@ private:
   static int avio_read(void* opaque, uint8_t* buf, int buf_size) {
     Remuxer* self = reinterpret_cast<Remuxer*>(opaque);
 
+    int64_t const pos = self->input_format_context->pb->pos;
+
     if (self->initializing && self->first_initialization_done) {
-      std::string buffer = self->init_vector[self->init_buffer_count];
-      memcpy(buf, (uint8_t*)buffer.c_str(), buf_size);
-      self->init_buffer_count++;
-      if (self->init_buffer_count >= self->init_vector.size()) {
-        self->init_buffer_count = 0;
+      for (auto const& entry : self->init_vector) {
+        if (entry.offset != pos) continue;
+        // Serve at most what was cached. A tail read is short by definition, and both mp4 (moov at the
+        // end) and matroska (Cues at the end) take one during init, so copying buf_size out of a short
+        // entry read past the string and fed ffmpeg that as file content on every seek.
+        int const size = std::min<int>(entry.bytes.size(), buf_size);
+        memcpy(buf, entry.bytes.data(), size);
+        return size;
       }
-      return buf_size;
+      // Not a range the first open asked for: fall through and read it for real.
     }
 
     std::string buffer;
-    emscripten::val result = self->read_data_function(to_string(self->input_format_context->pb->pos), buf_size).await();
+    emscripten::val result = self->read_data_function(to_string(pos), buf_size).await();
 
     bool is_rejected = result["rejected"].as<bool>();
     if (is_rejected) {
@@ -1979,7 +1996,7 @@ private:
     }
 
     if (self->initializing && !self->first_initialization_done) {
-      self->init_vector.push_back(buffer);
+      self->init_vector.push_back({ pos, buffer });
     }
 
     memcpy(buf, (uint8_t*)buffer.c_str(), buffer_size);
