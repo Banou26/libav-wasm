@@ -251,6 +251,8 @@ public:
 
   bool initializing = false;
   bool first_initialization_done = false;
+  // whether av_write_trailer has already run against the CURRENT output context
+  bool output_finalized = false;
   /**
    * The probe reads the first open made, replayed to every reopen so a seek costs no JS reads.
    *
@@ -969,6 +971,8 @@ public:
   }
 
   void init_output() {
+    // a fresh output context has not been finalized, whatever the previous one had done
+    output_finalized = false;
     uint8_t* output_avio_buffer = (uint8_t*)av_malloc(buffer_size);
     // args after the buffer size: 1 = write flag, this = opaque, nullptr = no read, avio_write = custom write, nullptr = no seek
     output_avio_context = avio_alloc_context(
@@ -1694,7 +1698,17 @@ public:
         }
         if (ret == AVERROR_EOF) {
           avio_flush(output_format_context->pb);
-          av_write_trailer(output_format_context);
+          // Once, and only once. av_write_trailer frees and NULLs s->priv_data on its way out
+          // (lavf mux.c), so a second call reaches movenc with a null MOVMuxContext and dereferences
+          // it. Under emcc without SAFE_HEAP that reads as zeros rather than trapping, which clears
+          // FF_MOV_FLAG_FRAGMENT and sends the muxer down the non-fragmented branch, emitting a
+          // degenerate moov into the output as if it were a media segment. Reachable because seek()
+          // ends by calling read(), so a seek that lands at the end finalizes the muxer, and a read
+          // that follows finalizes it again.
+          if (!output_finalized) {
+            av_write_trailer(output_format_context);
+            output_finalized = true;
+          }
           av_packet_free(&packet);
           finished = true;
           break;
