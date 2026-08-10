@@ -19,6 +19,7 @@
     "vite-build-dev": "vp build --watch",
     "worker-build-dev": "nodemon -e ts --watch src/worker --exec \"npm run build-worker\"",
     "build": "npm run make-docker && vp build && npm run build-worker && npm run types && npm run copy-wasm",
+    "prepublishOnly": "npm run build",
     "types": "tsc",
     "copy-wasm": "copyfiles -u 1 dist/libav.wasm dist/libav-jspi.wasm build && shx mv ./build/worker/index.d.ts ./build/worker.d.ts && shx rm -rf ./build/worker",
     "preview": "vp preview",
